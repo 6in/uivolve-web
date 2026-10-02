@@ -20,7 +20,7 @@ bun run dev
 
 開発サーバー: `http://127.0.0.1:4173/`。起動時にRustをWASMへビルドする。
 
-画面を直接開くにはURLへ`?screen=hello-world`などを付ける。対応値は`orders`、`tasks`、`hello-world`、`dynamic-tabs`、`components`、`uivolve-forms`、`grid-lab`、`uivolve-gallery`、`layout-lab`。省略・不明な値は受注管理を開く。Hello Worldのプレビュー: `http://127.0.0.1:4174/?screen=hello-world`。
+画面を直接開くにはURLへ`?screen=hello-world`などを付ける。対応値は`orders`、`tasks`、`hello-world`、`dynamic-tabs`、`http-grid`、`components`、`uivolve-forms`、`grid-lab`、`uivolve-gallery`、`layout-lab`。省略・不明な値は受注管理を開く。Hello Worldのプレビュー: `http://127.0.0.1:4174/?screen=hello-world`。
 
 ```sh
 bun run build       # WASM + Vite+本番ビルド → dist/
@@ -40,6 +40,8 @@ Rustを変更したら`bun run build:wasm`を実行する。フロントエン�
 - 「Hello World・はじめての画面」で、名前を入力して「挨拶する」を押すと「Hello 名前」を表示する。空欄なら「Hello World」。画面JSONとRhaiだけで構成する最小例。
 
 - 「動的タブ追加・Rhaiから部品を作る」で、ボタンを押すたびに商品名・数量・確認ボタン・結果表示を持つタブを追加する。入力と結果はタブごとに保持する。`itemsBind`でstate内の部品定義を共通WASMツリーへ展開する。[動的タブのチュートリアル](docs/tutorial-dynamic-tabs.md)を参照。
+
+- 「HTTP JSON・グリッドへ表示」で、ボタンから認証なしのJSONを取得し、商品8件をGridへ表示する。Rhaiの`http_get`で依頼し、受け取り関数でstateへ反映する。取得中・失敗・再取得を扱う。[HTTPグリッドのチュートリアル](docs/tutorial-http-grid.md)を参照。
 
 - 「Grid・Card・Border レイアウト」画面で、幅に応じたGrid配置と列span、入力を保持するCard切替、上下左右と中央を組むBorder、領域を使い切るFitを試せる。共通gap/paddingと最小高さを扱い、座標・寸法をWASMが計算する。詳細は[レイアウト契約](docs/layouts.md)。
 
@@ -104,6 +106,6 @@ DOM版はネイティブ入力・ボタンを使用する。Canvas版はキー�
 
 このDSLはuivolveの宣言的な部品・配置という考えを踏まえた小さな試験用フォーマット。uivolve / ExtJSとの完全互換はない。
 
-スクリプトは同期実行。`async/await`、通信サービス、タイマー、モジュールimport、時刻APIは未実装。操作数上限などは応答性のための制限であり、第三者コードを安全に実行するための隔離環境を保証しない。
+スクリプトは同期実行。宣言したHTTP GETの依頼とJSONの完了handlerを提供し、非同期取得はホストが担当する。POST、`async/await`、タイマー、モジュールimport、時刻APIは未実装。操作数上限などは応答性のための制限であり、第三者コードを安全に実行するための隔離環境を保証しない。
 
-次の比較では、非同期処理の契約、大量データ・仮想スクロール、IMEの実機検証、アクセシビリティ、GPU描画を順に検証できる。
+次の比較では、HTTP取得の拡張、大量データ・仮想スクロール、IMEの実機検証、アクセシビリティ、GPU描画を順に検証できる。

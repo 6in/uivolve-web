@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "id": "http-grid",
+  "title": "HTTP JSON・グリッドへ表示",
+  "script": "http-grid.rhai",
+  "requests": {
+    "products": { "url": "../data/products.json", "handler": "productsReceived" }
+  },
+  "state": {
+    "products": [],
+    "loading": false,
+    "notice": "「JSONを取得」を押すと、HTTPで商品一覧を取得します。",
+    "page": 0,
+    "sort": null,
+    "selected": []
+  },
+  "ui": {
+    "xtype": "panel",
+    "title": "HTTPから商品一覧を読み込む",
+    "items": [
+      {
+        "xtype": "button",
+        "itemId": "loadProducts",
+        "text": "JSONを取得",
+        "handler": "loadProducts",
+        "disabledBind": "loading",
+        "variant": "primary"
+      },
+      { "xtype": "label", "itemId": "requestStatus", "bind": "notice" },
+      {
+        "xtype": "gridpanel",
+        "itemId": "productsGrid",
+        "bind": "products",
+        "pageSize": 5,
+        "pageBind": "page",
+        "sortBind": "sort",
+        "selectedBind": "selected",
+        "columns": [
+          { "text": "番号", "dataIndex": "id", "flex": 1, "align": "right" },
+          { "text": "商品名", "dataIndex": "name", "flex": 3 },
+          { "text": "価格（円）", "dataIndex": "price", "flex": 2, "align": "right" },
+          { "text": "在庫", "dataIndex": "stock", "flex": 1, "align": "right" }
+        ]
+      },
+      { "xtype": "label", "text": "取得先: data/products.json・認証なし", "variant": "muted" }
+    ]
+  }
+}

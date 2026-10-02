@@ -32,6 +32,7 @@ flowchart TD
 | `engine/src/extras.rs` / `figures.rs`        | 追加部品・構成の展開、文書・図表の描画データ生成                                                      |
 | `src/main.js`                                | HTTP取得、URL・メディアの事前確認、カレンダーの日付補完、画面エディタ、テーマ切替、再描画、ホスト状態 |
 | `src/resource-client.js`                     | 共通HTTP/CORS取得、認証なし・Bearer JWT、送信先・リダイレクト・取得失敗の扱い                         |
+| `engine/src/http.rs` / `src/http-effects.js` | RhaiのGET依頼の確定・追跡、非同期JSON取得・タイムアウト・画面切替時の中止、WASMへの完了通知           |
 | `src/engine.js`                              | JSON/UTF-8の入出力。業務処理やスクリプトのevalは行わない                                              |
 | `src/widget-contract.js`                     | フィールド・ボタン分類、物理操作と意味的操作、WebMCPの許可actionと操作ブロック判定                    |
 | `src/screen-catalog.js`                      | 同梱画面のidとtitle。WebMCPからも利用する                                                             |
@@ -66,7 +67,9 @@ DOMはkeyを使って既存要素を更新し、Canvasは面全体を再描画�
 
 公開する関数は`input_alloc(len)`、`input_free(ptr,len)`、`request(ptr,len)`、`response_len()`。JSは入力を確保してUTF-8 JSONを書き込み、requestが返す応答のポインターと長さを読む。入力はfinallyで解放する。応答はエンジン所有で、次のrequestまで有効。次の呼び出しより前にJSONへ読み取る。メモリが拡張され得るため、呼び出し後はその時点の`memory.buffer`を使う。
 
-操作は`load / event / layout / theme`。成功は`{ "ok": true, "data": ... }`、失敗は`{ "ok": false, "error": "..." }`。入力の上限は2,000,000バイト。現在のWASMはブラウザのimportを要求しない。HTTP取得と描画APIはホストが担当する。各操作の詳細は[画面形式](screen-format.md)、[レイアウト](layouts.md)、[テーマ](theme-format.md)を参照する。
+操作は`load / event / http_result / layout / theme`。成功は`{ "ok": true, "data": ... }`、失敗は`{ "ok": false, "error": "..." }`。入力の上限は2,000,000バイト。現在のWASMはブラウザのimportを要求しない。HTTP取得と描画APIはホストが担当する。各操作の詳細は[画面形式](screen-format.md)、[HTTP取得](tutorial-http-grid.md)、[レイアウト](layouts.md)、[テーマ](theme-format.md)を参照する。
+
+Rhaiの`http_get(name)`は要求を一時キューへ置く。stateとUIの検証後に要求を確定し、結果へ`effects`を添える。ホストは画面JSONを基準にURLを解決し、ResourceClientでJSONを取得してid付きの`http_result`を送る。Runtimeは進行中のidだけを受け入れ、最新stateと応答を受け取りhandlerへ渡す。通常のイベントと同じ確定処理を通し、完了でもrevisionが進む。画面置換の成功時にホストが進行中の取得を中止し、世代番号でも遅延応答を破棄する。
 
 Rustのcrate名`wasm-ui-engine`と同梱の画面作成スキル名`wasm-ui-authoring`は既存の識別子として保持している。製品名はuivolve-web。
 
@@ -78,4 +81,4 @@ HTTP認証はホストのResourceClientへ置く。画面・Rhai・テーマは�
 
 WebMCPも人の入力と同じWASMイベントを実行する。ツールの登録機構とUI処理は独立し、WebMCP未対応でも通常UIは動く。ツールの変更要求はscreen token・revision・可視性を検査するが、クライアント内のUI検証はサーバーの認可を代替しない。
 
-Rhaiは同期実行で、操作数などの制限を持つ。非同期通信・外部サービス・タイマー・GPU描画・永続化は現在の契約にない。これらの追加時はホストとエンジンの責務を先に設計する。現段階の制限は[README](../README.md)と部品別の契約に記載する。
+Rhaiは同期実行で、操作数などの制限を持つ。非同期HTTP GETは依頼・完了handlerの契約で扱う。POST・タイマー・GPU描画・永続化は現在の契約にない。これらの追加時はホストとエンジンの責務を先に設計する。現段階の制限は[README](../README.md)と部品別の契約に記載する。

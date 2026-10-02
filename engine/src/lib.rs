@@ -1,7 +1,7 @@
 use rhai::{Dynamic, Engine, Scope, AST};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 mod abi;
 pub use abi::{input_alloc, input_free, request, response_len};
 mod theme;
@@ -11,6 +11,7 @@ mod extras;
 mod fields;
 mod figures;
 mod grid;
+mod http;
 mod layouts;
 mod navigation;
 
@@ -23,6 +24,8 @@ pub struct Package {
     pub script: String,
     pub state: Value,
     pub ui: Node,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub requests: HashMap<String, http::Request>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -327,6 +330,7 @@ pub struct Runtime {
     engine: Engine,
     ast: AST,
     state: Dynamic,
+    http: http::Requests,
     pub revision: u32,
 }
 
@@ -349,6 +353,8 @@ impl Runtime {
             return Err("A window must be inside a container or panel".into());
         }
         let mut engine = Engine::new();
+        let mut http = http::Requests::default();
+        http.register(&mut engine);
         engine.set_max_operations(50_000);
         engine.set_max_call_levels(32);
         engine.set_max_expr_depths(64, 32);
@@ -363,6 +369,24 @@ impl Runtime {
             return Err("Script must define init(state)".into());
         }
         validate_handlers(&initial_ui, &functions)?;
+        if package.requests.len() > 8 {
+            return Err("At most 8 HTTP request definitions".into());
+        }
+        for (name, request) in &package.requests {
+            if name.is_empty()
+                || name.len() > 80
+                || request.url.is_empty()
+                || request.url.len() > 2048
+            {
+                return Err("HTTP request needs a name and a URL of at most 2048 bytes".into());
+            }
+            if !functions.contains(&request.handler) {
+                return Err(format!(
+                    "HTTP request {name}: undefined handler {}",
+                    request.handler
+                ));
+            }
+        }
         let state = rhai::serde::to_dynamic(&package.state).map_err(|e| e.to_string())?;
         let state: Dynamic = engine
             .call_fn(&mut Scope::new(), &ast, "init", (state,))
@@ -377,6 +401,8 @@ impl Runtime {
         validate_ui_state(&ui, &initial)?;
         let state = rhai::serde::to_dynamic(initial).map_err(|e| e.to_string())?;
         check_state(&state)?;
+        let names = http.prepare(&package.requests)?;
+        http.commit(names, &package.requests);
         Ok(Self {
             package,
             ui,
@@ -384,11 +410,13 @@ impl Runtime {
             engine,
             ast,
             state,
+            http,
             revision: 0,
         })
     }
 
     pub fn dispatch(&mut self, target: &str, mut payload: Value) -> Result<(), String> {
+        self.http.clear();
         let mut state = self.state_json()?;
         let mut path = Vec::new();
         if !find_path(&self.ui, target, &mut path) {
@@ -484,6 +512,32 @@ impl Runtime {
                     )
                 })?;
         }
+        self.commit_state(next)
+    }
+
+    pub fn complete_http(&mut self, id: u64, response: Value) -> Result<(), String> {
+        let name = self.http.consume(id)?;
+        self.http.clear();
+        let handler = &self.package.requests[&name].handler;
+        let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
+        // Use current state, including edits made while the HTTP request was in flight.
+        let next = self
+            .engine
+            .call_fn(
+                &mut Scope::new(),
+                &self.ast,
+                handler,
+                (self.state.clone(), response),
+            )
+            .map_err(|e| format!("{} / HTTP {} / {}: {e}", self.package.script, name, handler))?;
+        self.commit_state(next)
+    }
+
+    pub fn take_effects(&mut self) -> Vec<http::Effect> {
+        self.http.take()
+    }
+
+    fn commit_state(&mut self, mut next: Dynamic) -> Result<(), String> {
         // Commit only after successful execution and serialization. Failed handlers preserve the old state.
         let mut candidate: Value = rhai::serde::from_dynamic(&next).map_err(|e| e.to_string())?;
         if !candidate.is_object() {
@@ -501,8 +555,10 @@ impl Runtime {
         validate_ui_state(&ui, &candidate)?;
         next = rhai::serde::to_dynamic(candidate).map_err(|e| e.to_string())?;
         check_state(&next)?;
+        let names = self.http.prepare(&self.package.requests)?;
         self.state = next;
         self.ui = ui;
+        self.http.commit(names, &self.package.requests);
         self.revision += 1;
         Ok(())
     }

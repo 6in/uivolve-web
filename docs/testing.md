@@ -18,17 +18,18 @@ bun run docs:check
 
 ## 自動テストの役割
 
-| ファイル                                      | 主な対象                                                                   |
-| --------------------------------------------- | -------------------------------------------------------------------------- |
-| `tests/abi.test.js`                           | 公開関数とimport、UTF-8応答、壊れた入力、Runtime/テーマの独立性と巻き戻し  |
-| `tests/engine.test.js` / Rustのlib.rs内テスト | 画面load、Rhai、イベント、上限、パネル/window、テーマ                      |
-| `tests/fields.test.js`                        | 入力型、選択肢、既定値、readOnly/disabled、値検証                          |
-| `tests/grid-navigation.test.js`               | 安定ID、ソート・検索・ページ、編集下書き、タブ・ツリー・メニュー           |
-| `tests/gallery.test.js`                       | 追加部品、図表・文書・メディア契約、ダイアログなど                         |
-| `tests/layouts.test.js`                       | Grid span、幅に応じた配置、Border/Fit、Card状態・可視性・WebMCP            |
-| `tests/widget-contract.test.js`               | 物理/意味的操作、readOnly・modalガード、カタログとパッケージの整合         |
-| `tests/webmcp.test.js`                        | ツール経由の実WASM操作、stale/token、可視性、登録・中断処理                |
-| `tests/resource-client.test.js`               | HTTP/CORS設定、JWT切替・送信先、トークン更新、中断・失敗・認証付きWASM起動 |
+| ファイル                                      | 主な対象                                                                           |
+| --------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `tests/abi.test.js`                           | 公開関数とimport、UTF-8応答、壊れた入力、Runtime/テーマの独立性と巻き戻し          |
+| `tests/engine.test.js` / Rustのlib.rs内テスト | 画面load、Rhai、イベント、上限、パネル/window、テーマ                              |
+| `tests/fields.test.js`                        | 入力型、選択肢、既定値、readOnly/disabled、値検証                                  |
+| `tests/grid-navigation.test.js`               | 安定ID、ソート・検索・ページ、編集下書き、タブ・ツリー・メニュー                   |
+| `tests/gallery.test.js`                       | 追加部品、図表・文書・メディア契約、ダイアログなど                                 |
+| `tests/layouts.test.js`                       | Grid span、幅に応じた配置、Border/Fit、Card状態・可視性・WebMCP                    |
+| `tests/widget-contract.test.js`               | 物理/意味的操作、readOnly・modalガード、カタログとパッケージの整合                 |
+| `tests/webmcp.test.js`                        | ツール経由の実WASM操作、stale/token、可視性、登録・中断処理                        |
+| `tests/resource-client.test.js`               | HTTP/CORS設定、JWT切替・送信先、トークン更新、中断・失敗・認証付きWASM起動         |
+| `tests/http-grid.test.js`                     | RhaiのHTTP依頼と完了、JSON検証、一覧保持、重複・失敗の巻き戻し、中止・タイムアウト |
 
 ## 部品変更の確認
 
@@ -49,15 +50,16 @@ bun run docs:check
 
 `bun run build`後に`bun run preview`で確認する。DOMとCanvasのどちらから操作しても、同じ状態が両方へ反映されることを見る。幅は通常のデスクトップと390px前後の画面、エンジン単体では240pxの下限も確認する。
 
-| 画面ID          | 主な操作                                                                           |
-| --------------- | ---------------------------------------------------------------------------------- |
-| orders / tasks  | 検索・選択・編集・追加、HTTP再取得、定義適用失敗、状態同期                         |
-| hello-world     | 名前入力、押下まで結果保持、日本語の挨拶、空欄のWorld、HTTP再取得による初期化      |
-| components      | 折りたたみ、重なるwindow、背後への遮断、Tab/Escapeと閉じた後のフォーカス           |
-| uivolve-forms   | 各入力型、選択、スライダー、入力要素の保持                                         |
-| grid-lab        | ソート・検索・ページ・複数選択、Enter/Escape編集、Rhai拒否、タブ・ツリー・メニュー |
-| uivolve-gallery | 6タブの基本動作、ダイアログ、文書・図表、メディアの保持と終了                      |
-| layout-lab      | Grid列数/span/行高、Card入力保持、Border/Fit、両方式からの操作                     |
+| 画面ID          | 主な操作                                                                            |
+| --------------- | ----------------------------------------------------------------------------------- |
+| orders / tasks  | 検索・選択・編集・追加、HTTP再取得、定義適用失敗、状態同期                          |
+| hello-world     | 名前入力、押下まで結果保持、日本語の挨拶、空欄のWorld、HTTP再取得による初期化       |
+| http-grid       | DOM/CanvasからGET、取得中の無効化、Grid表示、失敗と再試行、画面切替時の遅延応答破棄 |
+| components      | 折りたたみ、重なるwindow、背後への遮断、Tab/Escapeと閉じた後のフォーカス            |
+| uivolve-forms   | 各入力型、選択、スライダー、入力要素の保持                                          |
+| grid-lab        | ソート・検索・ページ・複数選択、Enter/Escape編集、Rhai拒否、タブ・ツリー・メニュー  |
+| uivolve-gallery | 6タブの基本動作、ダイアログ、文書・図表、メディアの保持と終了                       |
+| layout-lab      | Grid列数/span/行高、Card入力保持、Border/Fit、両方式からの操作                      |
 
 入力やフォーカスに触れた場合は、変換開始→変換中の入力→テーマ/再描画→変換終了という流れを確認する。合成したCompositionEventはイベント処理の確認であり、実IMEの変換候補位置・OS固有動作の保証にはならない。実IMEとモバイルキーボードは対象OS/端末で手動確認する。
 

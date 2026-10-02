@@ -23,8 +23,8 @@ fn execute(request: Value) -> Result<Value, String> {
                 .get("script")
                 .and_then(Value::as_str)
                 .ok_or("Missing script")?;
-            let runtime = Runtime::load(package, script)?;
-            let result = json!({ "state": runtime.state_json()?, "revision": runtime.revision });
+            let mut runtime = Runtime::load(package, script)?;
+            let result = result(&mut runtime)?;
             RUNTIME.with(|r| *r.borrow_mut() = Some(runtime));
             Ok(result)
         }
@@ -36,7 +36,17 @@ fn execute(request: Value) -> Result<Value, String> {
                 .and_then(Value::as_str)
                 .ok_or("Missing target")?;
             runtime.dispatch(target, request.get("payload").cloned().unwrap_or(json!({})))?;
-            Ok(json!({ "state": runtime.state_json()?, "revision": runtime.revision }))
+            result(runtime)
+        }),
+        "http_result" => RUNTIME.with(|r| {
+            let mut slot = r.borrow_mut();
+            let runtime = slot.as_mut().ok_or("No screen loaded")?;
+            let id = request.get("id").and_then(Value::as_u64).ok_or("Missing HTTP request id")?;
+            let ok = request.get("ok").and_then(Value::as_bool).ok_or("Missing HTTP result ok")?;
+            let error = request.get("error").and_then(Value::as_str).unwrap_or("");
+            if error.len() > 2048 { return Err("HTTP error exceeds 2048 bytes".into()); }
+            runtime.complete_http(id, json!({"ok":ok,"data":request.get("data").cloned().unwrap_or(Value::Null),"error":error}))?;
+            result(runtime)
         }),
         "layout" => RUNTIME.with(|r| {
             let slot = r.borrow();
@@ -49,6 +59,15 @@ fn execute(request: Value) -> Result<Value, String> {
         }),
         _ => Err("Unknown operation".into()),
     }
+}
+
+fn result(runtime: &mut Runtime) -> Result<Value, String> {
+    let mut result = json!({"state":runtime.state_json()?,"revision":runtime.revision});
+    let effects = runtime.take_effects();
+    if !effects.is_empty() {
+        result["effects"] = serde_json::to_value(effects).map_err(|e| e.to_string())?;
+    }
+    Ok(result)
 }
 
 #[no_mangle]

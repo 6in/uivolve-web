@@ -118,7 +118,7 @@ WASMはイベント値の型、maxLength、数値の範囲、日付の実在、�
 
 ハンドラは更新された状態を返した後にコミットされる。例外や上限超過では、そのイベントによる状態変更をコミットしない。新しい画面の読み込みは、コンパイルとinitが成功してから現在の画面を置き換える。
 
-同期処理のみ。通信・async/await・タイマー・モジュールimport・時刻APIは提供しない。これらが必要な依頼では、未実装APIを生成せず、必要なエンジン拡張を明示する。
+Rhaiは同期実行。トップレベルの任意の`requests`にHTTP GETのURLと受け取りhandlerを宣言し、`http_get(name)`で非同期取得をホストへ依頼できる。完了時は`handler(state, response) → state`を実行する。`response`は`ok / data / error`を持つ。JSONは画面URLから解決し、既存ResourceClientのCORS・認証設定を使う。制限・失敗・画面切替の扱いは[HTTPグリッドのチュートリアル](tutorial-http-grid.md)を参照。`async/await`・POST・タイマー・モジュールimport・時刻APIは提供しない。
 
 ## 診断と制限
 

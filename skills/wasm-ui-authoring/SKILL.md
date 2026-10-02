@@ -23,7 +23,7 @@ description: uivolve-webの画面JSONとRhaiハンドラを作成・修正する
 - パネルのtoggleとwindowのcloseも状態を変更してからhandlerを呼ぶ。背後や隠れた部品へのイベントは受け付けない。× / Escapeと内容内のキャンセルボタンの処理を揃え、親windowを閉じる際は必要に応じて子windowの表示状態も戻す。
 - Rhaiのtrim()は文字列をその場で変更する。戻り値を代入・比較しない。コピーへtrim()を呼んでから空文字列か検査する。
 - レイアウトは共通レイアウト契約に従う。HTML編集はhtmleditorのソース文字列、図形座標はdraw.spritesの指定範囲で扱う。CSS・DOM参照・描画アダプターのAPIを画面処理へ混ぜない。動画/iframeの再生状態はネイティブ要素が管理し、共通WASM状態との同期を前提にしない。
-- 計算・検証・一覧の絞り込みはRhaiに置く。通信、async/await、タイマー等の未実装APIを捏造しない。必要なら拡張点として説明する。
+- 計算・検証・一覧の絞り込みはRhaiに置く。JSON取得にはトップレベルのrequestsとRhaiのhttp_get(name)、完了handlerを使う。[HTTPグリッドのチュートリアル](../../docs/tutorial-http-grid.md)を参照。POST、async/await、タイマー等の未実装APIを捏造しない。
 - 変更したJSONとRhaiをWASMエンジンの`load`へ通し、主要イベントを確認する。ブラウザの定義エディタからも検証できる。両バックエンドで同じ状態が見えることを確認する。
 
 エンジン拡張が必要な場合は、画面パッケージの修正と分けて影響を説明し、[部品開発ガイド](../../docs/component-development.md)と[部品開発スキル](../uivolve-web-components/SKILL.md)を使う。対応属性・Rhai機能の最終的な根拠は`engine/src/lib.rs`と`engine/Cargo.toml`。

@@ -1,0 +1,10 @@
+[
+  { "id": 1, "name": "りんご", "price": 180, "stock": 24 },
+  { "id": 2, "name": "みかん", "price": 120, "stock": 40 },
+  { "id": 3, "name": "バナナ", "price": 250, "stock": 18 },
+  { "id": 4, "name": "ぶどう", "price": 680, "stock": 12 },
+  { "id": 5, "name": "いちご", "price": 580, "stock": 16 },
+  { "id": 6, "name": "梨", "price": 320, "stock": 20 },
+  { "id": 7, "name": "桃", "price": 450, "stock": 8 },
+  { "id": 8, "name": "キウイ", "price": 150, "stock": 30 }
+]

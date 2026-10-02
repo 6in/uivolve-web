@@ -6,6 +6,7 @@ import { applyTheme } from "./theme.js";
 import { SCREEN_CATALOG } from "./screen-catalog.js";
 import { createUiTools, registerUiTools } from "./webmcp.js";
 import { ResourceClient } from "./resource-client.js";
+import { HttpEffects } from "./http-effects.js";
 
 const $ = (id) => document.getElementById(id);
 const base = new URL(import.meta.env.BASE_URL, window.location.href);
@@ -45,6 +46,17 @@ let frame = 0;
 let scenes;
 let themeFetching = false;
 let themeChoice = "light";
+const httpEffects = new HttpEffects({
+  resources,
+  complete: (id, response) => {
+    const result = engine.completeHttp(id, response);
+    updateState(result);
+    error("");
+    render();
+    return result;
+  },
+  onError: (exception) => error(exception.message),
+});
 
 function error(message) {
   $("error").textContent = message;
@@ -81,6 +93,7 @@ function performEvent(target, payload) {
   updateState(result);
   error("");
   render();
+  void httpEffects.run(result.effects);
   return result;
 }
 
@@ -162,6 +175,7 @@ function compile(screen, script, source) {
   currentPackage = screen;
   screenToken = crypto.randomUUID();
   packageUrl = source;
+  httpEffects.reset(source);
   $("dsl-source").value = JSON.stringify(screen, null, 2);
   $("script-source").value = script;
   $("screen-url").value = source.href;
@@ -171,6 +185,7 @@ function compile(screen, script, source) {
   updateState(result);
   render();
   error("");
+  void httpEffects.run(result.effects);
 }
 
 async function load(url, { signal, beforeCommit, throwOnError = false } = {}) {
@@ -422,6 +437,7 @@ start();
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     disposed = true;
+    httpEffects.reset();
     resources.setAuthentication({ mode: "none" });
     $("auth-token").value = "";
     $("auth-refresh-token").value = "";

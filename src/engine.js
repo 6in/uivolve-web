@@ -42,6 +42,9 @@ export class WasmEngine {
   dispatch(target, payload = {}) {
     return this.call({ op: "event", target, payload });
   }
+  completeHttp(id, response) {
+    return this.call({ op: "http_result", id, ...response });
+  }
   layout(width) {
     return this.call({ op: "layout", width });
   }
