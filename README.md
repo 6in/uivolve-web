@@ -4,6 +4,8 @@ uivolveの宣言的な部品・配置という考えを、Web向けのUIエン�
 
 開発環境は **Bun 1.3.12 + Vite+ 1.0.0**。ReactなどのUIフレームワークは使用しない。
 
+[文書案内](docs/README.md)から画面・部品の契約を辿れる。部品を増やす場合は[部品開発ガイド](docs/component-development.md)、実装全体は[アーキテクチャ](docs/architecture.md)、確認方法は[検証基準](docs/testing.md)を参照する。[開発への参加](CONTRIBUTING.md)に変更・レビューの進め方をまとめている。
+
 ## 起動
 
 必要: Bun、Rust/Cargo、`wasm32-unknown-unknown`ターゲット。Vite+のローカルCLIはNode.js 22.18以降、24.11以降、または26以降を使用する。
@@ -23,10 +25,13 @@ bun run build       # WASM + Vite+本番ビルド → dist/
 bun run preview     # 本番成果物 → http://127.0.0.1:4174/
 bun run test        # 実際のWASMのVitest + Rustのテスト
 bun run check       # Oxfmt / Oxlint + rustfmt
+bun run docs:check  # 文書のローカルリンクを確認
 bun run fmt
 ```
 
 Rustを変更したら`bun run build:wasm`を実行する。フロントエンドはVite+で更新される。画面JSON・Rhaiは「再取得」、またはエディタの「変更を適用」で再読み込みできる。
+
+配布物は`dist/`一式。静的HTTPサーバーで配信し、配信先でBunやRustを実行する必要はない。取得URL・プレビュー更新・エラー確認は[運用手順](docs/operations.md)を参照する。
 
 ## 試せること
 
@@ -63,10 +68,13 @@ Rust / WASM エンジン
 
 画面処理はRust/WASM内で実行する。JavaScriptはHTTP取得、WASMメモリとの受け渡し、DOM更新・Canvas API呼び出しを担当する。Canvasの描画命令発行はこの段階ではJavaScript側のバックエンドにある。
 
-- `engine/src/lib.rs`: 共通エンジンと手動のUTF-8 JSON ABI。
+- `engine/src/lib.rs`: DSL・Runtime・共通検証・基本部品の計測と配置。
+- `engine/src/abi.rs`: UTF-8 JSON ABI、公開WASM関数、Runtime・応答バッファの管理。
 - `engine/src/fields.rs`: uivolveの部品設定、初期値、入力値の検証とスナップショット。
 - `src/engine.js`: WASM呼び出し。スクリプトをJavaScriptへ変換・evalしない。
 - `src/webmcp.js`: 描画方式に依存しない共通ツールとブラウザへの登録アダプター。
+- `src/widget-contract.js`: DOM/Canvas/WebMCPで共有する操作部品の分類と許可action。
+- `src/screen-catalog.js`: 同梱画面のid・title。
 - `src/dom-renderer.js` / `src/canvas-renderer.js`: 描画・入力のアダプター。
 - `public/screens/`: エンジンとは別に配信する７画面。
 - `engine/src/layouts.rs` / `docs/layouts.md`: Grid/Card/Border/Fitと共通余白の計測・配置・契約。
@@ -74,6 +82,7 @@ Rust / WASM エンジン
 - `docs/screen-format.md`: 画面・スクリプトの契約。
 - `docs/theme-format.md` / `public/themes/`: 配色の契約と標準テーマ。フォントや余白を指定する汎用スタイルDSLは含まない。
 - `skills/wasm-ui-authoring/SKILL.md`: AI向けの画面作成ガイド。
+- `skills/uivolve-web-components/SKILL.md`: AI向けのエンジン・部品開発ガイド。
 
 ## 検証上の限界
 

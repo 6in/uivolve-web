@@ -67,6 +67,8 @@ toolbar、datepicker、messagebox、toast、エディター、文書、図表、
 
 対応属性: `xtype`, `itemId`, `text`, `title`, `layout`, `bind`, `selectedBind`, `disabledBind`, `collapsedBind`, `visibleBind`, `width`, `handler`, `variant`, `flex`, `items`, `columns`。未知の属性はエラー。`flex`は正の数（既定1）で、hbox内の幅を配分する。`itemId`内のコロンは内部キー用に予約している。
 
+レイアウトの追加属性: `height`, `region`, `colSpan`, `activeItem`, `activeBind`。設定オブジェクトと適用範囲は[レイアウト形式](layouts.md)を参照する。
+
 フォーム系の追加属性: `fieldLabel`, `boxLabel`, `name`, `value`, `inputValue`, `checked`, `emptyText`, `inputType`, `readOnly`, `disabled`, `allowBlank`, `minLength`, `maxLength`, `minValue`, `maxValue`, `increment`, `rows`, `size`, `multiSelect`, `options`, `store`, `data`, `displayField`, `valueField`, `collapsible`, `collapsed`, `checkboxToggle`, `ui`。各部品で意味のある属性を使う。設定の対応範囲は[移植対応表](uivolve-port.md)を参照。
 
 Grid・ナビゲーションの追加属性: `pageSize`, `pageBind`, `sortBind`, `filterBind`, `editingBind`, `activeTab`, `activeBind`, `expandedBind`, `openBind`, `root`, `rootVisible`, `children`。Grid列の追加属性は`sortable`, `hidden`, `align`, `editor`。設定は[Grid・ナビゲーション形式](grid-navigation.md)を参照。
@@ -126,4 +128,4 @@ WASMはイベント値の型、maxLength、数値の範囲、日付の実在、�
 - 状態: JSONシリアライズ後1 MB。入力: 10 KB。
 - Rhaiのバージョンと実際の有効機能は`engine/Cargo.toml` / `engine/Cargo.lock`を参照。
 
-基準の実行可能なサンプルは`public/screens/orders.*`、`public/screens/tasks.*`、`public/screens/components.*`、`public/screens/uivolve-forms.*`、`public/screens/grid-lab.*`、`public/screens/uivolve-gallery.*`。変更したパッケージは、ブラウザの「URLから読み込む」または「変更を適用」でWASMに通して検証する。
+基準の実行可能なサンプルは`public/screens/orders.*`、`public/screens/tasks.*`、`public/screens/components.*`、`public/screens/uivolve-forms.*`、`public/screens/grid-lab.*`、`public/screens/uivolve-gallery.*`、`public/screens/layout-lab.*`。変更したパッケージは、ブラウザの「URLから読み込む」または「変更を適用」でWASMに通して検証する。エンジンへ新しい部品を追加する場合は[部品開発ガイド](component-development.md)を参照する。
