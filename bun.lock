@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "wasm-ui-lab",
+      "name": "uivolve-web",
       "devDependencies": {
         "vite-plus": "1.0.0",
       },

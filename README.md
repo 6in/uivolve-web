@@ -1,6 +1,6 @@
-# WASM UI Lab
+# uivolve-web
 
-HTTPで取得した画面DSLとスクリプトを共通のRust/WASMエンジンで実行し、DOM版・Canvas版を並べて比較する試作。
+uivolveの宣言的な部品・配置という考えを、Web向けのUIエンジンとして実装する試作。HTTPで取得した画面DSLとスクリプトを共通のRust/WASMエンジンで実行し、DOM版・Canvas版を並べて比較する。
 
 開発環境は **Bun 1.3.12 + Vite+ 1.0.0**。ReactなどのUIフレームワークは使用しない。
 
