@@ -61,7 +61,21 @@ DOMはrole=grid / row / columnheader / gridcellとaria-sort、aria-selectedを�
 
 xtype=tabpanel。itemsは1〜8個の部品、titleをタブ名として使う。activeTabは0始まりの初期番号。activeBindは現在番号のトップレベルキーで、省略時は生成する。disabled / disabledBindのタブには切り替えられない。無効な現在番号なら利用可能な先頭を表示する。
 
-`{action:"tab",value:番号}`で切り替え、状態を更新してからtabpanel.handlerを呼ぶ。非表示の内容は配置・描画から外し、イベントとwindow表示も遮断する。入力状態は残す。左右/Home/Endで利用可能なタブを切り替えられる。タブの閉鎖、追加、並べ替え、スクロールは未実装。
+`{action:"tab",value:番号}`で切り替え、状態を更新してからtabpanel.handlerを呼ぶ。非表示の内容は配置・描画から外し、イベントとwindow表示も遮断する。入力状態は残す。左右/Home/Endで利用可能なタブを切り替えられる。タブを閉じる専用ボタン、ドラッグ並べ替え、タブバーのスクロールは未実装。
+
+### 動的なタブ：itemsBind
+
+`items`の代わりに `itemsBind: "tabs"` を指定すると、`state.tabs` の配列を部品定義として展開する。`itemsBind`はtabpanelだけで使用でき、トップレベルの配列キーが必須。静的なitemsとの併用と、activeBindと同じキーの使用は不可。初期stateに空配列を置き、Rhaiのinitやイベントハンドラで部品定義を追加できる。配列は0〜8件。空でも有限のサイズのタブバーを持つ。
+
+state.tabsの各要素（タブの内容を表す部品定義）には、画面内で一意の明示的なitemIdが必須。子の入力にもitemIdと独立したbindを指定すると管理しやすい。省略した子IDや入力bindの生成はタブのitemIdを基準とし、配列内の順番を基準にしない。追加した子にも通常の部品・レイアウト・ハンドラの検証を適用する。入れ子のitemsBindにも同じ規則と全体のノード数・深さ上限を適用する。
+
+エンジンは読み込み時と各イベントの確定前に、stateの配列から候補の部品ツリーを構築する。新しいIDの部品だけ既定状態を補完し、明示した入力stateを優先する。init前から存在するタブの入力初期値はinitから参照できる。initで作った部品やイベントで追加した部品の既定値は、その処理が返った後に補完する。
+
+未知属性・xtype、重複ID、存在しないハンドラ、不正な配列や上限超過は拒否し、ツリー・state・revisionをまとめて以前の状態へ保つ。全体は200ノード・20階層、状態サイズは1 MB。正規化前の動的設定データにも、1タブにつき10,000個のオブジェクト/配列・64階層（親のUI深さも含む）の上限を持つ。
+
+選択は既存のactiveBindによる整数index。追加後に末尾を選ぶなら `state.activeTab = state.tabs.len() - 1` とする。配列の削除・並べ替えもstateの更新として反映されるが、選択番号の調整と不要になった入力stateの削除はページ側が担当する。無効な選択番号は利用可能な先頭へフォールバックする。削除した部品の入力stateは自動では消さず、同じitemId/bindを再利用すると残った値を使う。
+
+DOM/Canvas/WebMCPはいずれも確定した共通ツリーを使う。動的な部品にも非表示・disabled・モーダルのガードが適用される。実行例は[dynamic-tabs.json](../public/screens/dynamic-tabs.json)と[Rhai](../public/screens/dynamic-tabs.rhai)、記述方法は[チュートリアル](tutorial-dynamic-tabs.md)を参照。
 
 ## ツリー
 

@@ -180,10 +180,15 @@ pub fn validate(n: &Node) -> Result<(), String> {
             return Err("Navigation state bindings must be top-level keys".into());
         }
     }
-    if n.xtype == "tabpanel"
-        && (n.items.is_empty() || n.items.len() > 8 || n.active_tab >= n.items.len())
-    {
-        return Err("tabpanel needs 1..8 items and a valid activeTab index".into());
+    if n.xtype == "tabpanel" {
+        let invalid_static =
+            n.items_bind.is_empty() && (n.items.is_empty() || n.active_tab >= n.items.len());
+        if invalid_static || n.items.len() > 8 {
+            return Err(
+                "tabpanel needs 1..8 items (0..8 with itemsBind) and a valid activeTab index"
+                    .into(),
+            );
+        }
     }
     if n.xtype == "menu"
         && (n.items.is_empty()
@@ -368,7 +373,7 @@ pub fn arrange(
             let mut shell = widget(n, "tabbar", x, y, width, 38.0, key);
             shell.text = n.title.clone();
             out.push(shell);
-            let cw = width / n.items.len() as f64;
+            let cw = width / n.items.len().max(1) as f64;
             let active = active(n, state);
             for (i, c) in n.items.iter().enumerate() {
                 let mut w = widget(

@@ -68,6 +68,7 @@ pub fn validate(n: &Node) -> Result<(), String> {
             .contains(&editor.xtype.as_str())
                 || c.data_index.contains('.')
                 || !editor.items.is_empty()
+                || !editor.items_bind.is_empty()
                 || !editor.handler.is_empty()
             {
                 return Err("Grid editor needs a supported input xtype, top-level dataIndex, and no items/handler".into());

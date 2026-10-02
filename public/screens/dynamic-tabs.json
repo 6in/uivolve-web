@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "id": "dynamic-tabs",
+  "title": "動的タブ追加・Rhaiから部品を作る",
+  "script": "dynamic-tabs.rhai",
+  "state": {
+    "tabs": [],
+    "activeTab": 0,
+    "nextTabId": 1,
+    "tabLimit": false,
+    "notice": "「タブを追加」で、独立した入力欄とボタンを持つタブが増えます。"
+  },
+  "ui": {
+    "xtype": "container",
+    "layout": "vbox",
+    "items": [
+      {
+        "xtype": "button",
+        "itemId": "addTab",
+        "text": "タブを追加",
+        "handler": "addTab",
+        "disabledBind": "tabLimit",
+        "variant": "primary"
+      },
+      {
+        "xtype": "label",
+        "itemId": "notice",
+        "bind": "notice",
+        "variant": "muted"
+      },
+      {
+        "xtype": "tabpanel",
+        "itemId": "workspace",
+        "itemsBind": "tabs",
+        "activeBind": "activeTab"
+      }
+    ]
+  }
+}

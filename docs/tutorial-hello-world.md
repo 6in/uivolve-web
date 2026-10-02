@@ -132,4 +132,4 @@ JSONのボタンの `text` を変えると表示名だけが変わる。`handler
 
 別のサンプルを作るなら、2ファイルを `public/screens/` 内で別名へコピーし、JSONの `id` と `script` を変更する。例えば `my-hello.json` と `my-hello.rhai` を作り、下部の「URLから読み込む」で `http://127.0.0.1:4173/screens/my-hello.json` を指定すれば試せる。同梱一覧への登録なしでもURLからの取得は可能。同梱画面として選択欄や `?screen=` から開く場合は、[screen-catalog.js](../src/screen-catalog.js) と [index.html](../index.html) の選択肢にも登録する。
 
-部品の詳細やイベントの契約は[画面契約](screen-format.md)、処理の担当範囲は[アーキテクチャ](architecture.md)を参照。この例は既存部品と同期処理だけで動作する。部品の動的追加や通信・タイマーなどをページから使うAPIは、現在まだ提供していない。
+次は[動的タブのチュートリアル](tutorial-dynamic-tabs.md)で、Rhaiからタブと入力部品を追加できる。部品の詳細やイベントの契約は[画面契約](screen-format.md)、処理の担当範囲は[アーキテクチャ](architecture.md)を参照。通信・タイマーなどをページから使うAPIは、現在まだ提供していない。

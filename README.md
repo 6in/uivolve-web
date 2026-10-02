@@ -20,7 +20,7 @@ bun run dev
 
 開発サーバー: `http://127.0.0.1:4173/`。起動時にRustをWASMへビルドする。
 
-画面を直接開くにはURLへ`?screen=hello-world`などを付ける。対応値は`orders`、`tasks`、`hello-world`、`components`、`uivolve-forms`、`grid-lab`、`uivolve-gallery`、`layout-lab`。省略・不明な値は受注管理を開く。Hello Worldのプレビュー: `http://127.0.0.1:4174/?screen=hello-world`。
+画面を直接開くにはURLへ`?screen=hello-world`などを付ける。対応値は`orders`、`tasks`、`hello-world`、`dynamic-tabs`、`components`、`uivolve-forms`、`grid-lab`、`uivolve-gallery`、`layout-lab`。省略・不明な値は受注管理を開く。Hello Worldのプレビュー: `http://127.0.0.1:4174/?screen=hello-world`。
 
 ```sh
 bun run build       # WASM + Vite+本番ビルド → dist/
@@ -38,6 +38,8 @@ Rustを変更したら`bun run build:wasm`を実行する。フロントエン�
 ## 試せること
 
 - 「Hello World・はじめての画面」で、名前を入力して「挨拶する」を押すと「Hello 名前」を表示する。空欄なら「Hello World」。画面JSONとRhaiだけで構成する最小例。
+
+- 「動的タブ追加・Rhaiから部品を作る」で、ボタンを押すたびに商品名・数量・確認ボタン・結果表示を持つタブを追加する。入力と結果はタブごとに保持する。`itemsBind`でstate内の部品定義を共通WASMツリーへ展開する。[動的タブのチュートリアル](docs/tutorial-dynamic-tabs.md)を参照。
 
 - 「Grid・Card・Border レイアウト」画面で、幅に応じたGrid配置と列span、入力を保持するCard切替、上下左右と中央を組むBorder、領域を使い切るFitを試せる。共通gap/paddingと最小高さを扱い、座標・寸法をWASMが計算する。詳細は[レイアウト契約](docs/layouts.md)。
 
@@ -83,7 +85,8 @@ Rust / WASM エンジン
 - `src/widget-contract.js`: DOM/Canvas/WebMCPで共有する操作部品の分類と許可action。
 - `src/screen-catalog.js`: 同梱画面のid・title。
 - `src/dom-renderer.js` / `src/canvas-renderer.js`: 描画・入力のアダプター。
-- `public/screens/`: エンジンとは別に配信する８画面。
+- `public/screens/`: エンジンとは別に配信する９画面。
+- `engine/src/dynamic_ui.rs`: tabpanelのitemsBind展開、動的定義の上限確認、新しい部品の初期値補完。
 - `engine/src/layouts.rs` / `docs/layouts.md`: Grid/Card/Border/Fitと共通余白の計測・配置・契約。
 - `engine/src/grid.rs` / `navigation.rs`: Gridの操作・下書き・ページ生成とタブ・ツリー・メニューの共通状態。
 - `docs/screen-format.md`: 画面・スクリプトの契約。

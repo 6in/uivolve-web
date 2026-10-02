@@ -6,6 +6,7 @@ mod abi;
 pub use abi::{input_alloc, input_free, request, response_len};
 mod theme;
 use theme::Theme;
+mod dynamic_ui;
 mod extras;
 mod fields;
 mod figures;
@@ -64,6 +65,8 @@ pub struct Node {
     #[serde(default)]
     #[serde(deserialize_with = "extras::deserialize_items")]
     pub items: Vec<Node>,
+    #[serde(default)]
+    pub items_bind: String,
     #[serde(default)]
     pub columns: extras::Columns,
     #[serde(default)]
@@ -319,6 +322,8 @@ pub struct Modal {
 
 pub struct Runtime {
     package: Package,
+    ui: Node,
+    functions: HashSet<String>,
     engine: Engine,
     ast: AST,
     state: Dynamic,
@@ -338,11 +343,8 @@ impl Runtime {
         }
         fields::normalize(&mut package.ui, "root");
         validate(&package.ui, &mut HashSet::new(), &mut 0, 0)?;
-        fields::initialize(&package.ui, &mut package.state);
-        grid::initialize(&package.ui, &mut package.state);
-        navigation::initialize(&package.ui, &mut package.state);
-        extras::initialize(&package.ui, &mut package.state);
-        layouts::initialize(&package.ui, &mut package.state);
+        let initial_ui = dynamic_ui::resolve(&package.ui, &package.state)?;
+        initialize_ui(&initial_ui, &mut package.state);
         if package.ui.xtype == "window" {
             return Err("A window must be inside a container or panel".into());
         }
@@ -360,19 +362,25 @@ impl Runtime {
         if !functions.contains("init") {
             return Err("Script must define init(state)".into());
         }
-        validate_handlers(&package.ui, &functions)?;
+        validate_handlers(&initial_ui, &functions)?;
         let state = rhai::serde::to_dynamic(&package.state).map_err(|e| e.to_string())?;
         let state: Dynamic = engine
             .call_fn(&mut Scope::new(), &ast, "init", (state,))
             .map_err(|e| format!("{} / init: {e}", package.script))?;
         check_state(&state)?;
-        let initial: Value = rhai::serde::from_dynamic(&state).map_err(|e| e.to_string())?;
-        grid::validate_state(&package.ui, &initial)?;
-        navigation::validate_state(&package.ui, &initial)?;
-        extras::validate_state(&package.ui, &initial)?;
-        layouts::validate_state(&package.ui, &initial)?;
+        let mut initial: Value = rhai::serde::from_dynamic(&state).map_err(|e| e.to_string())?;
+        let ui = dynamic_ui::resolve(&package.ui, &initial)?;
+        validate_handlers(&ui, &functions)?;
+        dynamic_ui::initialize_added(&initial_ui, &ui, &mut initial);
+        let ui = dynamic_ui::resolve(&package.ui, &initial)?;
+        validate_handlers(&ui, &functions)?;
+        validate_ui_state(&ui, &initial)?;
+        let state = rhai::serde::to_dynamic(initial).map_err(|e| e.to_string())?;
+        check_state(&state)?;
         Ok(Self {
             package,
+            ui,
+            functions,
             engine,
             ast,
             state,
@@ -383,12 +391,12 @@ impl Runtime {
     pub fn dispatch(&mut self, target: &str, mut payload: Value) -> Result<(), String> {
         let mut state = self.state_json()?;
         let mut path = Vec::new();
-        if !find_path(&self.package.ui, target, &mut path) {
+        if !find_path(&self.ui, target, &mut path) {
             return Err(format!("Unknown itemId: {target}"));
         }
         let node = *path.last().unwrap();
         let mut windows = Vec::new();
-        collect_windows(&self.package.ui, &state, &mut windows);
+        collect_windows(&self.ui, &state, &mut windows);
         let scope = path.iter().rev().find(|n| n.xtype == "window");
         if windows
             .last()
@@ -413,7 +421,7 @@ impl Runtime {
         if fields::input(node) && node.read_only {
             return Ok(());
         }
-        navigation::close_other_menus(&self.package.ui, &mut state, &path);
+        navigation::close_other_menus(&self.ui, &mut state, &path);
         if extras::event_component(node) {
             extras::event(node, &path, &mut state, &mut payload)?;
         } else if grid::advanced(node) {
@@ -481,14 +489,20 @@ impl Runtime {
         if !candidate.is_object() {
             return Err("Handler must return a state object".into());
         }
-        grid::reconcile(&self.package.ui, &self.state_json()?, &mut candidate);
-        grid::validate_state(&self.package.ui, &candidate)?;
-        navigation::validate_state(&self.package.ui, &candidate)?;
-        extras::validate_state(&self.package.ui, &candidate)?;
-        layouts::validate_state(&self.package.ui, &candidate)?;
+        check_state(&next)?;
+        let ui = dynamic_ui::resolve(&self.package.ui, &candidate)?;
+        validate_handlers(&ui, &self.functions)?;
+        dynamic_ui::initialize_added(&self.ui, &ui, &mut candidate);
+        grid::reconcile(&ui, &self.state_json()?, &mut candidate);
+        // Built-in defaults/reconciliation can also touch bindings. Resolve the final state,
+        // so the committed component tree always describes exactly the committed data.
+        let ui = dynamic_ui::resolve(&self.package.ui, &candidate)?;
+        validate_handlers(&ui, &self.functions)?;
+        validate_ui_state(&ui, &candidate)?;
         next = rhai::serde::to_dynamic(candidate).map_err(|e| e.to_string())?;
         check_state(&next)?;
         self.state = next;
+        self.ui = ui;
         self.revision += 1;
         Ok(())
     }
@@ -504,26 +518,23 @@ impl Runtime {
         let state = self.state_json()?;
         let mut widgets = Vec::new();
         let mut windows = Vec::new();
-        collect_windows(&self.package.ui, &state, &mut windows);
+        collect_windows(&self.ui, &state, &mut windows);
         let mut height = windows
             .iter()
-            .fold(
-                measure(&self.package.ui, &state, width - 32.0) + 32.0,
-                |h, n| {
-                    h.max(
-                        (content_height(
-                            n,
-                            &state,
-                            n.width.unwrap_or(window_width()).min(width - 32.0) - 28.0,
-                        ) + 56.0)
-                            .max(n.height.unwrap_or(0.0))
-                            + 32.0,
-                    )
-                },
-            )
+            .fold(measure(&self.ui, &state, width - 32.0) + 32.0, |h, n| {
+                h.max(
+                    (content_height(
+                        n,
+                        &state,
+                        n.width.unwrap_or(window_width()).min(width - 32.0) - 28.0,
+                    ) + 56.0)
+                        .max(n.height.unwrap_or(0.0))
+                        + 32.0,
+                )
+            })
             .max(if windows.is_empty() { 0.0 } else { 320.0 });
         arrange(
-            &self.package.ui,
+            &self.ui,
             &state,
             16.0,
             16.0,
@@ -579,7 +590,7 @@ impl Runtime {
                 &mut widgets,
             );
             let mut path = Vec::new();
-            find_path(&self.package.ui, &node.item_id, &mut path);
+            find_path(&self.ui, &node.item_id, &mut path);
             let disabled = path
                 .iter()
                 .any(|n| n.disabled || flag(&state, &n.disabled_bind));
@@ -632,6 +643,21 @@ impl Runtime {
             popup,
         })
     }
+}
+
+fn initialize_ui(ui: &Node, state: &mut Value) {
+    fields::initialize(ui, state);
+    grid::initialize(ui, state);
+    navigation::initialize(ui, state);
+    extras::initialize(ui, state);
+    layouts::initialize(ui, state);
+}
+
+fn validate_ui_state(ui: &Node, state: &Value) -> Result<(), String> {
+    grid::validate_state(ui, state)?;
+    navigation::validate_state(ui, state)?;
+    extras::validate_state(ui, state)?;
+    layouts::validate_state(ui, state)
 }
 
 fn check_state(state: &Dynamic) -> Result<(), String> {
@@ -717,6 +743,7 @@ fn validate(
     if node.item_id.contains(':') {
         return Err("itemId must not contain ':' (reserved for internal widget keys)".into());
     }
+    dynamic_ui::validate(node)?;
     if ["textfield", "button", "grid"].contains(&node.xtype.as_str()) && node.item_id.is_empty() {
         return Err(format!("{} requires itemId", node.xtype));
     }
