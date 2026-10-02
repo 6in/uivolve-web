@@ -1,0 +1,447 @@
+{
+  "version": 1,
+  "id": "uivolve-gallery",
+  "title": "uivolve コンポーネントギャラリー",
+  "script": "uivolve-gallery.rhai",
+  "state": {
+    "activeGallery": 0,
+    "notice": "操作すると、DOMとCanvasの両方へ反映します。",
+    "delivery": "standard",
+    "notifyEmail": true,
+    "notifyPush": false,
+    "selectedDate": "2026-10-02",
+    "calendarMonth": "2026-10",
+    "page": 0,
+    "dialogOpen": false,
+    "answer": null,
+    "promptText": "",
+    "toastOpen": false,
+    "source": "fn greet(name) {\n    \"こんにちは、\" + name\n}",
+    "htmlSource": "<p>日本語のソースを編集できます。</p>",
+    "chatDraft": "",
+    "chatMessages": [
+      {
+        "from": "bot",
+        "name": "UIエンジン",
+        "text": "ここはRhaiで処理するローカルの会話デモです。"
+      }
+    ],
+    "logLines": ["$ wasm-ui gallery", "✓ WASMエンジンを起動", "✓ 共通レイアウトを生成"],
+    "chartData": [
+      { "name": "月", "dom": 12, "canvas": 9 },
+      { "name": "火", "dom": 18, "canvas": 15 },
+      { "name": "水", "dom": 14, "canvas": 21 },
+      { "name": "木", "dom": 24, "canvas": 17 },
+      { "name": "金", "dom": 20, "canvas": 26 }
+    ]
+  },
+  "ui": {
+    "xtype": "container",
+    "items": [
+      {
+        "xtype": "toolbar",
+        "itemId": "galleryToolbar",
+        "items": [
+          "ギャラリー",
+          "->",
+          {
+            "xtype": "button",
+            "itemId": "showDialog",
+            "text": "ダイアログ",
+            "handler": "showDialog"
+          },
+          "-",
+          { "xtype": "button", "itemId": "showToast", "text": "通知", "handler": "showToast" }
+        ]
+      },
+      {
+        "xtype": "toast",
+        "itemId": "galleryToast",
+        "title": "通知",
+        "message": "WASMの状態で開閉しています。",
+        "visibleBind": "toastOpen",
+        "hidden": true
+      },
+      {
+        "xtype": "tabpanel",
+        "itemId": "galleryViews",
+        "activeBind": "activeGallery",
+        "items": [
+          {
+            "xtype": "container",
+            "title": "操作",
+            "items": [
+              {
+                "xtype": "splitbutton",
+                "itemId": "saveSplit",
+                "text": "保存",
+                "handler": "save",
+                "menu": [
+                  { "text": "名前を付けて保存", "itemId": "saveAs", "handler": "showDialog" },
+                  "-",
+                  { "text": "下書きを保存", "itemId": "saveDraft", "handler": "save" }
+                ]
+              },
+              {
+                "xtype": "radiogroup",
+                "itemId": "deliveryGroup",
+                "fieldLabel": "配送方法",
+                "bind": "delivery",
+                "columns": 2,
+                "items": [
+                  { "itemId": "standard", "boxLabel": "通常", "inputValue": "standard" },
+                  { "itemId": "express", "boxLabel": "速達", "inputValue": "express" }
+                ]
+              },
+              {
+                "xtype": "checkboxgroup",
+                "itemId": "notificationGroup",
+                "fieldLabel": "通知先",
+                "columns": 2,
+                "items": [
+                  { "itemId": "email", "boxLabel": "メール", "bind": "notifyEmail" },
+                  { "itemId": "push", "boxLabel": "プッシュ", "bind": "notifyPush" }
+                ]
+              },
+              {
+                "xtype": "datepicker",
+                "itemId": "calendar",
+                "bind": "selectedDate",
+                "pageBind": "calendarMonth",
+                "handler": "calendarChanged"
+              },
+              { "xtype": "displayfield", "fieldLabel": "選択した日付", "bind": "selectedDate" },
+              {
+                "xtype": "pagingtoolbar",
+                "itemId": "pager",
+                "total": 123,
+                "pageSize": 25,
+                "pageBind": "page",
+                "handler": "pageChanged"
+              },
+              {
+                "xtype": "container",
+                "layout": "accordion",
+                "items": [
+                  {
+                    "xtype": "panel",
+                    "itemId": "accordionOne",
+                    "title": "ひとつ目のパネル",
+                    "items": [{ "xtype": "label", "text": "一度にひとつのパネルを展開します。" }]
+                  },
+                  {
+                    "xtype": "panel",
+                    "itemId": "accordionTwo",
+                    "title": "ふたつ目のパネル",
+                    "items": [
+                      {
+                        "xtype": "textfield",
+                        "itemId": "accordionMemo",
+                        "fieldLabel": "開閉しても保持するメモ",
+                        "value": "日本語で入力"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "xtype": "container",
+            "title": "編集",
+            "items": [
+              {
+                "xtype": "codeeditor",
+                "itemId": "codeSource",
+                "title": "コード編集 · プレーンテキスト",
+                "language": "rhai",
+                "rows": 6,
+                "bind": "source"
+              },
+              {
+                "xtype": "diffeditor",
+                "itemId": "sourceDiff",
+                "title": "行単位の差分 · +追加 / −削除",
+                "bind": "source",
+                "original": "fn greet(name) {\n    \"Hello, \" + name\n}",
+                "height": 180
+              },
+              {
+                "xtype": "htmleditor",
+                "itemId": "htmlSource",
+                "title": "HTMLソース編集",
+                "bind": "htmlSource",
+                "rows": 3
+              },
+              {
+                "xtype": "markdown",
+                "itemId": "markdownExample",
+                "title": "Markdown · 基本ブロック",
+                "value": "# 共通のUIエンジン\n- DOMとCanvasで同じ状態\n- 見出し・箇条書き・コードブロック\n```rhai\nstate.notice = \"日本語も扱えます\";\n```",
+                "height": 240
+              },
+              {
+                "xtype": "box",
+                "itemId": "plainContent",
+                "value": "component / boxはテキスト表示。HTMLの実行はしません。",
+                "height": 64
+              }
+            ]
+          },
+          {
+            "xtype": "container",
+            "title": "チャート",
+            "items": [
+              {
+                "xtype": "label",
+                "text": "棒・折れ線・面・円の形状はWASMで計算。両版に共通。",
+                "variant": "muted"
+              },
+              {
+                "xtype": "chart",
+                "itemId": "barChart",
+                "title": "棒グラフ",
+                "bind": "chartData",
+                "series": { "type": "bar", "xField": "name", "yField": ["dom", "canvas"] }
+              },
+              {
+                "xtype": "cartesian",
+                "itemId": "lineChart",
+                "title": "折れ線グラフ",
+                "bind": "chartData",
+                "series": { "type": "line", "xField": "name", "yField": ["dom", "canvas"] }
+              },
+              {
+                "xtype": "chart",
+                "itemId": "areaChart",
+                "title": "面グラフ",
+                "bind": "chartData",
+                "series": { "type": "area", "xField": "name", "yField": "canvas" }
+              },
+              {
+                "xtype": "polar",
+                "itemId": "pieChart",
+                "title": "円グラフ",
+                "store": [
+                  { "name": "Rust", "value": 45 },
+                  { "name": "DSL", "value": 35 },
+                  { "name": "描画", "value": 20 }
+                ]
+              },
+              {
+                "xtype": "draw",
+                "itemId": "drawing",
+                "title": "図形描画",
+                "height": 200,
+                "sprites": [
+                  {
+                    "type": "rect",
+                    "x": 24,
+                    "y": 24,
+                    "width": 110,
+                    "height": 70,
+                    "radius": 10,
+                    "fillStyle": "selected",
+                    "strokeStyle": "accent"
+                  },
+                  { "type": "circle", "cx": 195, "cy": 60, "r": 35, "fillStyle": "accent" },
+                  {
+                    "type": "ellipse",
+                    "cx": 335,
+                    "cy": 60,
+                    "rx": 65,
+                    "ry": 32,
+                    "fillStyle": "selected",
+                    "strokeStyle": "text"
+                  },
+                  {
+                    "type": "line",
+                    "fromX": 30,
+                    "fromY": 135,
+                    "toX": 210,
+                    "toY": 135,
+                    "strokeStyle": "muted",
+                    "lineWidth": 3
+                  },
+                  {
+                    "type": "path",
+                    "path": "M 260 155 L 310 110 L 365 155 Z",
+                    "fillStyle": "accent"
+                  },
+                  {
+                    "type": "text",
+                    "x": 28,
+                    "y": 210,
+                    "text": "rect · circle · ellipse · line · path · text",
+                    "fontSize": 15
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "xtype": "container",
+            "title": "グラフ",
+            "items": [
+              {
+                "xtype": "label",
+                "text": "静的な配置の基本版。Mermaidはflowchart LR/TDの一部に対応。",
+                "variant": "muted"
+              },
+              {
+                "xtype": "gitgraph",
+                "itemId": "gitHistory",
+                "title": "Gitグラフ",
+                "height": 220,
+                "branches": ["main", "ui"],
+                "commits": [
+                  { "id": "c1", "branch": "main", "message": "WASMエンジン" },
+                  { "id": "c2", "branch": "ui", "message": "DOM・Canvas", "parents": ["c1"] },
+                  { "id": "c3", "branch": "main", "message": "Grid", "parents": ["c1"] },
+                  {
+                    "id": "c4",
+                    "branch": "main",
+                    "message": "部品を統合",
+                    "parents": ["c2", "c3"],
+                    "tag": "gallery"
+                  }
+                ]
+              },
+              {
+                "xtype": "forcegraph",
+                "itemId": "network",
+                "title": "ネットワークグラフ",
+                "nodes": [
+                  { "id": "wasm", "text": "WASM", "group": "engine", "r": 16 },
+                  { "id": "dsl", "text": "DSL", "group": "engine" },
+                  { "id": "script", "text": "Rhai", "group": "engine" },
+                  { "id": "dom", "text": "DOM", "group": "renderer" },
+                  { "id": "canvas", "text": "Canvas", "group": "renderer" }
+                ],
+                "edges": [
+                  { "from": "dsl", "to": "wasm" },
+                  { "from": "script", "to": "wasm" },
+                  { "from": "wasm", "to": "dom" },
+                  { "from": "wasm", "to": "canvas" }
+                ]
+              },
+              {
+                "xtype": "mermaid",
+                "itemId": "flowchart",
+                "title": "Mermaid · flowchart LR",
+                "value": "flowchart LR\nA[画面DSL] --> B[WASM]\nB --> C[DOM / Canvas]",
+                "height": 180
+              }
+            ]
+          },
+          {
+            "xtype": "container",
+            "title": "会話",
+            "items": [
+              {
+                "xtype": "chatpanel",
+                "itemId": "chatDemo",
+                "title": "会話 · ローカル処理",
+                "bind": "chatMessages",
+                "height": 220,
+                "bbar": [
+                  {
+                    "xtype": "button",
+                    "itemId": "sendMessage",
+                    "text": "送信",
+                    "handler": "sendMessage"
+                  },
+                  "->",
+                  {
+                    "xtype": "button",
+                    "itemId": "clearChat",
+                    "text": "消去",
+                    "handler": "clearChat"
+                  }
+                ]
+              },
+              {
+                "xtype": "textfield",
+                "itemId": "chatInput",
+                "fieldLabel": "メッセージ",
+                "bind": "chatDraft",
+                "emptyText": "日本語で入力してください"
+              },
+              {
+                "xtype": "terminal",
+                "itemId": "terminalLog",
+                "title": "イベントログ",
+                "bind": "logLines",
+                "height": 200,
+                "maxLines": 8
+              },
+              {
+                "xtype": "toolbar",
+                "items": [
+                  "ログ表示",
+                  "->",
+                  {
+                    "xtype": "button",
+                    "itemId": "clearLog",
+                    "text": "ログを消去",
+                    "handler": "clearLog"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "xtype": "container",
+            "title": "メディア",
+            "items": [
+              {
+                "xtype": "label",
+                "text": "画像はCanvas描画。動画・iframeは両版ともネイティブ要素。",
+                "variant": "muted"
+              },
+              {
+                "xtype": "imagecomponent",
+                "itemId": "galleryImage",
+                "title": "ローカル画像",
+                "src": "../assets/engine-card.svg",
+                "alt": "DSLからWASMを経てDOMとCanvasへ",
+                "height": 180
+              },
+              {
+                "xtype": "video",
+                "itemId": "galleryVideo",
+                "title": "動画",
+                "src": "../assets/engine-demo.webm",
+                "poster": "../assets/engine-card.svg",
+                "muted": true,
+                "controls": true,
+                "height": 220
+              },
+              {
+                "xtype": "uxiframe",
+                "itemId": "galleryFrame",
+                "title": "埋め込みページ",
+                "url": "../assets/embedded.html",
+                "height": 180
+              }
+            ]
+          }
+        ]
+      },
+      { "xtype": "label", "bind": "notice", "variant": "muted" },
+      {
+        "xtype": "messagebox",
+        "itemId": "promptDialog",
+        "title": "名前を付けて保存",
+        "msg": "保存名を入力してください。",
+        "visibleBind": "dialogOpen",
+        "selectedBind": "answer",
+        "bind": "promptText",
+        "prompt": true,
+        "buttons": "okcancel",
+        "hidden": true,
+        "handler": "dialogAnswered"
+      }
+    ]
+  }
+}

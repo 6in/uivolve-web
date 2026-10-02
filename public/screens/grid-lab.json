@@ -1,0 +1,163 @@
+{
+  "version": 1,
+  "id": "grid-lab",
+  "title": "Grid・タブ・ツリー・メニュー",
+  "script": "grid-lab.rhai",
+  "state": {
+    "records": [],
+    "query": "",
+    "selectedIds": [],
+    "page": 0,
+    "sort": null,
+    "cellEdit": null,
+    "activeView": 0,
+    "category": null,
+    "edited": 0,
+    "rowCount": "500 件",
+    "selectionCount": "0 件",
+    "editedCount": "0 件",
+    "memo": "タブを切り替えても、この入力は残ります。",
+    "notice": "列見出しで並べ替え。セルはダブルクリックかEnterで編集できます。"
+  },
+  "ui": {
+    "xtype": "container",
+    "items": [
+      {
+        "xtype": "container",
+        "layout": "hbox",
+        "items": [
+          { "xtype": "metric", "text": "データ件数", "bind": "rowCount" },
+          { "xtype": "metric", "text": "選択中", "bind": "selectionCount", "variant": "green" },
+          { "xtype": "metric", "text": "保存した編集", "bind": "editedCount", "variant": "amber" }
+        ]
+      },
+      {
+        "xtype": "menu",
+        "itemId": "actions",
+        "text": "一覧操作",
+        "items": [
+          { "text": "検索を解除", "itemId": "clearFilter", "handler": "clearFilter" },
+          { "text": "選択を解除", "itemId": "clearSelection", "handler": "clearSelection" },
+          { "xtype": "menuseparator" },
+          { "text": "サーバーへ保存（準備中）", "itemId": "futureSave", "disabled": true }
+        ]
+      },
+      {
+        "xtype": "tabpanel",
+        "itemId": "views",
+        "activeBind": "activeView",
+        "items": [
+          {
+            "xtype": "container",
+            "title": "Grid",
+            "items": [
+              {
+                "xtype": "textfield",
+                "itemId": "gridSearch",
+                "fieldLabel": "一覧を検索",
+                "bind": "query",
+                "emptyText": "顧客名・出荷状況など"
+              },
+              {
+                "xtype": "gridpanel",
+                "itemId": "inventory",
+                "title": "500行の一覧",
+                "bind": "records",
+                "selectedBind": "selectedIds",
+                "multiSelect": true,
+                "pageSize": 8,
+                "pageBind": "page",
+                "sortBind": "sort",
+                "filterBind": "query",
+                "editingBind": "cellEdit",
+                "handler": "gridChanged",
+                "columns": [
+                  { "text": "番号", "dataIndex": "id", "flex": 1, "align": "right" },
+                  {
+                    "text": "顧客名",
+                    "dataIndex": "customer",
+                    "flex": 3,
+                    "editor": { "xtype": "textfield", "allowBlank": false, "maxLength": 80 }
+                  },
+                  {
+                    "text": "数量",
+                    "dataIndex": "quantity",
+                    "flex": 1,
+                    "align": "right",
+                    "editor": {
+                      "xtype": "numberfield",
+                      "minValue": 0,
+                      "maxValue": 9999,
+                      "allowBlank": false
+                    }
+                  },
+                  {
+                    "text": "状況",
+                    "dataIndex": "status",
+                    "flex": 2,
+                    "editor": { "xtype": "combobox", "options": ["受注", "出荷済"] }
+                  },
+                  { "text": "内部メモ", "dataIndex": "memo", "hidden": true }
+                ]
+              },
+              {
+                "xtype": "label",
+                "text": "編集はEnterで保存、Escで取消。□やCtrl／Shiftで複数選択。",
+                "variant": "muted"
+              }
+            ]
+          },
+          {
+            "xtype": "tree",
+            "itemId": "categories",
+            "title": "出荷状況から絞り込む",
+            "expandedBind": "expanded",
+            "selectedBind": "category",
+            "handler": "categoryChanged",
+            "root": {
+              "children": [
+                {
+                  "id": "orders",
+                  "text": "受注一覧",
+                  "expanded": true,
+                  "children": [
+                    { "id": "all", "text": "すべて", "leaf": true },
+                    { "id": "received", "text": "受注", "leaf": true },
+                    { "id": "shipped", "text": "出荷済", "leaf": true }
+                  ]
+                },
+                {
+                  "id": "archive",
+                  "text": "アーカイブ",
+                  "children": [
+                    {
+                      "id": "past",
+                      "text": "過去のデータ（準備中）",
+                      "leaf": true,
+                      "disabled": true
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "xtype": "panel",
+            "title": "メモ",
+            "items": [
+              {
+                "xtype": "textarea",
+                "itemId": "tabMemo",
+                "fieldLabel": "入力を保持するメモ",
+                "bind": "memo",
+                "rows": 4
+              }
+            ]
+          },
+          { "xtype": "container", "title": "準備中", "disabled": true }
+        ]
+      },
+      { "xtype": "label", "bind": "notice", "variant": "muted" }
+    ]
+  }
+}

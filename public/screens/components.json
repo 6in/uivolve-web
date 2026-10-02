@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "id": "components",
+  "title": "パネル・ウィンドウ",
+  "script": "components.rhai",
+  "state": {
+    "savedName": "山田 太郎",
+    "savedRole": "UIエンジン開発",
+    "draftName": "",
+    "draftRole": "",
+    "memo": "日本語のメモも、そのまま入力できます。",
+    "profileCollapsed": false,
+    "memoCollapsed": false,
+    "editorOpen": false,
+    "confirmOpen": false,
+    "confirmText": "",
+    "notice": "タイトルを押すとパネルを折りたためます。"
+  },
+  "ui": {
+    "xtype": "container",
+    "items": [
+      {
+        "xtype": "label",
+        "text": "パネルの開閉と、重なるウィンドウを試せます。",
+        "variant": "muted"
+      },
+      {
+        "xtype": "panel",
+        "itemId": "profile",
+        "title": "プロフィール",
+        "collapsedBind": "profileCollapsed",
+        "handler": "panelChanged",
+        "items": [
+          { "xtype": "metric", "text": "保存済みの名前", "bind": "savedName", "variant": "green" },
+          { "xtype": "label", "bind": "savedRole" },
+          {
+            "xtype": "panel",
+            "itemId": "memoPanel",
+            "title": "メモ",
+            "collapsedBind": "memoCollapsed",
+            "items": [
+              { "xtype": "textfield", "itemId": "memo", "text": "ひとこと", "bind": "memo" }
+            ]
+          }
+        ]
+      },
+      {
+        "xtype": "button",
+        "itemId": "openEditor",
+        "text": "ウィンドウで編集",
+        "handler": "openEditor",
+        "variant": "primary"
+      },
+      { "xtype": "label", "bind": "notice", "variant": "muted" },
+      {
+        "xtype": "window",
+        "itemId": "editor",
+        "title": "プロフィールを編集",
+        "visibleBind": "editorOpen",
+        "width": 420,
+        "handler": "editorClosed",
+        "items": [
+          { "xtype": "textfield", "itemId": "draftName", "text": "名前", "bind": "draftName" },
+          { "xtype": "textfield", "itemId": "draftRole", "text": "担当", "bind": "draftRole" },
+          { "xtype": "label", "text": "保存前に確認ウィンドウを表示します。", "variant": "muted" },
+          {
+            "xtype": "container",
+            "layout": "hbox",
+            "items": [
+              {
+                "xtype": "button",
+                "itemId": "cancelEditor",
+                "text": "キャンセル",
+                "handler": "cancelEditor"
+              },
+              {
+                "xtype": "button",
+                "itemId": "review",
+                "text": "保存を確認",
+                "handler": "review",
+                "variant": "primary"
+              }
+            ]
+          },
+          {
+            "xtype": "window",
+            "itemId": "confirm",
+            "title": "変更を保存しますか？",
+            "visibleBind": "confirmOpen",
+            "width": 360,
+            "items": [
+              { "xtype": "label", "bind": "confirmText" },
+              {
+                "xtype": "container",
+                "layout": "hbox",
+                "items": [
+                  { "xtype": "button", "itemId": "back", "text": "編集に戻る", "handler": "back" },
+                  {
+                    "xtype": "button",
+                    "itemId": "commit",
+                    "text": "保存する",
+                    "handler": "commit",
+                    "variant": "primary"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

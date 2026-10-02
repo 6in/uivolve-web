@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#14222c" />
+    <title>WASM UI Lab — DOM / Canvas</title>
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%2314222c'/%3E%3Cpath d='M9 10h10v9H9zm13 0h9v20h-9zM9 22h10v8H9z' fill='%2384dcc8'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="./" aria-label="WASM UI Lab ホーム"
+        ><span class="brand-mark"><i></i><i></i><i></i></span>WASM UI Lab<span class="brand-sub"
+          >ENGINE EXPERIMENT</span
+        ></a
+      >
+      <div class="engine-status">
+        <span class="status-light"></span><span id="engine-status">エンジンを起動中</span>
+      </div>
+    </header>
+    <main>
+      <section class="intro">
+        <div>
+          <div class="eyebrow">EXPERIMENT 01 <span>／</span> TWO RENDERERS, ONE ENGINE</div>
+          <h1>ひとつの画面、<br class="mobile-break" />ふたつの描画。</h1>
+          <p>画面定義も、処理も、状態も同じ。変わるのは表示の方法だけ。</p>
+        </div>
+        <div class="intro-label">
+          <span>Rust + Rhai</span><strong>WebAssembly</strong
+          ><span class="intro-label-line">HTTPから読み込み、エンジンで実行</span>
+        </div>
+      </section>
+      <section class="workspace-toolbar" aria-label="比較設定">
+        <div class="workspace-pickers">
+          <div class="screen-picker">
+            <label for="screen-select">画面パッケージ</label
+            ><select id="screen-select" disabled>
+              <option value="orders">受注管理</option>
+              <option value="tasks">タスク管理</option>
+              <option value="components">パネル・ウィンドウ</option>
+              <option value="uivolve-forms">uivolve フォーム部品</option>
+              <option value="grid-lab">Grid・タブ・ツリー・メニュー</option>
+              <option value="uivolve-gallery">uivolve コンポーネントギャラリー</option></select
+            ><button
+              id="reload"
+              class="icon-button"
+              title="画面をHTTPから再取得"
+              aria-label="画面を再取得"
+              disabled
+            >
+              ↻
+            </button>
+          </div>
+          <div class="screen-picker theme-picker">
+            <label for="theme-select">テーマ</label>
+            <select id="theme-select" disabled>
+              <option value="light">ライト</option>
+              <option value="dark">ダーク</option>
+              <option value="custom" disabled>カスタム</option>
+            </select>
+            <button id="theme-toggle" class="subtle-button" aria-expanded="false">
+              配色を編集
+            </button>
+          </div>
+        </div>
+        <div class="toolbar-actions">
+          <button id="benchmark" class="subtle-button" disabled>
+            <span aria-hidden="true">◷</span> 60回再描画</button
+          ><button id="source-toggle" class="subtle-button" aria-expanded="false">
+            <span aria-hidden="true">〈 〉</span> 定義とスクリプト
+          </button>
+        </div>
+      </section>
+      <div id="error" class="error-banner" role="alert" hidden></div>
+      <div id="loading" class="loading-banner" role="status">
+        WASMエンジンと画面パッケージを読み込んでいます…
+      </div>
+      <section class="comparison" aria-label="DOM版とCanvas版の比較">
+        <article class="renderer-card">
+          <header class="card-heading">
+            <div>
+              <span class="renderer-symbol dom-symbol" aria-hidden="true">▦</span>
+              <h2>DOM<span>ブラウザの部品で表示</span></h2>
+            </div>
+            <span class="backend-tag">NATIVE ELEMENTS</span>
+          </header>
+          <div id="dom-stage" class="stage" aria-label="DOM版の画面"></div>
+          <footer class="card-footer">
+            <span><i class="mini-dot blue"></i>HTML入力・キーボード操作</span
+            ><span id="dom-timing" class="timing">— ms</span>
+          </footer>
+        </article>
+        <article class="renderer-card">
+          <header class="card-heading">
+            <div>
+              <span class="renderer-symbol canvas-symbol" aria-hidden="true">◇</span>
+              <h2>Canvas<span>同じ部品をひとつの面に描画</span></h2>
+            </div>
+            <span class="backend-tag">CANVAS 2D</span>
+          </header>
+          <div id="canvas-stage" class="stage canvas-stage" aria-label="Canvas版の画面">
+            <canvas
+              id="canvas"
+              tabindex="0"
+              aria-label="Canvas画面。Tabで部品を移動、Enterで操作。入力時はHTML入力欄に切り替わります。"
+            ></canvas>
+          </div>
+          <footer class="card-footer">
+            <span><i class="mini-dot green"></i>編集中はHTML入力と連携</span
+            ><span id="canvas-timing" class="timing">— ms</span>
+          </footer>
+        </article>
+      </section>
+      <section class="runtime-strip" aria-label="エンジンの状態">
+        <div>
+          <span class="sync-icon" aria-hidden="true">⇄</span><strong>同じ状態を共有</strong
+          ><span>どちらの画面からも操作できます</span>
+        </div>
+        <dl>
+          <div>
+            <dt>REVISION</dt>
+            <dd id="revision">000</dd>
+          </div>
+          <div>
+            <dt>WASM</dt>
+            <dd id="wasm-size">—</dd>
+          </div>
+          <div>
+            <dt>COMPILE</dt>
+            <dd id="compile-time">—</dd>
+          </div>
+          <div>
+            <dt>WEBMCP</dt>
+            <dd id="webmcp-status">準備中</dd>
+          </div>
+        </dl>
+      </section>
+      <section id="theme-panel" class="source-panel theme-panel" hidden>
+        <header>
+          <div>
+            <h2>好きな配色を、両方の画面へ。</h2>
+            <p>色だけを変更するテーマ設定。入力値や開いているウィンドウは保たれます。</p>
+          </div>
+          <button id="theme-apply" class="primary-button" disabled>配色を適用</button>
+        </header>
+        <div id="theme-error" class="error-banner" role="alert" hidden></div>
+        <form id="theme-url-form" class="url-form">
+          <label for="theme-url">テーマURL</label>
+          <input
+            id="theme-url"
+            type="url"
+            required
+            placeholder="https://example.com/themes/custom.json"
+          />
+          <button id="theme-load-url" class="subtle-button" disabled>URLから読み込む</button>
+        </form>
+        <div class="source-editors theme-editor">
+          <label
+            >テーマJSON<textarea
+              id="theme-source"
+              spellcheck="false"
+              aria-label="テーマJSON"
+            ></textarea>
+          </label>
+          <div class="theme-help">
+            <p>背景、文字、枠線、ボタンなどの色を指定できます。</p>
+            <p>
+              色は #RRGGBB または透明度を含む
+              #RRGGBBAA。省略した色はmodeで選んだ標準テーマの値を使います。
+            </p>
+            <p>現在の配色をもとに編集できます。ライト／ダークの選択で元のテーマに戻せます。</p>
+          </div>
+        </div>
+      </section>
+      <section id="source-panel" class="source-panel" hidden>
+        <header>
+          <div>
+            <h2>実行する画面を、その場で変更。</h2>
+            <p>
+              JSONとRhaiを編集して適用すると、WASM内で再コンパイルします。状態は初期値に戻ります。
+            </p>
+          </div>
+          <button id="apply" class="primary-button" disabled>変更を適用</button>
+        </header>
+        <form id="url-form" class="url-form">
+          <label for="screen-url">パッケージURL</label
+          ><input
+            id="screen-url"
+            type="url"
+            placeholder="https://example.com/screens/app.json"
+            required
+          /><button id="load-url" class="subtle-button" disabled>URLから読み込む</button>
+        </form>
+        <div class="source-editors">
+          <label
+            >画面定義 <span id="package-url"></span
+            ><textarea
+              id="dsl-source"
+              spellcheck="false"
+              aria-label="画面定義JSON"
+            ></textarea></label
+          ><label
+            >イベント処理 <span id="script-url"></span
+            ><textarea id="script-source" spellcheck="false" aria-label="Rhaiスクリプト"></textarea>
+          </label>
+        </div>
+        <details>
+          <summary>共有状態を見る</summary>
+          <pre id="state-view"></pre>
+        </details>
+      </section>
+      <section class="notes">
+        <div>
+          <span class="note-number">01</span>
+          <p>
+            <strong>画面はHTTPで取得</strong
+            >エンジンの再ビルドなしで、別の画面と処理を読み込めます。
+          </p>
+        </div>
+        <div>
+          <span class="note-number">02</span>
+          <p>
+            <strong>処理と配置はWASM内</strong
+            >RhaiをASTにコンパイル。部品の配置もRustで計算しています。
+          </p>
+        </div>
+        <div>
+          <span class="note-number">03</span>
+          <p>
+            <strong>性能値は更新命令の時間</strong
+            >DOM更新・Canvas描画命令のCPU時間。GPU完了やFPSの測定ではありません。
+          </p>
+        </div>
+      </section>
+    </main>
+    <footer class="page-footer">
+      <span>WASM UI LAB <span>／</span> PROOF OF CONCEPT</span
+      ><span>Bun + Vite+ · Rust engine · DOM / Canvas 2D</span>
+    </footer>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "name": "ダーク",
+  "mode": "dark",
+  "colors": {
+    "background": "#192630",
+    "surface": "#20313d",
+    "subtle": "#263b48",
+    "text": "#e4eef3",
+    "muted": "#a6bac6",
+    "border": "#3d5565",
+    "primary": "#8bd0b9",
+    "onPrimary": "#102b23",
+    "selected": "#28483e",
+    "focus": "#9bddc5",
+    "overlay": "#07121bb3",
+    "shadow": "#00000066",
+    "infoBackground": "#233c50",
+    "infoText": "#9bcaed",
+    "successBackground": "#244638",
+    "successText": "#9cddba",
+    "warningBackground": "#493c24",
+    "warningText": "#eed39b"
+  }
+}

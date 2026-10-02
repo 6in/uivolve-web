@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "id": "tasks",
+  "title": "タスク管理",
+  "script": "tasks.rhai",
+  "state": {
+    "tasks": [
+      { "id": 1, "name": "DOM版の入力操作を確認", "status": "未完了" },
+      { "id": 2, "name": "Canvas版の描画を確認", "status": "未完了" },
+      { "id": 3, "name": "画面のHTTP読み込みを確認", "status": "完了" }
+    ],
+    "newTask": "",
+    "query": "",
+    "selected": 1,
+    "notice": "行を選び、完了状態を切り替えられます。"
+  },
+  "ui": {
+    "xtype": "container",
+    "items": [
+      {
+        "xtype": "container",
+        "layout": "hbox",
+        "items": [
+          { "xtype": "metric", "text": "タスク数", "bind": "count", "variant": "blue" },
+          { "xtype": "metric", "text": "完了", "bind": "done", "variant": "green" },
+          { "xtype": "metric", "text": "未完了", "bind": "pending", "variant": "amber" }
+        ]
+      },
+      {
+        "xtype": "textfield",
+        "itemId": "search",
+        "text": "タスクを検索",
+        "bind": "query",
+        "handler": "search"
+      },
+      {
+        "xtype": "grid",
+        "itemId": "tasks",
+        "bind": "visible",
+        "selectedBind": "selected",
+        "handler": "select",
+        "columns": [
+          { "text": "タスク", "dataIndex": "name", "flex": 3 },
+          { "text": "状態", "dataIndex": "status" }
+        ]
+      },
+      {
+        "xtype": "panel",
+        "title": "タスクを追加",
+        "items": [
+          { "xtype": "textfield", "itemId": "newTask", "text": "タスク名", "bind": "newTask" },
+          {
+            "xtype": "container",
+            "layout": "hbox",
+            "items": [
+              {
+                "xtype": "button",
+                "itemId": "add",
+                "text": "タスクを追加",
+                "handler": "add",
+                "variant": "primary"
+              },
+              {
+                "xtype": "button",
+                "itemId": "toggle",
+                "text": "完了を切り替え",
+                "handler": "toggle"
+              }
+            ]
+          }
+        ]
+      },
+      { "xtype": "label", "bind": "notice", "variant": "muted" }
+    ]
+  }
+}

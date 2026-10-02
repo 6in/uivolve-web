@@ -1,0 +1,210 @@
+{
+  "version": 1,
+  "id": "uivolve-forms",
+  "title": "uivolve フォーム部品",
+  "script": "uivolve-forms.rhai",
+  "state": {
+    "name": "山田 太郎",
+    "quantity": 3,
+    "due": "2026-10-15",
+    "memo": "日本語のメモも入力できます。\n複数行の編集を試してみてください。",
+    "notify": true,
+    "delivery": "standard",
+    "department": "design",
+    "languages": ["ja"],
+    "volume": 40,
+    "progress": 0.4,
+    "volumeText": "音量 40",
+    "summary": "入力内容を保存すると、ここに表示されます。",
+    "notice": "チェック・選択・スライダーも、左右で同じ状態を共有します。"
+  },
+  "ui": {
+    "xtype": "container",
+    "items": [
+      {
+        "xtype": "label",
+        "text": "uivolveのフォーム部品をWASMで動かす",
+        "variant": "muted"
+      },
+      {
+        "xtype": "form",
+        "title": "基本情報",
+        "items": [
+          {
+            "xtype": "textfield",
+            "itemId": "personName",
+            "name": "name",
+            "fieldLabel": "名前",
+            "emptyText": "名前を入力",
+            "allowBlank": false,
+            "maxLength": 80
+          },
+          {
+            "xtype": "fieldcontainer",
+            "layout": "hbox",
+            "items": [
+              {
+                "xtype": "numberfield",
+                "itemId": "quantity",
+                "name": "quantity",
+                "fieldLabel": "数量",
+                "minValue": 0,
+                "maxValue": 100,
+                "increment": 1
+              },
+              {
+                "xtype": "datefield",
+                "itemId": "due",
+                "name": "due",
+                "fieldLabel": "予定日"
+              }
+            ]
+          },
+          {
+            "xtype": "textareafield",
+            "itemId": "memo",
+            "name": "memo",
+            "fieldLabel": "メモ",
+            "rows": 3,
+            "maxLength": 500
+          },
+          {
+            "xtype": "displayfield",
+            "fieldLabel": "保存した内容",
+            "bind": "summary"
+          }
+        ]
+      },
+      {
+        "xtype": "fieldset",
+        "itemId": "choices",
+        "title": "通知と選択",
+        "collapsible": true,
+        "items": [
+          {
+            "xtype": "checkboxfield",
+            "itemId": "notify",
+            "name": "notify",
+            "boxLabel": "更新を通知する"
+          },
+          {
+            "xtype": "fieldcontainer",
+            "layout": "hbox",
+            "items": [
+              {
+                "xtype": "radiofield",
+                "itemId": "standard",
+                "name": "delivery",
+                "inputValue": "standard",
+                "boxLabel": "通常"
+              },
+              {
+                "xtype": "radiofield",
+                "itemId": "express",
+                "name": "delivery",
+                "inputValue": "express",
+                "boxLabel": "優先"
+              }
+            ]
+          },
+          {
+            "xtype": "combo",
+            "itemId": "department",
+            "name": "department",
+            "fieldLabel": "担当チーム",
+            "valueField": "id",
+            "displayField": "label",
+            "store": {
+              "data": [
+                {
+                  "id": "design",
+                  "label": "デザイン"
+                },
+                {
+                  "id": "engine",
+                  "label": "エンジン"
+                },
+                {
+                  "id": "qa",
+                  "label": "品質確認"
+                }
+              ]
+            }
+          },
+          {
+            "xtype": "multiselect",
+            "itemId": "languages",
+            "name": "languages",
+            "fieldLabel": "利用言語（複数選択）",
+            "size": 3,
+            "options": [
+              {
+                "value": "ja",
+                "text": "日本語"
+              },
+              {
+                "value": "en",
+                "text": "English"
+              },
+              {
+                "value": "zh",
+                "text": "中文"
+              }
+            ]
+          },
+          {
+            "xtype": "sliderfield",
+            "itemId": "volume",
+            "name": "volume",
+            "fieldLabel": "音量",
+            "minValue": 0,
+            "maxValue": 100,
+            "increment": 5,
+            "handler": "volumeChanged"
+          },
+          {
+            "xtype": "label",
+            "bind": "volumeText",
+            "variant": "muted"
+          },
+          {
+            "xtype": "progress",
+            "bind": "progress"
+          }
+        ]
+      },
+      {
+        "xtype": "container",
+        "layout": "hbox",
+        "items": [
+          {
+            "xtype": "textfield",
+            "itemId": "readOnly",
+            "fieldLabel": "読み取り専用",
+            "value": "固定のテキスト",
+            "readOnly": true
+          },
+          {
+            "xtype": "textfield",
+            "itemId": "disabled",
+            "fieldLabel": "無効な入力欄",
+            "value": "操作できません",
+            "disabled": true
+          }
+        ]
+      },
+      {
+        "xtype": "button",
+        "itemId": "saveForm",
+        "text": "入力内容を保存",
+        "ui": "primary",
+        "handler": "saveForm"
+      },
+      {
+        "xtype": "label",
+        "bind": "notice",
+        "variant": "muted"
+      }
+    ]
+  }
+}

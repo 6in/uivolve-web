@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "id": "orders",
+  "title": "受注管理",
+  "script": "orders.rhai",
+  "state": {
+    "orders": [
+      { "id": 1, "number": "SO-001", "customer": "山田商事", "amount": 128000, "status": "受注" },
+      { "id": 2, "number": "SO-002", "customer": "鈴木工業", "amount": 86400, "status": "出荷済" },
+      {
+        "id": 3,
+        "number": "SO-003",
+        "customer": "田中デザイン",
+        "amount": 246000,
+        "status": "受注"
+      },
+      { "id": 4, "number": "SO-004", "customer": "森田製作所", "amount": 54000, "status": "出荷済" }
+    ],
+    "query": "",
+    "selected": 1,
+    "draftCustomer": "",
+    "draftAmount": "",
+    "notice": "一覧から受注を選んで編集できます。"
+  },
+  "ui": {
+    "xtype": "container",
+    "layout": "vbox",
+    "items": [
+      {
+        "xtype": "container",
+        "layout": "hbox",
+        "items": [
+          { "xtype": "metric", "text": "受注件数", "bind": "count", "variant": "blue" },
+          {
+            "xtype": "metric",
+            "text": "合計金額",
+            "bind": "total",
+            "variant": "green",
+            "flex": 1.6
+          },
+          { "xtype": "metric", "text": "未出荷", "bind": "pending", "variant": "amber" }
+        ]
+      },
+      {
+        "xtype": "textfield",
+        "itemId": "search",
+        "text": "受注を検索",
+        "bind": "query",
+        "handler": "search"
+      },
+      {
+        "xtype": "grid",
+        "itemId": "orders",
+        "bind": "visible",
+        "selectedBind": "selected",
+        "handler": "select",
+        "columns": [
+          { "text": "受注番号", "dataIndex": "number", "flex": 1 },
+          { "text": "顧客名", "dataIndex": "customer", "flex": 1.5 },
+          { "text": "金額", "dataIndex": "amountLabel", "flex": 1.15 },
+          { "text": "状態", "dataIndex": "status", "flex": 0.7 }
+        ]
+      },
+      {
+        "xtype": "panel",
+        "title": "選択した受注を編集",
+        "items": [
+          {
+            "xtype": "container",
+            "layout": "hbox",
+            "items": [
+              {
+                "xtype": "textfield",
+                "itemId": "customer",
+                "text": "顧客名",
+                "bind": "draftCustomer",
+                "flex": 1.5
+              },
+              {
+                "xtype": "textfield",
+                "itemId": "amount",
+                "text": "金額（円）",
+                "bind": "draftAmount"
+              }
+            ]
+          },
+          {
+            "xtype": "container",
+            "layout": "hbox",
+            "items": [
+              {
+                "xtype": "button",
+                "itemId": "save",
+                "text": "変更を反映",
+                "handler": "save",
+                "variant": "primary"
+              },
+              { "xtype": "button", "itemId": "reset", "text": "編集を戻す", "handler": "reset" }
+            ]
+          }
+        ]
+      },
+      { "xtype": "label", "bind": "notice", "variant": "muted" }
+    ]
+  }
+}

@@ -1,0 +1,1219 @@
+use rhai::{Dynamic, Engine, Scope, AST};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::cell::RefCell;
+use std::collections::HashSet;
+mod theme;
+use theme::Theme;
+mod extras;
+mod fields;
+mod figures;
+mod grid;
+mod navigation;
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct Package {
+    pub version: u32,
+    pub id: String,
+    pub title: String,
+    pub script: String,
+    pub state: Value,
+    pub ui: Node,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct Node {
+    #[serde(default)]
+    pub xtype: String,
+    #[serde(default)]
+    pub item_id: String,
+    #[serde(default)]
+    pub text: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub layout: String,
+    #[serde(default)]
+    pub bind: String,
+    #[serde(default)]
+    pub selected_bind: String,
+    #[serde(default)]
+    pub disabled_bind: String,
+    #[serde(default)]
+    pub collapsed_bind: String,
+    #[serde(default)]
+    pub visible_bind: String,
+    #[serde(default = "window_width")]
+    pub width: f64,
+    #[serde(default)]
+    pub handler: String,
+    #[serde(default)]
+    pub variant: String,
+    #[serde(default = "one")]
+    pub flex: f64,
+    #[serde(default)]
+    #[serde(deserialize_with = "extras::deserialize_items")]
+    pub items: Vec<Node>,
+    #[serde(default)]
+    pub columns: extras::Columns,
+    #[serde(default)]
+    pub field_label: String,
+    #[serde(default)]
+    pub box_label: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub value: Value,
+    #[serde(default)]
+    pub input_value: Value,
+    #[serde(default)]
+    pub checked: bool,
+    #[serde(default)]
+    pub empty_text: String,
+    #[serde(default)]
+    pub input_type: String,
+    #[serde(default)]
+    pub read_only: bool,
+    #[serde(default)]
+    pub disabled: bool,
+    #[serde(default = "yes")]
+    pub allow_blank: bool,
+    #[serde(default)]
+    pub min_length: Option<usize>,
+    #[serde(default)]
+    pub max_length: Option<usize>,
+    #[serde(default)]
+    pub min_value: Option<f64>,
+    #[serde(default)]
+    pub max_value: Option<f64>,
+    #[serde(default = "one")]
+    pub increment: f64,
+    #[serde(default = "four")]
+    pub rows: usize,
+    #[serde(default = "five")]
+    pub size: usize,
+    #[serde(default)]
+    pub multi_select: Option<bool>,
+    #[serde(default)]
+    pub options: Vec<Value>,
+    #[serde(default)]
+    pub store: Value,
+    #[serde(default)]
+    pub data: Vec<Value>,
+    #[serde(default = "display_field")]
+    pub display_field: String,
+    #[serde(default = "value_field")]
+    pub value_field: String,
+    #[serde(default)]
+    pub collapsible: bool,
+    #[serde(default)]
+    pub collapsed: bool,
+    #[serde(default)]
+    pub checkbox_toggle: bool,
+    #[serde(default)]
+    pub ui: String,
+    #[serde(default)]
+    pub page_size: usize,
+    #[serde(default)]
+    pub page_bind: String,
+    #[serde(default)]
+    pub sort_bind: String,
+    #[serde(default)]
+    pub filter_bind: String,
+    #[serde(default)]
+    pub editing_bind: String,
+    #[serde(default)]
+    pub active_tab: usize,
+    #[serde(default)]
+    pub active_bind: String,
+    #[serde(default)]
+    pub expanded_bind: String,
+    #[serde(default)]
+    pub open_bind: String,
+    #[serde(default)]
+    pub root: Value,
+    #[serde(default)]
+    pub root_visible: bool,
+    #[serde(default)]
+    pub children: Vec<Value>,
+    #[serde(default)]
+    pub height: Option<f64>,
+    #[serde(default)]
+    pub src: String,
+    #[serde(default)]
+    pub alt: String,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default, alias = "poster")]
+    pub poster_url: String,
+    #[serde(default)]
+    pub autoplay: bool,
+    #[serde(default)]
+    pub muted: bool,
+    #[serde(default)]
+    pub r#loop: bool,
+    #[serde(default = "yes")]
+    pub controls: bool,
+    #[serde(default)]
+    pub html: String,
+    #[serde(default, alias = "msg")]
+    pub message: String,
+    #[serde(default)]
+    pub icon: String,
+    #[serde(default)]
+    pub icon_cls: String,
+    #[serde(default)]
+    pub prompt: bool,
+    #[serde(default)]
+    pub hidden: bool,
+    #[serde(default = "yes")]
+    pub closable: bool,
+    #[serde(default)]
+    pub buttons: Value,
+    #[serde(default)]
+    pub tbar: Value,
+    #[serde(default)]
+    pub bbar: Value,
+    #[serde(default)]
+    pub menu: Value,
+    #[serde(default)]
+    pub language: String,
+    #[serde(default = "yes")]
+    pub line_numbers: bool,
+    #[serde(default)]
+    pub original: String,
+    #[serde(default = "yes")]
+    pub side_by_side: bool,
+    #[serde(default)]
+    pub lines: Vec<String>,
+    #[serde(default)]
+    pub max_lines: Option<usize>,
+    #[serde(default)]
+    pub messages: Vec<Value>,
+    #[serde(default)]
+    pub typing: bool,
+    #[serde(default)]
+    pub series: Value,
+    #[serde(default)]
+    pub sprites: Vec<Value>,
+    #[serde(default)]
+    pub branches: Vec<String>,
+    #[serde(default)]
+    pub commits: Vec<Value>,
+    #[serde(default)]
+    pub nodes: Vec<Value>,
+    #[serde(default)]
+    pub edges: Vec<Value>,
+    #[serde(default = "yes")]
+    pub show_today: bool,
+    #[serde(default)]
+    pub today_text: String,
+    #[serde(default)]
+    pub today: String,
+    #[serde(default)]
+    pub total: usize,
+    #[serde(default = "yes")]
+    pub display_info: bool,
+    #[serde(default)]
+    pub display_msg: String,
+    #[serde(default)]
+    pub empty_msg: String,
+    #[serde(default)]
+    pub align: String,
+    #[serde(skip)]
+    pub port_kind: String,
+}
+
+fn yes() -> bool {
+    true
+}
+fn four() -> usize {
+    4
+}
+fn five() -> usize {
+    5
+}
+fn display_field() -> String {
+    "text".into()
+}
+fn value_field() -> String {
+    "value".into()
+}
+
+fn one() -> f64 {
+    1.0
+}
+
+fn window_width() -> f64 {
+    400.0
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct Column {
+    pub text: String,
+    pub data_index: String,
+    #[serde(default = "one")]
+    pub flex: f64,
+    #[serde(default = "yes")]
+    pub sortable: bool,
+    #[serde(default)]
+    pub hidden: bool,
+    #[serde(default)]
+    pub align: String,
+    #[serde(default)]
+    pub editor: Option<Box<Node>>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Widget {
+    pub layer: usize,
+    pub key: String,
+    pub target: String,
+    pub kind: String,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    pub text: String,
+    pub value: String,
+    pub variant: String,
+    pub disabled: bool,
+    pub selected: bool,
+    pub cells: Vec<String>,
+    pub fractions: Vec<f64>,
+    pub payload: Value,
+    pub config: Value,
+}
+
+#[derive(Serialize)]
+pub struct Scene {
+    pub theme: Theme,
+    pub width: f64,
+    pub height: f64,
+    pub widgets: Vec<Widget>,
+    pub modal: Option<Modal>,
+    pub popup: Option<Value>,
+}
+
+#[derive(Serialize)]
+pub struct Modal {
+    pub key: String,
+    pub target: String,
+    pub layer: usize,
+}
+
+pub struct Runtime {
+    package: Package,
+    engine: Engine,
+    ast: AST,
+    state: Dynamic,
+    pub revision: u32,
+}
+
+impl Runtime {
+    pub fn load(mut package: Package, script: &str) -> Result<Self, String> {
+        if package.version != 1 {
+            return Err("Unsupported package version (expected 1)".into());
+        }
+        if !package.state.is_object() {
+            return Err("Initial state must be an object".into());
+        }
+        if script.len() > 100_000 {
+            return Err("Script exceeds 100 KB".into());
+        }
+        fields::normalize(&mut package.ui, "root");
+        validate(&package.ui, &mut HashSet::new(), &mut 0, 0)?;
+        fields::initialize(&package.ui, &mut package.state);
+        grid::initialize(&package.ui, &mut package.state);
+        navigation::initialize(&package.ui, &mut package.state);
+        extras::initialize(&package.ui, &mut package.state);
+        if package.ui.xtype == "window" {
+            return Err("A window must be inside a container or panel".into());
+        }
+        let mut engine = Engine::new();
+        engine.set_max_operations(50_000);
+        engine.set_max_call_levels(32);
+        engine.set_max_expr_depths(64, 32);
+        engine.set_max_array_size(10_000);
+        engine.set_max_map_size(32_000);
+        engine.set_max_string_size(100_000);
+        let ast = engine
+            .compile(script)
+            .map_err(|e| format!("{}: {e}", package.script))?;
+        let functions: HashSet<String> = ast.iter_functions().map(|f| f.name.to_owned()).collect();
+        if !functions.contains("init") {
+            return Err("Script must define init(state)".into());
+        }
+        validate_handlers(&package.ui, &functions)?;
+        let state = rhai::serde::to_dynamic(&package.state).map_err(|e| e.to_string())?;
+        let state: Dynamic = engine
+            .call_fn(&mut Scope::new(), &ast, "init", (state,))
+            .map_err(|e| format!("{} / init: {e}", package.script))?;
+        check_state(&state)?;
+        let initial: Value = rhai::serde::from_dynamic(&state).map_err(|e| e.to_string())?;
+        grid::validate_state(&package.ui, &initial)?;
+        navigation::validate_state(&package.ui, &initial)?;
+        extras::validate_state(&package.ui, &initial)?;
+        Ok(Self {
+            package,
+            engine,
+            ast,
+            state,
+            revision: 0,
+        })
+    }
+
+    pub fn dispatch(&mut self, target: &str, mut payload: Value) -> Result<(), String> {
+        let mut state = self.state_json()?;
+        let mut path = Vec::new();
+        if !find_path(&self.package.ui, target, &mut path) {
+            return Err(format!("Unknown itemId: {target}"));
+        }
+        let node = *path.last().unwrap();
+        let mut windows = Vec::new();
+        collect_windows(&self.package.ui, &state, &mut windows);
+        let scope = path.iter().rev().find(|n| n.xtype == "window");
+        if windows
+            .last()
+            .is_some_and(|w| scope.map(|n| n.item_id.as_str()) != Some(w.item_id.as_str()))
+            || path.iter().any(|n| {
+                (!n.disabled_bind.is_empty() && flag(&state, &n.disabled_bind))
+                    || n.disabled
+                    || (n.xtype == "window" && !flag(&state, &n.visible_bind))
+                    || (n.item_id != target && is_panel(n) && flag(&state, &n.collapsed_bind))
+            })
+            || navigation::hidden(&path, &state)
+            || extras::hidden(&path, &state)
+        {
+            return Ok(());
+        }
+        let action = payload
+            .get("action")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned();
+        if fields::input(node) && node.read_only {
+            return Ok(());
+        }
+        navigation::close_other_menus(&self.package.ui, &mut state, &path);
+        if extras::event_component(node) {
+            extras::event(node, &path, &mut state, &mut payload)?;
+        } else if grid::advanced(node) {
+            grid::event(node, &mut state, &mut payload)?;
+        } else if navigation::component(node) {
+            navigation::event(node, &mut state, &payload)?;
+        } else if is_panel(node) {
+            if action != "toggle" || node.collapsed_bind.is_empty() {
+                return Err("Panel event requires action: toggle and collapsedBind".into());
+            }
+            let collapsed = !flag(&state, &node.collapsed_bind);
+            state
+                .as_object_mut()
+                .unwrap()
+                .insert(node.collapsed_bind.clone(), json!(collapsed));
+            extras::accordion(&path, &mut state);
+        } else if node.xtype == "window" {
+            if !node.closable {
+                return Err("Window cannot be closed".into());
+            }
+            if action != "close" {
+                return Err("Window event requires action: close".into());
+            }
+            state
+                .as_object_mut()
+                .unwrap()
+                .insert(node.visible_bind.clone(), json!(false));
+        } else if !fields::input(node) && !["button", "grid"].contains(&node.xtype.as_str()) {
+            return Err("This component does not accept events".into());
+        }
+        let event_value = if fields::input(node) {
+            Some(fields::event_value(
+                node,
+                payload.get("value").unwrap_or(&Value::Null),
+            )?)
+        } else {
+            None
+        };
+        if let Some(value) = &event_value {
+            state
+                .as_object_mut()
+                .ok_or("State must be an object")?
+                .insert(node.bind.clone(), value.clone());
+        }
+        let mut next = rhai::serde::to_dynamic(state).map_err(|e| e.to_string())?;
+        if !node.handler.is_empty() {
+            let event = rhai::serde::to_dynamic(json!({ "target": target, "action": action, "value": event_value.unwrap_or_else(|| payload.get("value").cloned().unwrap_or(Value::Null)), "id": payload.get("id").cloned().unwrap_or(Value::Null), "column": payload.get("column").cloned().unwrap_or(Value::Null), "oldValue": payload.get("oldValue").cloned().unwrap_or(Value::Null) }))
+                .map_err(|e| e.to_string())?;
+            next = self
+                .engine
+                .call_fn(&mut Scope::new(), &self.ast, &node.handler, (next, event))
+                .map_err(|e| {
+                    format!(
+                        "{} / {} / {}: {e}",
+                        self.package.script, target, node.handler
+                    )
+                })?;
+        }
+        // Commit only after successful execution and serialization. Failed handlers preserve the old state.
+        let mut candidate: Value = rhai::serde::from_dynamic(&next).map_err(|e| e.to_string())?;
+        if !candidate.is_object() {
+            return Err("Handler must return a state object".into());
+        }
+        grid::reconcile(&self.package.ui, &self.state_json()?, &mut candidate);
+        grid::validate_state(&self.package.ui, &candidate)?;
+        navigation::validate_state(&self.package.ui, &candidate)?;
+        extras::validate_state(&self.package.ui, &candidate)?;
+        next = rhai::serde::to_dynamic(candidate).map_err(|e| e.to_string())?;
+        check_state(&next)?;
+        self.state = next;
+        self.revision += 1;
+        Ok(())
+    }
+
+    pub fn state_json(&self) -> Result<Value, String> {
+        rhai::serde::from_dynamic(&self.state).map_err(|e| e.to_string())
+    }
+
+    pub fn layout(&self, width: f64) -> Result<Scene, String> {
+        if !width.is_finite() || !(240.0..=4096.0).contains(&width) {
+            return Err("Viewport width must be between 240 and 4096".into());
+        }
+        let state = self.state_json()?;
+        let mut widgets = Vec::new();
+        let mut windows = Vec::new();
+        collect_windows(&self.package.ui, &state, &mut windows);
+        let mut height = windows
+            .iter()
+            .fold(measure(&self.package.ui, &state) + 32.0, |h, n| {
+                h.max(content_height(n, &state) + 88.0)
+            })
+            .max(if windows.is_empty() { 0.0 } else { 320.0 });
+        arrange(
+            &self.package.ui,
+            &state,
+            16.0,
+            16.0,
+            width - 32.0,
+            "root",
+            &mut widgets,
+        );
+        let mut modal = None;
+        for (i, node) in windows.iter().enumerate() {
+            let layer = i + 1;
+            let ww = node.width.min(width - 32.0);
+            let wh = content_height(node, &state) + 56.0;
+            let x = (width - ww) / 2.0;
+            let y = (height - wh) / 2.0;
+            let start = widgets.len();
+            let mut backdrop = widget(
+                node,
+                "backdrop",
+                0.0,
+                0.0,
+                width,
+                height,
+                &format!("{}:backdrop", node.item_id),
+            );
+            backdrop.text.clear();
+            widgets.push(backdrop);
+            let mut shell = widget(node, "window", x, y, ww, wh, &node.item_id);
+            shell.text = node.title.clone();
+            widgets.push(shell);
+            let mut close = widget(
+                node,
+                "window-close",
+                x + ww - 42.0,
+                y + 6.0,
+                32.0,
+                30.0,
+                &format!("{}:close", node.item_id),
+            );
+            close.text = "×".into();
+            close.payload = json!({ "action": "close" });
+            if node.closable {
+                widgets.push(close);
+            }
+            arrange_children(
+                node,
+                &state,
+                x + 14.0,
+                y + 42.0,
+                ww - 28.0,
+                &node.item_id,
+                &mut widgets,
+            );
+            let mut path = Vec::new();
+            find_path(&self.package.ui, &node.item_id, &mut path);
+            let disabled = path
+                .iter()
+                .any(|n| n.disabled || flag(&state, &n.disabled_bind));
+            for w in &mut widgets[start..] {
+                w.layer = layer;
+                w.disabled |= disabled;
+            }
+            modal = Some(Modal {
+                key: node.item_id.clone(),
+                target: node.item_id.clone(),
+                layer,
+            });
+        }
+        if let Some(m) = &modal {
+            for w in &mut widgets {
+                if w.layer != m.layer {
+                    w.disabled = true;
+                }
+            }
+        }
+        height = widgets
+            .iter()
+            .filter(|w| w.kind == "menu-surface")
+            .fold(height, |h, w| h.max(w.y + w.height + 16.0));
+        for w in &mut widgets {
+            if w.kind == "backdrop" {
+                w.height = height;
+            }
+        }
+        widgets.sort_by_key(|w| {
+            (
+                w.layer,
+                w.config
+                    .get("popup")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            )
+        });
+        let popup = widgets
+            .iter()
+            .rev()
+            .find(|w| w.kind == "menu-surface" && !w.disabled)
+            .map(|w| json!({"target":w.target,"layer":w.layer}));
+        Ok(Scene {
+            theme: THEME.with(|t| t.borrow().clone()),
+            width,
+            height,
+            widgets,
+            modal,
+            popup,
+        })
+    }
+}
+
+fn check_state(state: &Dynamic) -> Result<(), String> {
+    let value: Value = rhai::serde::from_dynamic(state).map_err(|e| e.to_string())?;
+    if !value.is_object() {
+        return Err("Handler must return a state object".into());
+    }
+    if serde_json::to_vec(&value).map_err(|e| e.to_string())?.len() > 1_000_000 {
+        return Err("State exceeds 1 MB".into());
+    }
+    Ok(())
+}
+
+fn validate(
+    node: &Node,
+    ids: &mut HashSet<String>,
+    count: &mut usize,
+    depth: usize,
+) -> Result<(), String> {
+    *count += 1;
+    if *count > 200 || depth > 20 {
+        return Err("UI exceeds 200 nodes or 20 nesting levels".into());
+    }
+    if ![
+        "container",
+        "panel",
+        "window",
+        "label",
+        "metric",
+        "textfield",
+        "textarea",
+        "numberfield",
+        "datefield",
+        "checkbox",
+        "radio",
+        "combobox",
+        "listbox",
+        "displayfield",
+        "slider",
+        "progressbar",
+        "fieldset",
+        "button",
+        "grid",
+        "tabpanel",
+        "treepanel",
+        "menu",
+        "menuseparator",
+        "toolbar",
+        "tbfill",
+        "tbseparator",
+        "tbspacer",
+        "tbtext",
+        "radiogroup",
+        "checkboxgroup",
+        "datepicker",
+        "pagingtoolbar",
+        "dialogbutton",
+        "toast",
+        "component",
+        "markdown",
+        "diffeditor",
+        "chatpanel",
+        "terminal",
+        "image",
+        "video",
+        "iframe",
+        "chart",
+        "draw",
+        "gitgraph",
+        "networkgraph",
+        "mermaid",
+    ]
+    .contains(&node.xtype.as_str())
+    {
+        return Err(format!("Unknown xtype: {}", node.xtype));
+    }
+    if !node.flex.is_finite() || node.flex <= 0.0 {
+        return Err("flex must be positive".into());
+    }
+    if !node.item_id.is_empty() && !ids.insert(node.item_id.clone()) {
+        return Err(format!("Duplicate itemId: {}", node.item_id));
+    }
+    if node.item_id.contains(':') {
+        return Err("itemId must not contain ':' (reserved for internal widget keys)".into());
+    }
+    if ["textfield", "button", "grid"].contains(&node.xtype.as_str()) && node.item_id.is_empty() {
+        return Err(format!("{} requires itemId", node.xtype));
+    }
+    if !node.collapsed_bind.is_empty()
+        && (!is_panel(node) || node.item_id.is_empty() || node.collapsed_bind.contains('.'))
+    {
+        return Err("collapsedBind requires a panel with itemId and a top-level binding".into());
+    }
+    if node.xtype == "window"
+        && (node.item_id.is_empty()
+            || node.visible_bind.is_empty()
+            || node.visible_bind.contains('.')
+            || !node.width.is_finite()
+            || !(240.0..=1200.0).contains(&node.width))
+    {
+        return Err(
+            "window requires itemId, top-level visibleBind, and width between 240 and 1200".into(),
+        );
+    }
+    if !["window", "toast"].contains(&node.xtype.as_str()) && !node.visible_bind.is_empty() {
+        return Err("visibleBind is supported only on window".into());
+    }
+    if fields::input(node) && (node.bind.is_empty() || node.bind.contains('.')) {
+        return Err("Input fields require a top-level state binding".into());
+    }
+    fields::validate(node)?;
+    grid::validate(node)?;
+    navigation::validate(node)?;
+    extras::validate(node)?;
+    if !node.layout.is_empty() && !["vbox", "hbox", "accordion"].contains(&node.layout.as_str()) {
+        return Err(format!("Unsupported layout: {}", node.layout));
+    }
+    if node.xtype == "grid"
+        && (node.columns.is_empty()
+            || node
+                .columns
+                .iter()
+                .any(|c| !c.flex.is_finite() || c.flex <= 0.0))
+    {
+        return Err("grid requires columns with positive flex".into());
+    }
+    for child in &node.items {
+        validate(child, ids, count, depth + 1)?;
+    }
+    Ok(())
+}
+
+fn validate_handlers(node: &Node, functions: &HashSet<String>) -> Result<(), String> {
+    if !node.handler.is_empty() && !functions.contains(&node.handler) {
+        return Err(format!(
+            "{} references undefined handler: {}",
+            node.item_id, node.handler
+        ));
+    }
+    for child in &node.items {
+        validate_handlers(child, functions)?;
+    }
+    Ok(())
+}
+
+fn find_path<'a>(node: &'a Node, id: &str, path: &mut Vec<&'a Node>) -> bool {
+    path.push(node);
+    if node.item_id == id {
+        return true;
+    }
+    for child in &node.items {
+        if find_path(child, id, path) {
+            return true;
+        }
+    }
+    path.pop();
+    false
+}
+
+fn flag(state: &Value, path: &str) -> bool {
+    !path.is_empty() && lookup(state, path).as_bool() == Some(true)
+}
+
+fn is_panel(node: &Node) -> bool {
+    ["panel", "fieldset"].contains(&node.xtype.as_str())
+}
+
+fn collect_windows<'a>(node: &'a Node, state: &Value, windows: &mut Vec<&'a Node>) {
+    if node.xtype == "window" {
+        if !flag(state, &node.visible_bind) {
+            return;
+        }
+        windows.push(node);
+    }
+    if is_panel(node) && flag(state, &node.collapsed_bind) {
+        return;
+    }
+    if node.xtype == "tabpanel" {
+        if let Some(child) = node.items.get(navigation::active(node, state)) {
+            collect_windows(child, state, windows);
+        }
+        return;
+    }
+    for child in &node.items {
+        collect_windows(child, state, windows);
+    }
+}
+
+fn lookup<'a>(state: &'a Value, path: &str) -> &'a Value {
+    path.split('.')
+        .fold(state, |value, key| value.get(key).unwrap_or(&Value::Null))
+}
+
+fn display(value: &Value) -> String {
+    match value {
+        Value::Null => String::new(),
+        Value::String(s) => s.clone(),
+        _ => value.to_string(),
+    }
+}
+
+fn flow_children<'a>(node: &'a Node) -> impl Iterator<Item = &'a Node> {
+    node.items.iter().filter(|n| n.xtype != "window")
+}
+
+fn content_height(node: &Node, state: &Value) -> f64 {
+    if node.layout == "hbox" {
+        flow_children(node)
+            .map(|n| measure(n, state))
+            .fold(0.0, f64::max)
+    } else {
+        flow_children(node).map(|n| measure(n, state)).sum::<f64>()
+            + 12.0 * flow_children(node).count().saturating_sub(1) as f64
+    }
+}
+
+fn measure(node: &Node, state: &Value) -> f64 {
+    if extras::component(node) {
+        return extras::height(node, state);
+    }
+    if grid::advanced(node) {
+        return grid::height(node, state);
+    }
+    if navigation::component(node) {
+        return navigation::height(node, state);
+    }
+    match node.xtype.as_str() {
+        "window" => 0.0,
+        "container" | "panel" | "fieldset" => {
+            if is_panel(node) && flag(state, &node.collapsed_bind) {
+                return 42.0;
+            }
+            content_height(node, state) + if is_panel(node) { 56.0 } else { 0.0 }
+        }
+        "metric" => 82.0,
+        "textfield" | "numberfield" | "datefield" | "combobox" | "displayfield" | "slider" => 62.0,
+        "textarea" => 24.0 + node.rows as f64 * 20.0 + 16.0,
+        "listbox" => 24.0 + node.size as f64 * 28.0 + 2.0,
+        "checkbox" | "radio" => {
+            if node.field_label.is_empty() {
+                38.0
+            } else {
+                62.0
+            }
+        }
+        "progressbar" => 30.0,
+        "grid" => {
+            38.0 + 42.0
+                * lookup(state, &node.bind)
+                    .as_array()
+                    .map_or(1, |v| v.len().clamp(1, 100)) as f64
+        }
+        "button" => 38.0,
+        _ => 24.0,
+    }
+}
+
+fn widget(node: &Node, kind: &str, x: f64, y: f64, width: f64, height: f64, key: &str) -> Widget {
+    Widget {
+        layer: 0,
+        key: key.into(),
+        target: node.item_id.clone(),
+        kind: kind.into(),
+        x,
+        y,
+        width,
+        height,
+        text: node.text.clone(),
+        value: String::new(),
+        variant: node.variant.clone(),
+        disabled: false,
+        selected: false,
+        cells: Vec::new(),
+        fractions: Vec::new(),
+        payload: json!({}),
+        config: json!({}),
+    }
+}
+
+fn arrange(
+    node: &Node,
+    state: &Value,
+    x: f64,
+    y: f64,
+    width: f64,
+    key: &str,
+    widgets: &mut Vec<Widget>,
+) {
+    if extras::component(node) {
+        extras::arrange(node, state, x, y, width, key, widgets);
+        return;
+    }
+    if grid::advanced(node) {
+        grid::arrange(node, state, x, y, width, key, widgets);
+        return;
+    }
+    if navigation::component(node) {
+        navigation::arrange(node, state, x, y, width, key, widgets);
+        return;
+    }
+    let height = measure(node, state);
+    match node.xtype.as_str() {
+        "window" => {}
+        "container" | "panel" | "fieldset" => {
+            let panel = is_panel(node);
+            let (cx, cy, cw) = if panel {
+                let mut w = widget(node, &node.xtype, x, y, width, height, key);
+                w.text = if node.collapsed_bind.is_empty() {
+                    node.title.clone()
+                } else {
+                    String::new()
+                };
+                widgets.push(w);
+                if !node.collapsed_bind.is_empty() {
+                    let mut toggle = widget(
+                        node,
+                        "panel-toggle",
+                        x + 1.0,
+                        y + 1.0,
+                        width - 2.0,
+                        40.0,
+                        &format!("{key}:toggle"),
+                    );
+                    toggle.selected = flag(state, &node.collapsed_bind);
+                    toggle.text =
+                        format!("{} {}", if toggle.selected { "▸" } else { "▾" }, node.title);
+                    toggle.disabled = node.disabled || flag(state, &node.disabled_bind);
+                    toggle.payload = json!({ "action": "toggle" });
+                    widgets.push(toggle);
+                    if flag(state, &node.collapsed_bind) {
+                        return;
+                    }
+                }
+                (x + 14.0, y + 42.0, width - 28.0)
+            } else {
+                (x, y, width)
+            };
+            arrange_children(node, state, cx, cy, cw, key, widgets);
+        }
+        "grid" => {
+            let total: f64 = node.columns.iter().map(|c| c.flex).sum();
+            let fractions: Vec<f64> = node.columns.iter().map(|c| c.flex / total).collect();
+            let mut header = widget(
+                node,
+                "grid-header",
+                x,
+                y,
+                width,
+                38.0,
+                &format!("{key}:header"),
+            );
+            header.cells = node.columns.iter().map(|c| c.text.clone()).collect();
+            header.fractions = fractions.clone();
+            widgets.push(header);
+            if let Some(rows) = lookup(state, &node.bind)
+                .as_array()
+                .filter(|r| !r.is_empty())
+            {
+                for (i, row) in rows.iter().take(100).enumerate() {
+                    let mut w = widget(
+                        node,
+                        "row",
+                        x,
+                        y + 38.0 + i as f64 * 42.0,
+                        width,
+                        42.0,
+                        &format!("{key}:row:{i}"),
+                    );
+                    w.cells = node
+                        .columns
+                        .iter()
+                        .map(|c| display(lookup(row, &c.data_index)))
+                        .collect();
+                    w.fractions = fractions.clone();
+                    w.disabled = node.disabled
+                        || !node.disabled_bind.is_empty()
+                            && lookup(state, &node.disabled_bind).as_bool() == Some(true);
+                    w.payload = json!({ "id": row.get("id").unwrap_or(&Value::Null) });
+                    w.selected = row
+                        .get("id")
+                        .is_some_and(|id| id == lookup(state, &node.selected_bind));
+                    widgets.push(w);
+                }
+            } else {
+                let mut w = widget(
+                    node,
+                    "empty",
+                    x,
+                    y + 38.0,
+                    width,
+                    42.0,
+                    &format!("{key}:empty"),
+                );
+                w.text = "一致する項目はありません".into();
+                widgets.push(w);
+            }
+        }
+        kind => {
+            let mut w = widget(node, kind, x, y, width, height, key);
+            if !node.bind.is_empty() {
+                w.value = display(lookup(state, &node.bind));
+            }
+            if kind == "label" && !node.bind.is_empty() {
+                w.text = w.value.clone();
+            }
+            w.disabled = node.disabled
+                || !node.disabled_bind.is_empty()
+                    && lookup(state, &node.disabled_bind).as_bool() == Some(true);
+            fields::configure(node, state, &mut w);
+            widgets.push(w);
+        }
+    }
+}
+
+fn arrange_children(
+    node: &Node,
+    state: &Value,
+    x: f64,
+    y: f64,
+    width: f64,
+    key: &str,
+    widgets: &mut Vec<Widget>,
+) {
+    let start = widgets.len();
+    let total_flex: f64 = flow_children(node).map(|n| n.flex).sum();
+    let available = (width - 12.0 * flow_children(node).count().saturating_sub(1) as f64).max(1.0);
+    let mut offset = 0.0;
+    for (i, child) in node
+        .items
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| n.xtype != "window")
+    {
+        let child_key = if child.item_id.is_empty() {
+            format!("{key}.{i}")
+        } else {
+            child.item_id.clone()
+        };
+        if node.layout == "hbox" {
+            let child_width = available * child.flex / total_flex;
+            arrange(
+                child,
+                state,
+                x + offset,
+                y,
+                child_width,
+                &child_key,
+                widgets,
+            );
+            offset += child_width + 12.0;
+        } else {
+            arrange(child, state, x, y + offset, width, &child_key, widgets);
+            offset += measure(child, state) + 12.0;
+        }
+    }
+    if node.disabled || flag(state, &node.disabled_bind) {
+        for w in &mut widgets[start..] {
+            w.disabled = true;
+        }
+    }
+}
+
+thread_local! {
+    static THEME: RefCell<Theme> = RefCell::new(Theme::default());
+    static RUNTIME: RefCell<Option<Runtime>> = const { RefCell::new(None) };
+    static RESPONSE: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+}
+
+fn execute(request: Value) -> Result<Value, String> {
+    match request.get("op").and_then(Value::as_str).unwrap_or("") {
+        "theme" => {
+            if let Some(value) = request.get("theme") {
+                let candidate = Theme::resolve(value.clone())?;
+                THEME.with(|t| *t.borrow_mut() = candidate);
+            }
+            THEME.with(|t| serde_json::to_value(&*t.borrow()).map_err(|e| e.to_string()))
+        }
+        "load" => {
+            let package: Package =
+                serde_json::from_value(request.get("package").cloned().ok_or("Missing package")?)
+                    .map_err(|e| e.to_string())?;
+            let script = request
+                .get("script")
+                .and_then(Value::as_str)
+                .ok_or("Missing script")?;
+            let runtime = Runtime::load(package, script)?;
+            let result = json!({ "state": runtime.state_json()?, "revision": runtime.revision });
+            RUNTIME.with(|r| *r.borrow_mut() = Some(runtime));
+            Ok(result)
+        }
+        "event" => RUNTIME.with(|r| {
+            let mut slot = r.borrow_mut();
+            let runtime = slot.as_mut().ok_or("No screen loaded")?;
+            let target = request
+                .get("target")
+                .and_then(Value::as_str)
+                .ok_or("Missing target")?;
+            runtime.dispatch(target, request.get("payload").cloned().unwrap_or(json!({})))?;
+            Ok(json!({ "state": runtime.state_json()?, "revision": runtime.revision }))
+        }),
+        "layout" => RUNTIME.with(|r| {
+            let slot = r.borrow();
+            let runtime = slot.as_ref().ok_or("No screen loaded")?;
+            let width = request
+                .get("width")
+                .and_then(Value::as_f64)
+                .ok_or("Missing width")?;
+            serde_json::to_value(runtime.layout(width)?).map_err(|e| e.to_string())
+        }),
+        _ => Err("Unknown operation".into()),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn input_alloc(len: usize) -> *mut u8 {
+    Box::into_raw(vec![0u8; len].into_boxed_slice()) as *mut u8
+}
+
+/// # Safety
+/// ptr/len must describe the live allocation returned by input_alloc, exactly once.
+#[no_mangle]
+pub unsafe extern "C" fn input_free(ptr: *mut u8, len: usize) {
+    drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, len)));
+}
+
+/// # Safety
+/// ptr/len must refer to an initialized input_alloc allocation that remains live for this call.
+#[no_mangle]
+pub unsafe extern "C" fn request(ptr: *const u8, len: usize) -> *const u8 {
+    let result = if len > 2_000_000 {
+        Err("Request exceeds 2 MB".into())
+    } else {
+        serde_json::from_slice(std::slice::from_raw_parts(ptr, len))
+            .map_err(|e| e.to_string())
+            .and_then(execute)
+    };
+    let value = match result {
+        Ok(data) => json!({ "ok": true, "data": data }),
+        Err(error) => json!({ "ok": false, "error": error }),
+    };
+    RESPONSE.with(|r| {
+        let mut response = r.borrow_mut();
+        *response = serde_json::to_vec(&value).unwrap();
+        response.as_ptr()
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn response_len() -> usize {
+    RESPONSE.with(|r| r.borrow().len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn demo() -> Package {
+        serde_json::from_str(include_str!("../../public/screens/orders.json")).unwrap()
+    }
+    const SCRIPT: &str = include_str!("../../public/screens/orders.rhai");
+
+    #[test]
+    fn downloaded_screen_scripts_filter_select_and_save() {
+        let mut runtime = Runtime::load(demo(), SCRIPT).unwrap();
+        runtime.dispatch("search", json!({"value":"山田"})).unwrap();
+        assert_eq!(
+            runtime.state_json().unwrap()["visible"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        runtime.dispatch("search", json!({"value":""})).unwrap();
+        runtime.dispatch("orders", json!({"id":2})).unwrap();
+        runtime
+            .dispatch("customer", json!({"value":"更新された顧客"}))
+            .unwrap();
+        runtime.dispatch("save", json!({})).unwrap();
+        assert_eq!(
+            runtime.state_json().unwrap()["orders"][1]["customer"],
+            "更新された顧客"
+        );
+        assert!(runtime
+            .layout(500.0)
+            .unwrap()
+            .widgets
+            .iter()
+            .any(|w| w.selected));
+    }
+
+    #[test]
+    fn bad_scripts_and_unknown_widgets_are_rejected() {
+        assert!(Runtime::load(demo(), "fn init(").is_err());
+        assert!(Runtime::load(demo(), "fn init(s) { s }").is_err());
+        let mut package = demo();
+        package.ui.xtype = "unknown".into();
+        assert!(Runtime::load(package, SCRIPT).is_err());
+    }
+
+    // A failed or runaway handler cannot commit partial state changes.
+    #[test]
+    fn event_failure_rolls_back_and_execution_is_bounded() {
+        let script = format!("{SCRIPT}\nfn fail(s, e) {{ s.query = \"bad\"; while true {{}} s }}");
+        let mut package = demo();
+        package.ui.items.push(
+            serde_json::from_value(json!({"xtype":"button", "itemId":"fail", "handler":"fail"}))
+                .unwrap(),
+        );
+        let mut runtime = Runtime::load(package, &script).unwrap();
+        let before = runtime.state_json().unwrap();
+        assert!(runtime
+            .dispatch("fail", json!({}))
+            .unwrap_err()
+            .contains("operations"));
+        assert_eq!(runtime.state_json().unwrap(), before);
+    }
+}

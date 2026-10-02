@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 230">
+  <rect width="600" height="230" rx="18" fill="#14222c"/>
+  <g fill="#e7f5ee" font-family="sans-serif" text-anchor="middle">
+    <text x="300" y="47" font-size="20">ONE ENGINE · TWO RENDERERS</text>
+    <rect x="35" y="88" width="120" height="64" rx="8" fill="#304b40"/>
+    <rect x="228" y="88" width="145" height="64" rx="8" fill="#286c5c"/>
+    <rect x="445" y="73" width="120" height="43" rx="8" fill="#304b40"/>
+    <rect x="445" y="130" width="120" height="43" rx="8" fill="#304b40"/>
+    <text x="95" y="127" font-size="18">DSL + Rhai</text>
+    <text x="300" y="127" font-size="24">WASM</text>
+    <text x="505" y="101" font-size="18">DOM</text>
+    <text x="505" y="158" font-size="18">Canvas</text>
+    <text x="300" y="204" font-size="12">HTTP → UI engine → shared layout</text>
+  </g>
+  <g stroke="#94dcc8" stroke-width="3" fill="none"><path d="M155 120H228M373 120H410V94H445M410 120V151H445"/></g>
+</svg>

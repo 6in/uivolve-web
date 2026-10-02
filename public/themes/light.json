@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "name": "ライト",
+  "mode": "light",
+  "colors": {
+    "background": "#ffffff",
+    "surface": "#fafbfc",
+    "subtle": "#f2f5f7",
+    "text": "#263f50",
+    "muted": "#617480",
+    "border": "#dce4e8",
+    "primary": "#286c5c",
+    "onPrimary": "#ffffff",
+    "selected": "#eef6f3",
+    "focus": "#458878",
+    "overlay": "#14222c3d",
+    "shadow": "#14222c33",
+    "infoBackground": "#eff5fb",
+    "infoText": "#427fae",
+    "successBackground": "#edf7f3",
+    "successText": "#287b63",
+    "warningBackground": "#fbf5e9",
+    "warningText": "#9b7434"
+  }
+}
