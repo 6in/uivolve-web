@@ -339,13 +339,13 @@ pub fn event(n: &Node, state: &mut Value, payload: &Value) -> Result<(), String>
     }
     Ok(())
 }
-pub fn height(n: &Node, state: &Value) -> f64 {
+pub fn height(n: &Node, state: &Value, width: f64) -> f64 {
     match n.xtype.as_str() {
         "tabpanel" => {
             42.0 + n
                 .items
                 .get(active(n, state))
-                .map(|c| measure(c, state))
+                .map(|c| measure(c, state, width))
                 .unwrap_or(0.0)
         }
         "treepanel" => 42.0 + tree_rows(n, state, true).len().max(1) as f64 * 34.0,
@@ -401,7 +401,7 @@ pub fn arrange(
             }
         }
         "treepanel" => {
-            let mut shell = widget(n, "tree-shell", x, y, width, height(n, state), key);
+            let mut shell = widget(n, "tree-shell", x, y, width, height(n, state, width), key);
             shell.text = n.title.clone();
             out.push(shell);
             for (i, row) in tree_rows(n, state, true).into_iter().enumerate() {

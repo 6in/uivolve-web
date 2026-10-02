@@ -8,6 +8,7 @@ description: このWASM UI Labの画面JSONとRhaiハンドラを作成・修正
 リポジトリ同梱のスキル。画面パッケージはエンジンと別にHTTPで取得され、RhaiはWASM内でASTへコンパイルされる。
 
 - まず[画面形式](../../docs/screen-format.md)を読み、必要な部品とイベント契約を確認する。
+- 配置は[共通レイアウト契約](../../docs/layouts.md)と[実行例](../../public/screens/layout-lab.json)を参照する。layoutのgridは画面配置で、xtypeのgridは一覧表示。Gridは最大列数とcolSpan、CardはactiveBindの整数index、Borderは一意のregionと必須center、Fitは1つの子を使う。共通gap/paddingは0..64。高さは最小高で、内容が多ければ広がる。rowSpan、splitter、内部スクロール等の未対応機能を捏造しない。Cardの操作ボタンはCardの外側へ置く。
 - 配色は[テーマ形式](../../docs/theme-format.md)に従う別JSONとして作成する。画面JSONへ未対応のtheme/style属性を追加しない。テーマは色だけを指定し、modeごとの既定値で不足を補完する。
 - 一覧・編集は[受注JSON](../../public/screens/orders.json)と[処理](../../public/screens/orders.rhai)、追加・状態変更は[タスクJSON](../../public/screens/tasks.json)と[処理](../../public/screens/tasks.rhai)を参考にする。
 - パネルの折りたたみとモーダルの重ね表示は[部品JSON](../../public/screens/components.json)と[処理](../../public/screens/components.rhai)を参考にする。panel.collapsedBind、window.visibleBindにはトップレベルのbool状態キーを使う。windowは通常の配置領域を消費しない。

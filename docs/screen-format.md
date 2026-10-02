@@ -38,30 +38,32 @@ fn increment(state, event) {
 
 ## 部品
 
+Grid/Card/Border/Fitと共通gap/paddingは[レイアウト形式](layouts.md)を参照。既存の文字列layoutに加えて`{ "type": "grid", "columns": 3 }`などを指定できる。
+
 Gridの拡張、tabpanel、treepanel/tree、menu、menuseparatorの設定と操作は[Grid・ナビゲーション形式](grid-navigation.md)を参照。実行例は`public/screens/grid-lab.*`。
 
 toolbar、datepicker、messagebox、toast、エディター、文書、図表、会話・ログ、メディア、accordionレイアウトは[追加コンポーネント形式](uivolve-gallery.md)を参照。実行例は`public/screens/uivolve-gallery.*`。これらは元の部品の基本機能の対応であり、ライブラリ全機能の互換ではない。
 
-| xtype            | 設定                                                      | 意味                                               |
-| ---------------- | --------------------------------------------------------- | -------------------------------------------------- |
-| container        | layout, items                                             | `vbox`（既定）または`hbox`                         |
-| panel            | title, layout, items, itemId, collapsedBind, handler      | タイトル付きコンテナ。折りたたみに対応             |
-| window           | itemId, title, visibleBind, width, items, layout, handler | エリア内のモーダルウィンドウ                       |
-| label            | text または bind                                          | １行テキスト。bindがあれば状態の値を表示           |
-| metric           | text, bind, variant                                       | ラベルと大きな数値。variantはblue / green / amber  |
-| textfield        | itemId, text, bind, handler                               | input。bindはトップレベルの状態キー。handlerは任意 |
-| button           | itemId, text, handler, variant                            | 押下でhandler。variantはprimaryまたは省略          |
-| grid             | itemId, bind, selectedBind, handler, columns              | 配列を行表示。行の`id`で選択を識別                 |
-| textarea         | rows, emptyText, maxLength                                | 複数行入力。改行とIMEに対応                        |
-| numberfield      | minValue, maxValue, increment                             | 数値入力。空欄はnull                               |
-| datefield        | value                                                     | YYYY-MM-DD形式の日付入力                           |
-| checkbox / radio | boxLabel, checked, inputValue                             | boolのチェック / 共通bind先への単一選択            |
-| combobox         | options または store / data, emptyText                    | ドロップダウン選択                                 |
-| listbox          | options または store / data, size, multiSelect            | リスト選択。複数選択に対応                         |
-| displayfield     | fieldLabel, value または bind                             | ラベル付きの表示専用値                             |
-| slider           | minValue, maxValue, increment                             | 数値選択。Canvasはドラッグと矢印/Home/Endに対応    |
-| progressbar      | value または bind, text                                   | 0〜1の進捗表示。text省略時は百分率                 |
-| fieldset         | title, items, collapsible, collapsed                      | タイトル付きグループ。折りたたみに対応             |
+| xtype            | 設定                                                      | 意味                                                     |
+| ---------------- | --------------------------------------------------------- | -------------------------------------------------------- |
+| container        | layout, items, height                                     | 共通配置（vbox / hbox / grid / card / border / fitなど） |
+| panel            | title, layout, items, itemId, collapsedBind, handler      | タイトル付きコンテナ。折りたたみに対応                   |
+| window           | itemId, title, visibleBind, width, items, layout, handler | エリア内のモーダルウィンドウ                             |
+| label            | text または bind                                          | １行テキスト。bindがあれば状態の値を表示                 |
+| metric           | text, bind, variant                                       | ラベルと大きな数値。variantはblue / green / amber        |
+| textfield        | itemId, text, bind, handler                               | input。bindはトップレベルの状態キー。handlerは任意       |
+| button           | itemId, text, handler, variant                            | 押下でhandler。variantはprimaryまたは省略                |
+| grid             | itemId, bind, selectedBind, handler, columns              | 配列を行表示。行の`id`で選択を識別                       |
+| textarea         | rows, emptyText, maxLength                                | 複数行入力。改行とIMEに対応                              |
+| numberfield      | minValue, maxValue, increment                             | 数値入力。空欄はnull                                     |
+| datefield        | value                                                     | YYYY-MM-DD形式の日付入力                                 |
+| checkbox / radio | boxLabel, checked, inputValue                             | boolのチェック / 共通bind先への単一選択                  |
+| combobox         | options または store / data, emptyText                    | ドロップダウン選択                                       |
+| listbox          | options または store / data, size, multiSelect            | リスト選択。複数選択に対応                               |
+| displayfield     | fieldLabel, value または bind                             | ラベル付きの表示専用値                                   |
+| slider           | minValue, maxValue, increment                             | 数値選択。Canvasはドラッグと矢印/Home/Endに対応          |
+| progressbar      | value または bind, text                                   | 0〜1の進捗表示。text省略時は百分率                       |
+| fieldset         | title, items, collapsible, collapsed                      | タイトル付きグループ。折りたたみに対応                   |
 
 対応属性: `xtype`, `itemId`, `text`, `title`, `layout`, `bind`, `selectedBind`, `disabledBind`, `collapsedBind`, `visibleBind`, `width`, `handler`, `variant`, `flex`, `items`, `columns`。未知の属性はエラー。`flex`は正の数（既定1）で、hbox内の幅を配分する。`itemId`内のコロンは内部キー用に予約している。
 

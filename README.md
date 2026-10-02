@@ -16,7 +16,7 @@ bun run dev
 
 開発サーバー: `http://127.0.0.1:4173/`。起動時にRustをWASMへビルドする。
 
-画面を直接開くにはURLへ`?screen=uivolve-forms`などを付ける。対応値は`orders`、`tasks`、`components`、`uivolve-forms`、`grid-lab`、`uivolve-gallery`。省略・不明な値は受注管理を開く。ギャラリーのプレビュー: `http://127.0.0.1:4174/?screen=uivolve-gallery`。
+画面を直接開くにはURLへ`?screen=uivolve-forms`などを付ける。対応値は`orders`、`tasks`、`components`、`uivolve-forms`、`grid-lab`、`uivolve-gallery`、`layout-lab`。省略・不明な値は受注管理を開く。レイアウトのプレビュー: `http://127.0.0.1:4174/?screen=layout-lab`。
 
 ```sh
 bun run build       # WASM + Vite+本番ビルド → dist/
@@ -29,6 +29,8 @@ bun run fmt
 Rustを変更したら`bun run build:wasm`を実行する。フロントエンドはVite+で更新される。画面JSON・Rhaiは「再取得」、またはエディタの「変更を適用」で再読み込みできる。
 
 ## 試せること
+
+- 「Grid・Card・Border レイアウト」画面で、幅に応じたGrid配置と列span、入力を保持するCard切替、上下左右と中央を組むBorder、領域を使い切るFitを試せる。共通gap/paddingと最小高さを扱い、座標・寸法をWASMが計算する。詳細は[レイアウト契約](docs/layouts.md)。
 
 - 受注一覧の検索・行選択・顧客名と金額の編集。反映先はデモのメモリ内状態で、永続化やサーバーへの保存は行わない。
 - DOM側・Canvas側のどちらから操作しても、共通状態を両側へ表示。
@@ -52,7 +54,7 @@ HTTP → 画面JSON + Rhaiソース
 Rust / WASM エンジン
   DSL解析・構造検証
   Rhai → ASTコンパイル → イベントごとの実行
-  状態管理・vbox/hboxレイアウト・部品スナップショット生成
+  状態管理・共通レイアウト・部品スナップショット生成
              ↓
 ブラウザ描画バックエンド
   DOM: 既存のinputやbuttonを維持して更新
@@ -66,7 +68,8 @@ Rust / WASM エンジン
 - `src/engine.js`: WASM呼び出し。スクリプトをJavaScriptへ変換・evalしない。
 - `src/webmcp.js`: 描画方式に依存しない共通ツールとブラウザへの登録アダプター。
 - `src/dom-renderer.js` / `src/canvas-renderer.js`: 描画・入力のアダプター。
-- `public/screens/`: エンジンとは別に配信する６画面。
+- `public/screens/`: エンジンとは別に配信する７画面。
+- `engine/src/layouts.rs` / `docs/layouts.md`: Grid/Card/Border/Fitと共通余白の計測・配置・契約。
 - `engine/src/grid.rs` / `navigation.rs`: Gridの操作・下書き・ページ生成とタブ・ツリー・メニューの共通状態。
 - `docs/screen-format.md`: 画面・スクリプトの契約。
 - `docs/theme-format.md` / `public/themes/`: 配色の契約と標準テーマ。フォントや余白を指定する汎用スタイルDSLは含まない。

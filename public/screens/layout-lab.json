@@ -1,0 +1,267 @@
+{
+  "version": 1,
+  "id": "layout-lab",
+  "title": "Grid・Card・Border レイアウト",
+  "script": "layout-lab.rhai",
+  "state": {
+    "layoutView": 0,
+    "cardStep": 0,
+    "cardName": "山田 太郎",
+    "cardMemo": "画面を切り替えても入力を保持します。",
+    "engineLabel": "WASM",
+    "drawLabel": "2",
+    "backDisabled": true,
+    "nextDisabled": false,
+    "stepLabel": "1 / 3 — 名前を入力",
+    "workspaceMemo": "中央のパネルは残りの領域に広がります。",
+    "notice": "幅を変えると、Gridの列数とBorderの左右幅をWASMが再計算します。"
+  },
+  "ui": {
+    "xtype": "container",
+    "items": [
+      {
+        "xtype": "label",
+        "text": "画面を組む共通レイアウト。配置はRust / WASMで計算します。",
+        "variant": "muted"
+      },
+      {
+        "xtype": "tabpanel",
+        "itemId": "layoutViews",
+        "activeBind": "layoutView",
+        "items": [
+          {
+            "xtype": "container",
+            "title": "Grid",
+            "items": [
+              {
+                "xtype": "label",
+                "text": "最大3列。狭い画面では2列・1列へ。行ごとに高さを揃えます。",
+                "variant": "muted"
+              },
+              {
+                "xtype": "container",
+                "itemId": "layoutGrid",
+                "layout": {
+                  "type": "grid",
+                  "columns": 3,
+                  "minColumnWidth": 140,
+                  "gap": 12,
+                  "padding": 8
+                },
+                "items": [
+                  {
+                    "xtype": "panel",
+                    "itemId": "gridA",
+                    "title": "エンジン",
+                    "items": [
+                      { "xtype": "metric", "text": "共通配置", "bind": "engineLabel" },
+                      { "xtype": "label", "text": "座標を両方へ渡す" }
+                    ]
+                  },
+                  {
+                    "xtype": "panel",
+                    "itemId": "gridB",
+                    "title": "描画",
+                    "items": [
+                      {
+                        "xtype": "metric",
+                        "text": "描画方式",
+                        "bind": "drawLabel",
+                        "variant": "green"
+                      }
+                    ]
+                  },
+                  {
+                    "xtype": "panel",
+                    "itemId": "gridC",
+                    "title": "テーマ",
+                    "items": [
+                      { "xtype": "label", "text": "色は共通トークン" },
+                      { "xtype": "label", "text": "ライト / ダーク" }
+                    ]
+                  },
+                  {
+                    "xtype": "panel",
+                    "itemId": "gridWide",
+                    "title": "2列を使うパネル",
+                    "colSpan": 2,
+                    "items": [
+                      {
+                        "xtype": "textfield",
+                        "itemId": "gridMemo",
+                        "fieldLabel": "Gridの中でも入力できます",
+                        "bind": "gridMemo",
+                        "value": "DOM / Canvasで同期"
+                      }
+                    ]
+                  },
+                  {
+                    "xtype": "panel",
+                    "itemId": "gridLast",
+                    "title": "余白",
+                    "items": [{ "xtype": "label", "text": "gap: 12 / padding: 8" }]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "xtype": "container",
+            "title": "Card",
+            "items": [
+              { "xtype": "label", "bind": "stepLabel", "variant": "green" },
+              {
+                "xtype": "panel",
+                "itemId": "wizard",
+                "title": "同じ領域で画面を切り替える",
+                "layout": { "type": "card", "padding": 8 },
+                "activeBind": "cardStep",
+                "height": 300,
+                "handler": "cardChanged",
+                "items": [
+                  {
+                    "xtype": "container",
+                    "title": "名前",
+                    "items": [
+                      {
+                        "xtype": "textfield",
+                        "itemId": "cardName",
+                        "fieldLabel": "名前",
+                        "bind": "cardName"
+                      },
+                      {
+                        "xtype": "label",
+                        "text": "入力してから「次へ」を押してみてください。",
+                        "variant": "muted"
+                      }
+                    ]
+                  },
+                  {
+                    "xtype": "container",
+                    "title": "メモ",
+                    "items": [
+                      {
+                        "xtype": "textarea",
+                        "itemId": "cardMemo",
+                        "fieldLabel": "メモ",
+                        "bind": "cardMemo",
+                        "rows": 6
+                      }
+                    ]
+                  },
+                  {
+                    "xtype": "container",
+                    "title": "確認",
+                    "items": [
+                      { "xtype": "displayfield", "fieldLabel": "名前", "bind": "cardName" },
+                      { "xtype": "displayfield", "fieldLabel": "メモ", "bind": "cardMemo" }
+                    ]
+                  }
+                ]
+              },
+              {
+                "xtype": "container",
+                "layout": { "type": "hbox", "gap": 8 },
+                "items": [
+                  {
+                    "xtype": "button",
+                    "itemId": "previousCard",
+                    "text": "戻る",
+                    "handler": "previousCard",
+                    "disabledBind": "backDisabled"
+                  },
+                  {
+                    "xtype": "button",
+                    "itemId": "nextCard",
+                    "text": "次へ",
+                    "handler": "nextCard",
+                    "disabledBind": "nextDisabled",
+                    "variant": "primary"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "xtype": "container",
+            "title": "Border / Fit",
+            "items": [
+              {
+                "xtype": "container",
+                "itemId": "workspace",
+                "layout": { "type": "border", "gap": 8, "padding": 8 },
+                "height": 490,
+                "items": [
+                  {
+                    "xtype": "panel",
+                    "itemId": "north",
+                    "region": "north",
+                    "title": "North — 上部",
+                    "items": [
+                      { "xtype": "label", "text": "上下が全幅、左右と中央が残りの高さを共有" }
+                    ]
+                  },
+                  {
+                    "xtype": "panel",
+                    "itemId": "west",
+                    "region": "west",
+                    "width": 96,
+                    "title": "West",
+                    "items": [
+                      { "xtype": "label", "text": "ナビ" },
+                      {
+                        "xtype": "button",
+                        "itemId": "workspaceReset",
+                        "text": "初期化",
+                        "handler": "workspaceReset"
+                      }
+                    ]
+                  },
+                  {
+                    "xtype": "panel",
+                    "itemId": "center",
+                    "region": "center",
+                    "title": "Center / Fit",
+                    "layout": { "type": "fit", "padding": 4 },
+                    "items": [
+                      {
+                        "xtype": "panel",
+                        "itemId": "fitPanel",
+                        "title": "領域に広がるパネル",
+                        "items": [
+                          {
+                            "xtype": "textarea",
+                            "itemId": "workspaceMemo",
+                            "fieldLabel": "共通の入力状態",
+                            "bind": "workspaceMemo",
+                            "rows": 4
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "xtype": "panel",
+                    "itemId": "east",
+                    "region": "east",
+                    "width": 72,
+                    "title": "East",
+                    "items": [{ "xtype": "label", "text": "情報" }]
+                  },
+                  {
+                    "xtype": "container",
+                    "region": "south",
+                    "items": [
+                      { "xtype": "label", "text": "South — 下部ステータス", "variant": "muted" }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      { "xtype": "label", "bind": "notice", "variant": "muted" }
+    ]
+  }
+}

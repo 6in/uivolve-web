@@ -8,8 +8,8 @@
 
 | 元のxtype                  | エンジンでの部品 | 対応する主な設定                                                                   |
 | -------------------------- | ---------------- | ---------------------------------------------------------------------------------- |
-| form / panel               | panel            | title, items, vbox/hbox, collapsible, collapsed                                    |
-| fieldcontainer / container | container        | items, vbox/hbox, flex                                                             |
+| form / panel               | panel            | title, items, 共通layout, collapsible, collapsed                                   |
+| fieldcontainer / container | container        | items, 共通layout, flex                                                            |
 | textfield                  | textfield        | fieldLabel, value, name, emptyText, inputType, readOnly, disabled                  |
 | textarea / textareafield   | textarea         | 上記とrows、複数行入力                                                             |
 | numberfield                | numberfield      | value, minValue, maxValue, increment                                               |

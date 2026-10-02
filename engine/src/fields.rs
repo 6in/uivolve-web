@@ -48,6 +48,7 @@ pub fn normalize(node: &mut Node, path: &str) {
     node.xtype = xtype.into();
     super::grid::normalize(node, path);
     super::navigation::normalize(node, path);
+    super::layouts::normalize(node, path);
     if node.variant.is_empty() {
         node.variant = node.ui.clone();
     }

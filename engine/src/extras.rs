@@ -366,8 +366,13 @@ pub fn validate(n: &Node) -> Result<(), String> {
         return Err("Check groups require 1..24 matching fields".into());
     }
     if let Columns::Count(c) = n.columns {
-        if !["radiogroup", "checkboxgroup"].contains(&n.xtype.as_str()) || !(1..=8).contains(&c) {
-            return Err("Numeric columns are supported only in check groups (1..8)".into());
+        if !(n.layout == "grid" && (1..=12).contains(&c))
+            && (!["radiogroup", "checkboxgroup"].contains(&n.xtype.as_str())
+                || !(1..=8).contains(&c))
+        {
+            return Err(
+                "Numeric columns require check groups (1..8) or grid layout (1..12)".into(),
+            );
         }
     }
     if n.xtype == "datepicker" && (!n.today.is_empty() && date(&n.today).is_none()) {
@@ -581,12 +586,12 @@ fn group_columns(n: &Node) -> usize {
         _ => n.items.len().clamp(1, 4),
     }
 }
-pub fn height(n: &Node, state: &Value) -> f64 {
+pub fn height(n: &Node, state: &Value, width: f64) -> f64 {
     match n.xtype.as_str() {
         "toolbar" => {
             n.items
                 .iter()
-                .map(|c| super::measure(c, state))
+                .map(|c| super::measure(c, state, width / n.items.len().max(1) as f64))
                 .fold(36.0, f64::max)
                 + 8.0
         }
@@ -608,7 +613,7 @@ pub fn height(n: &Node, state: &Value) -> f64 {
                 0.0
             }
         }
-        "chatpanel" => n.height.unwrap_or(280.0) + super::content_height(n, state),
+        "chatpanel" => n.height.unwrap_or(280.0) + super::content_height(n, state, width),
         "image" | "video" | "iframe" => n.height.unwrap_or(200.0),
         _ => n.height.unwrap_or(260.0),
     }
@@ -640,7 +645,7 @@ pub fn arrange(
     out: &mut Vec<Widget>,
 ) {
     let start = out.len();
-    let h = height(n, state);
+    let h = height(n, state, width);
     match n.xtype.as_str() {
         "toolbar" => {
             let mut shell = widget(n, "toolbar", x, y, width, h, key);

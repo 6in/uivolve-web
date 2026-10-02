@@ -6,6 +6,7 @@ export const SCREEN_CATALOG = [
   { id: "uivolve-forms", title: "uivolve フォーム部品" },
   { id: "grid-lab", title: "Grid・タブ・ツリー・メニュー" },
   { id: "uivolve-gallery", title: "uivolve コンポーネントギャラリー" },
+  { id: "layout-lab", title: "Grid・Card・Border レイアウト" },
 ];
 
 const interactive = new Set([
@@ -32,6 +33,7 @@ const interactive = new Set([
   "grid-cell",
   "grid-select",
   "grid-page",
+  "card",
 ]);
 const guardProperties = {
   screenToken: { type: "string", description: "Copy screen.token from ui_get_screen." },

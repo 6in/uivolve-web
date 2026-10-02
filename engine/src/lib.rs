@@ -9,6 +9,7 @@ mod extras;
 mod fields;
 mod figures;
 mod grid;
+mod layouts;
 mod navigation;
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -34,7 +35,7 @@ pub struct Node {
     #[serde(default)]
     pub title: String,
     #[serde(default)]
-    pub layout: String,
+    pub layout: layouts::Layout,
     #[serde(default)]
     pub bind: String,
     #[serde(default)]
@@ -45,8 +46,14 @@ pub struct Node {
     pub collapsed_bind: String,
     #[serde(default)]
     pub visible_bind: String,
-    #[serde(default = "window_width")]
-    pub width: f64,
+    #[serde(default)]
+    pub width: Option<f64>,
+    #[serde(default)]
+    pub region: String,
+    #[serde(default = "one_usize")]
+    pub col_span: usize,
+    #[serde(default)]
+    pub active_item: usize,
     #[serde(default)]
     pub handler: String,
     #[serde(default)]
@@ -245,6 +252,9 @@ fn value_field() -> String {
 fn one() -> f64 {
     1.0
 }
+fn one_usize() -> usize {
+    1
+}
 
 fn window_width() -> f64 {
     400.0
@@ -331,6 +341,7 @@ impl Runtime {
         grid::initialize(&package.ui, &mut package.state);
         navigation::initialize(&package.ui, &mut package.state);
         extras::initialize(&package.ui, &mut package.state);
+        layouts::initialize(&package.ui, &mut package.state);
         if package.ui.xtype == "window" {
             return Err("A window must be inside a container or panel".into());
         }
@@ -358,6 +369,7 @@ impl Runtime {
         grid::validate_state(&package.ui, &initial)?;
         navigation::validate_state(&package.ui, &initial)?;
         extras::validate_state(&package.ui, &initial)?;
+        layouts::validate_state(&package.ui, &initial)?;
         Ok(Self {
             package,
             engine,
@@ -388,6 +400,7 @@ impl Runtime {
             })
             || navigation::hidden(&path, &state)
             || extras::hidden(&path, &state)
+            || layouts::hidden(&path, &state)
         {
             return Ok(());
         }
@@ -406,6 +419,8 @@ impl Runtime {
             grid::event(node, &mut state, &mut payload)?;
         } else if navigation::component(node) {
             navigation::event(node, &mut state, &payload)?;
+        } else if node.layout == "card" && action == "card" {
+            layouts::event(node, &mut state, &payload)?;
         } else if is_panel(node) {
             if action != "toggle" || node.collapsed_bind.is_empty() {
                 return Err("Panel event requires action: toggle and collapsedBind".into());
@@ -427,6 +442,8 @@ impl Runtime {
                 .as_object_mut()
                 .unwrap()
                 .insert(node.visible_bind.clone(), json!(false));
+        } else if node.layout == "card" {
+            return Err("Card event requires action: card".into());
         } else if !fields::input(node) && !["button", "grid"].contains(&node.xtype.as_str()) {
             return Err("This component does not accept events".into());
         }
@@ -467,6 +484,7 @@ impl Runtime {
         grid::validate_state(&self.package.ui, &candidate)?;
         navigation::validate_state(&self.package.ui, &candidate)?;
         extras::validate_state(&self.package.ui, &candidate)?;
+        layouts::validate_state(&self.package.ui, &candidate)?;
         next = rhai::serde::to_dynamic(candidate).map_err(|e| e.to_string())?;
         check_state(&next)?;
         self.state = next;
@@ -488,9 +506,20 @@ impl Runtime {
         collect_windows(&self.package.ui, &state, &mut windows);
         let mut height = windows
             .iter()
-            .fold(measure(&self.package.ui, &state) + 32.0, |h, n| {
-                h.max(content_height(n, &state) + 88.0)
-            })
+            .fold(
+                measure(&self.package.ui, &state, width - 32.0) + 32.0,
+                |h, n| {
+                    h.max(
+                        (content_height(
+                            n,
+                            &state,
+                            n.width.unwrap_or(window_width()).min(width - 32.0) - 28.0,
+                        ) + 56.0)
+                            .max(n.height.unwrap_or(0.0))
+                            + 32.0,
+                    )
+                },
+            )
             .max(if windows.is_empty() { 0.0 } else { 320.0 });
         arrange(
             &self.package.ui,
@@ -504,8 +533,9 @@ impl Runtime {
         let mut modal = None;
         for (i, node) in windows.iter().enumerate() {
             let layer = i + 1;
-            let ww = node.width.min(width - 32.0);
-            let wh = content_height(node, &state) + 56.0;
+            let ww = node.width.unwrap_or(window_width()).min(width - 32.0);
+            let wh =
+                (content_height(node, &state, ww - 28.0) + 56.0).max(node.height.unwrap_or(0.0));
             let x = (width - ww) / 2.0;
             let y = (height - wh) / 2.0;
             let start = widgets.len();
@@ -537,12 +567,13 @@ impl Runtime {
             if node.closable {
                 widgets.push(close);
             }
-            arrange_children(
+            arrange_children_sized(
                 node,
                 &state,
                 x + 14.0,
                 y + 42.0,
                 ww - 28.0,
+                wh - 56.0,
                 &node.item_id,
                 &mut widgets,
             );
@@ -697,8 +728,8 @@ fn validate(
         && (node.item_id.is_empty()
             || node.visible_bind.is_empty()
             || node.visible_bind.contains('.')
-            || !node.width.is_finite()
-            || !(240.0..=1200.0).contains(&node.width))
+            || !node.width.unwrap_or(window_width()).is_finite()
+            || !(240.0..=1200.0).contains(&node.width.unwrap_or(window_width())))
     {
         return Err(
             "window requires itemId, top-level visibleBind, and width between 240 and 1200".into(),
@@ -714,9 +745,7 @@ fn validate(
     grid::validate(node)?;
     navigation::validate(node)?;
     extras::validate(node)?;
-    if !node.layout.is_empty() && !["vbox", "hbox", "accordion"].contains(&node.layout.as_str()) {
-        return Err(format!("Unsupported layout: {}", node.layout));
-    }
+    layouts::validate(node)?;
     if node.xtype == "grid"
         && (node.columns.is_empty()
             || node
@@ -783,6 +812,12 @@ fn collect_windows<'a>(node: &'a Node, state: &Value, windows: &mut Vec<&'a Node
         }
         return;
     }
+    if node.layout == "card" {
+        if let Some(child) = node.items.get(layouts::active(node, state)) {
+            collect_windows(child, state, windows);
+        }
+        return;
+    }
     for child in &node.items {
         collect_windows(child, state, windows);
     }
@@ -801,30 +836,19 @@ fn display(value: &Value) -> String {
     }
 }
 
-fn flow_children<'a>(node: &'a Node) -> impl Iterator<Item = &'a Node> {
-    node.items.iter().filter(|n| n.xtype != "window")
+fn content_height(node: &Node, state: &Value, width: f64) -> f64 {
+    layouts::natural_height(node, state, width)
 }
 
-fn content_height(node: &Node, state: &Value) -> f64 {
-    if node.layout == "hbox" {
-        flow_children(node)
-            .map(|n| measure(n, state))
-            .fold(0.0, f64::max)
-    } else {
-        flow_children(node).map(|n| measure(n, state)).sum::<f64>()
-            + 12.0 * flow_children(node).count().saturating_sub(1) as f64
-    }
-}
-
-fn measure(node: &Node, state: &Value) -> f64 {
+fn measure(node: &Node, state: &Value, width: f64) -> f64 {
     if extras::component(node) {
-        return extras::height(node, state);
+        return extras::height(node, state, width);
     }
     if grid::advanced(node) {
         return grid::height(node, state);
     }
     if navigation::component(node) {
-        return navigation::height(node, state);
+        return navigation::height(node, state, width);
     }
     match node.xtype.as_str() {
         "window" => 0.0,
@@ -832,7 +856,14 @@ fn measure(node: &Node, state: &Value) -> f64 {
             if is_panel(node) && flag(state, &node.collapsed_bind) {
                 return 42.0;
             }
-            content_height(node, state) + if is_panel(node) { 56.0 } else { 0.0 }
+            let inset = if is_panel(node) {
+                14.0_f64.min(width / 4.0)
+            } else {
+                0.0
+            };
+            (content_height(node, state, (width - 2.0 * inset).max(0.0))
+                + if is_panel(node) { 56.0 } else { 0.0 })
+            .max(node.height.unwrap_or(0.0))
         }
         "metric" => 82.0,
         "textfield" | "numberfield" | "datefield" | "combobox" | "displayfield" | "slider" => 62.0,
@@ -888,6 +919,18 @@ fn arrange(
     key: &str,
     widgets: &mut Vec<Widget>,
 ) {
+    arrange_sized(node, state, x, y, width, key, None, widgets)
+}
+fn arrange_sized(
+    node: &Node,
+    state: &Value,
+    x: f64,
+    y: f64,
+    width: f64,
+    key: &str,
+    allocated_height: Option<f64>,
+    widgets: &mut Vec<Widget>,
+) {
     if extras::component(node) {
         extras::arrange(node, state, x, y, width, key, widgets);
         return;
@@ -900,7 +943,7 @@ fn arrange(
         navigation::arrange(node, state, x, y, width, key, widgets);
         return;
     }
-    let height = measure(node, state);
+    let height = measure(node, state, width).max(allocated_height.unwrap_or(0.0));
     match node.xtype.as_str() {
         "window" => {}
         "container" | "panel" | "fieldset" => {
@@ -933,11 +976,13 @@ fn arrange(
                         return;
                     }
                 }
-                (x + 14.0, y + 42.0, width - 28.0)
+                let inset = 14.0_f64.min(width / 4.0);
+                (x + inset, y + 42.0, (width - 2.0 * inset).max(0.0))
             } else {
                 (x, y, width)
             };
-            arrange_children(node, state, cx, cy, cw, key, widgets);
+            let body_height = height - if panel { 56.0 } else { 0.0 };
+            arrange_children_sized(node, state, cx, cy, cw, body_height, key, widgets);
         }
         "grid" => {
             let total: f64 = node.columns.iter().map(|c| c.flex).sum();
@@ -1023,37 +1068,48 @@ fn arrange_children(
     key: &str,
     widgets: &mut Vec<Widget>,
 ) {
+    arrange_children_sized(
+        node,
+        state,
+        x,
+        y,
+        width,
+        content_height(node, state, width),
+        key,
+        widgets,
+    );
+}
+fn arrange_children_sized(
+    node: &Node,
+    state: &Value,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    key: &str,
+    widgets: &mut Vec<Widget>,
+) {
     let start = widgets.len();
-    let total_flex: f64 = flow_children(node).map(|n| n.flex).sum();
-    let available = (width - 12.0 * flow_children(node).count().saturating_sub(1) as f64).max(1.0);
-    let mut offset = 0.0;
-    for (i, child) in node
-        .items
-        .iter()
-        .enumerate()
-        .filter(|(_, n)| n.xtype != "window")
-    {
+    layouts::describe_card(node, state, x, y, width, height, key, widgets);
+    for slot in layouts::slots(node, state, width, height) {
+        let i = slot.index;
+        let child = &node.items[i];
         let child_key = if child.item_id.is_empty() {
             format!("{key}.{i}")
         } else {
             child.item_id.clone()
         };
-        if node.layout == "hbox" {
-            let child_width = available * child.flex / total_flex;
-            arrange(
-                child,
-                state,
-                x + offset,
-                y,
-                child_width,
-                &child_key,
-                widgets,
-            );
-            offset += child_width + 12.0;
-        } else {
-            arrange(child, state, x, y + offset, width, &child_key, widgets);
-            offset += measure(child, state) + 12.0;
-        }
+        let stretch = ["grid", "card", "border", "fit"].contains(&node.layout.as_str());
+        arrange_sized(
+            child,
+            state,
+            x + slot.x,
+            y + slot.y,
+            slot.width,
+            &child_key,
+            if stretch { Some(slot.height) } else { None },
+            widgets,
+        );
     }
     if node.disabled || flag(state, &node.disabled_bind) {
         for w in &mut widgets[start..] {
