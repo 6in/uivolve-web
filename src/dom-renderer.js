@@ -1,23 +1,7 @@
 import { applyTheme } from "./theme.js";
-import { createControl, syncControl, isField, isBox } from "./field-control.js";
+import { createControl, syncControl } from "./field-control.js";
+import { isButton, isField, isBox } from "./widget-contract.js";
 import { renderSvg, syncMedia, mediaKinds, disposeMedia } from "./surfaces.js";
-
-const buttonKinds = [
-  "extra-button",
-  "button",
-  "row",
-  "panel-toggle",
-  "window-close",
-  "tab",
-  "tree-node",
-  "tree-toggle",
-  "menu-trigger",
-  "menu-item",
-  "grid-column",
-  "grid-cell",
-  "grid-select",
-  "grid-page",
-];
 
 function position(element, widget, origin = { x: 0, y: 0 }) {
   Object.assign(element.style, {
@@ -77,11 +61,11 @@ export class DomRenderer {
   }
 
   create(widget) {
-    const root = document.createElement(buttonKinds.includes(widget.kind) ? "button" : "div");
+    const root = document.createElement(isButton(widget) ? "button" : "div");
     const record = { root, widget, cells: [] };
     root.dataset.key = widget.key;
     root.dataset.target = widget.target;
-    if (buttonKinds.includes(widget.kind)) {
+    if (isButton(widget)) {
       root.type = "button";
       root.addEventListener("click", (event) => {
         this.dispatch(record.widget.target, {
@@ -358,7 +342,7 @@ export class DomRenderer {
       ) {
         root.textContent = widget.text;
       }
-      if (buttonKinds.includes(widget.kind)) root.disabled = widget.disabled;
+      if (isButton(widget)) root.disabled = widget.disabled;
       if (widget.kind === "panel-toggle")
         root.setAttribute("aria-expanded", String(!widget.selected));
       if (widget.kind === "window-close") root.setAttribute("aria-label", "ウィンドウを閉じる");
@@ -374,10 +358,7 @@ export class DomRenderer {
       const record =
         this.nodes.get(focusedKey) ||
         [...this.nodes.values()].find(
-          (r) =>
-            r.widget.target === focusedTarget &&
-            buttonKinds.includes(r.widget.kind) &&
-            !r.widget.disabled,
+          (r) => r.widget.target === focusedTarget && isButton(r.widget) && !r.widget.disabled,
         );
       (record?.input || record?.root)?.focus();
     }

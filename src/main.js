@@ -3,7 +3,8 @@ import { WasmEngine } from "./engine.js";
 import { DomRenderer } from "./dom-renderer.js";
 import { CanvasRenderer } from "./canvas-renderer.js";
 import { applyTheme } from "./theme.js";
-import { SCREEN_CATALOG, createUiTools, registerUiTools } from "./webmcp.js";
+import { SCREEN_CATALOG } from "./screen-catalog.js";
+import { createUiTools, registerUiTools } from "./webmcp.js";
 
 const $ = (id) => document.getElementById(id);
 const base = new URL(import.meta.env.BASE_URL, window.location.href);

@@ -1,0 +1,12 @@
+// Bundled package identities; independent of renderer and WebMCP registration.
+export const SCREEN_CATALOG = Object.freeze(
+  [
+    { id: "orders", title: "受注管理" },
+    { id: "tasks", title: "タスク管理" },
+    { id: "components", title: "パネル・ウィンドウ" },
+    { id: "uivolve-forms", title: "uivolve フォーム部品" },
+    { id: "grid-lab", title: "Grid・タブ・ツリー・メニュー" },
+    { id: "uivolve-gallery", title: "uivolve コンポーネントギャラリー" },
+    { id: "layout-lab", title: "Grid・Card・Border レイアウト" },
+  ].map(Object.freeze),
+);

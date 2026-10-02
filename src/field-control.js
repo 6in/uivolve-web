@@ -1,18 +1,6 @@
-// Both adapters use the same native controls while editing (including IME composition).
-export const fieldKinds = [
-  "textfield",
-  "textarea",
-  "numberfield",
-  "datefield",
-  "checkbox",
-  "radio",
-  "combobox",
-  "listbox",
-  "slider",
-];
-export const isField = (widget) => fieldKinds.includes(widget.kind);
-export const isBox = (widget) => ["checkbox", "radio"].includes(widget.kind);
-export const isEditor = (widget) => isField(widget) && !isBox(widget) && widget.kind !== "slider";
+// Both adapters keep native controls alive while editing, including IME composition.
+import { isBox } from "./widget-contract.js";
+export { fieldKinds, isField, isBox, isEditor } from "./widget-contract.js";
 
 export function createControl(widget, dispatch, prefix) {
   const input = document.createElement(

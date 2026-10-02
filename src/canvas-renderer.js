@@ -1,28 +1,9 @@
 import { applyTheme } from "./theme.js";
-import { createControl, syncControl, isField, isBox, isEditor } from "./field-control.js";
+import { createControl, syncControl } from "./field-control.js";
+import { isField, isBox, isEditor, isInteractive as interactive } from "./widget-contract.js";
 import { paintSurface, syncMedia, mediaKinds, disposeMedia } from "./surfaces.js";
 
 const FONT = '"Inter", "Noto Sans JP", system-ui, sans-serif';
-const interactive = (w) =>
-  (isField(w) ||
-    [
-      "button",
-      "extra-button",
-      "row",
-      "panel-toggle",
-      "window-close",
-      "tab",
-      "tree-node",
-      "tree-toggle",
-      "menu-trigger",
-      "menu-item",
-      "grid-column",
-      "grid-cell",
-      "grid-select",
-      "grid-page",
-    ].includes(w.kind)) &&
-  !w.disabled;
-
 export class CanvasRenderer {
   constructor(stage, canvas, dispatch) {
     this.stage = stage;

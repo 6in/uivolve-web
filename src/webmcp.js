@@ -1,40 +1,8 @@
 // Semantic UI tools are independent of browser registration and rendering adapters.
-export const SCREEN_CATALOG = [
-  { id: "orders", title: "受注管理" },
-  { id: "tasks", title: "タスク管理" },
-  { id: "components", title: "パネル・ウィンドウ" },
-  { id: "uivolve-forms", title: "uivolve フォーム部品" },
-  { id: "grid-lab", title: "Grid・タブ・ツリー・メニュー" },
-  { id: "uivolve-gallery", title: "uivolve コンポーネントギャラリー" },
-  { id: "layout-lab", title: "Grid・Card・Border レイアウト" },
-];
+import { SCREEN_CATALOG } from "./screen-catalog.js";
+export { SCREEN_CATALOG } from "./screen-catalog.js";
+import { widgetActions as actions, isBlocked as blocked } from "./widget-contract.js";
 
-const interactive = new Set([
-  "button",
-  "extra-button",
-  "row",
-  "panel-toggle",
-  "window-close",
-  "textfield",
-  "textarea",
-  "numberfield",
-  "datefield",
-  "checkbox",
-  "radio",
-  "combobox",
-  "listbox",
-  "slider",
-  "tab",
-  "tree-node",
-  "tree-toggle",
-  "menu-trigger",
-  "menu-item",
-  "grid-column",
-  "grid-cell",
-  "grid-select",
-  "grid-page",
-  "card",
-]);
 const guardProperties = {
   screenToken: { type: "string", description: "Copy screen.token from ui_get_screen." },
   revision: {
@@ -97,19 +65,6 @@ function preview(value) {
     return v;
   }
   return { value: visit(value, 0), truncated };
-}
-function actions(widget) {
-  if (!interactive.has(widget.kind)) return [];
-  const result = [widget.payload?.action || ""];
-  if (widget.kind === "grid-cell" && widget.config.editable) result.push("beginEdit");
-  if (widget.config.gridEditor) result.push("commitEdit", "cancelEdit");
-  if (widget.kind === "menu-trigger") result.push("close");
-  return result;
-}
-function blocked(widget, scene) {
-  return (
-    widget.disabled || widget.config.readOnly || (scene.modal && widget.layer !== scene.modal.layer)
-  );
 }
 function describe(widget, scene) {
   const metadata = Object.fromEntries(

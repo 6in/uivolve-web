@@ -1,6 +1,21 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::cell::RefCell;
 use std::collections::BTreeMap;
+
+thread_local! {
+    static CURRENT: RefCell<Theme> = RefCell::new(Theme::default());
+}
+
+pub fn current() -> Theme {
+    CURRENT.with(|theme| theme.borrow().clone())
+}
+
+pub fn apply(value: Value) -> Result<(), String> {
+    let candidate = Theme::resolve(value)?;
+    CURRENT.with(|theme| *theme.borrow_mut() = candidate);
+    Ok(())
+}
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

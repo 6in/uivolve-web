@@ -1,0 +1,82 @@
+import { beforeAll, beforeEach, expect, it } from "vite-plus/test";
+import { readFile } from "node:fs/promises";
+import { WasmEngine } from "../src/engine.js";
+
+let module_, bytes, exports_, engine;
+beforeAll(async () => {
+  bytes = await readFile(new URL("../public/engine.wasm", import.meta.url));
+  module_ = await WebAssembly.compile(bytes);
+});
+beforeEach(async () => {
+  exports_ = (await WebAssembly.instantiate(module_, {})).exports;
+  engine = new WasmEngine(exports_, bytes.length);
+});
+function raw(text) {
+  const input = new TextEncoder().encode(text);
+  const pointer = exports_.input_alloc(input.length);
+  try {
+    new Uint8Array(exports_.memory.buffer, pointer, input.length).set(input);
+    const output = exports_.request(pointer, input.length);
+    return JSON.parse(
+      new TextDecoder().decode(
+        new Uint8Array(exports_.memory.buffer, output, exports_.response_len()),
+      ),
+    );
+  } finally {
+    exports_.input_free(pointer, input.length);
+  }
+}
+const screen = {
+  version: 1,
+  id: "abi",
+  title: "ABI 日本語",
+  script: "abi.rhai",
+  state: { count: 0 },
+  ui: {
+    xtype: "container",
+    items: [
+      { xtype: "metric", text: "件数", bind: "count" },
+      { xtype: "button", itemId: "add", text: "増やす", handler: "add" },
+    ],
+  },
+};
+const script = "fn init(s) { s } fn add(s,e) { s.count+=1; s }";
+
+it("exports the existing raw ABI without requiring browser imports", () => {
+  expect(WebAssembly.Module.imports(module_)).toEqual([]);
+  for (const name of ["input_alloc", "input_free", "request", "response_len"])
+    expect(typeof exports_[name]).toBe("function");
+  expect(exports_.memory).toBeInstanceOf(WebAssembly.Memory);
+});
+it("returns structured errors for malformed input and preserves the loaded runtime", () => {
+  engine.load(screen, script);
+  for (const text of [
+    "{",
+    "null",
+    "{}",
+    '{"op":"unsupported"}',
+    '{"op":"event"}',
+    '{"op":"layout"}',
+  ]) {
+    const response = raw(text);
+    expect(response.ok).toBe(false);
+    expect(typeof response.error).toBe("string");
+  }
+  expect(engine.dispatch("add")).toMatchObject({ state: { count: 1 }, revision: 1 });
+  expect(engine.layout(400).widgets.some((w) => w.text === "増やす")).toBe(true);
+});
+it("keeps independent WASM instances and rejects invalid replacement state/theme atomically", async () => {
+  engine.load(screen, script);
+  const other = new WasmEngine((await WebAssembly.instantiate(module_, {})).exports, bytes.length);
+  expect(() => other.layout(400)).toThrow(/No screen/);
+  const original = engine.theme();
+  engine.theme({ version: 1, mode: "dark" });
+  expect(other.theme()).toEqual(original);
+  expect(() => engine.theme({ version: 1, mode: "dark", colors: { text: "invalid" } })).toThrow();
+  expect(engine.layout(400).theme.mode).toBe("dark");
+  expect(() => engine.load(screen, 'fn init(s) { throw "bad init"; s }')).toThrow();
+  expect(engine.dispatch("add").state.count).toBe(1);
+  const result = engine.dispatch("add");
+  engine.layout(400);
+  expect(result.state.count).toBe(2);
+});
