@@ -80,10 +80,52 @@
         <div class="toolbar-actions">
           <button id="benchmark" class="subtle-button" disabled>
             <span aria-hidden="true">◷</span> 60回再描画</button
-          ><button id="source-toggle" class="subtle-button" aria-expanded="false">
+          ><button
+            id="source-toggle"
+            class="subtle-button"
+            aria-expanded="false"
+            aria-controls="source-panel"
+          >
             <span aria-hidden="true">〈 〉</span> 定義とスクリプト
           </button>
         </div>
+      </section>
+      <section id="source-panel" class="source-panel" hidden>
+        <header>
+          <div>
+            <h2>実行する画面を、その場で変更。</h2>
+            <p>
+              JSONとRhaiを編集して適用すると、WASM内で再コンパイルします。状態は初期値に戻ります。
+            </p>
+          </div>
+          <button id="apply" class="primary-button" disabled>変更を適用</button>
+        </header>
+        <form id="url-form" class="url-form">
+          <label for="screen-url">パッケージURL</label
+          ><input
+            id="screen-url"
+            type="url"
+            placeholder="https://example.com/screens/app.json"
+            required
+          /><button id="load-url" class="subtle-button" disabled>URLから読み込む</button>
+        </form>
+        <div class="source-editors">
+          <label
+            >画面定義 <span id="package-url"></span
+            ><textarea
+              id="dsl-source"
+              spellcheck="false"
+              aria-label="画面定義JSON"
+            ></textarea></label
+          ><label
+            >イベント処理 <span id="script-url"></span
+            ><textarea id="script-source" spellcheck="false" aria-label="Rhaiスクリプト"></textarea>
+          </label>
+        </div>
+        <details>
+          <summary>共有状態を見る</summary>
+          <pre id="state-view"></pre>
+        </details>
       </section>
       <section id="auth-panel" class="source-panel auth-panel" hidden>
         <form id="auth-form" autocomplete="off">
@@ -282,43 +324,6 @@
             <p>現在の配色をもとに編集できます。ライト／ダークの選択で元のテーマに戻せます。</p>
           </div>
         </div>
-      </section>
-      <section id="source-panel" class="source-panel" hidden>
-        <header>
-          <div>
-            <h2>実行する画面を、その場で変更。</h2>
-            <p>
-              JSONとRhaiを編集して適用すると、WASM内で再コンパイルします。状態は初期値に戻ります。
-            </p>
-          </div>
-          <button id="apply" class="primary-button" disabled>変更を適用</button>
-        </header>
-        <form id="url-form" class="url-form">
-          <label for="screen-url">パッケージURL</label
-          ><input
-            id="screen-url"
-            type="url"
-            placeholder="https://example.com/screens/app.json"
-            required
-          /><button id="load-url" class="subtle-button" disabled>URLから読み込む</button>
-        </form>
-        <div class="source-editors">
-          <label
-            >画面定義 <span id="package-url"></span
-            ><textarea
-              id="dsl-source"
-              spellcheck="false"
-              aria-label="画面定義JSON"
-            ></textarea></label
-          ><label
-            >イベント処理 <span id="script-url"></span
-            ><textarea id="script-source" spellcheck="false" aria-label="Rhaiスクリプト"></textarea>
-          </label>
-        </div>
-        <details>
-          <summary>共有状態を見る</summary>
-          <pre id="state-view"></pre>
-        </details>
       </section>
       <section class="notes">
         <div>
