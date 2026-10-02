@@ -9,7 +9,9 @@
 3. 「認証設定を適用」を押す。画面の再取得、別パッケージの読み込み、HTTPでのテーマ切替に適用される。現在の画面・入力・テーマは設定変更だけでは初期化しない。
 4. 無効化するには「なし」を選び、設定を適用する。保持するトークンを破棄する。
 
-JWT入力欄はpassword型で、適用後は空にする。設定はページ内メモリにだけ保持する。再読み込み・HMRでは認証なしに戻る。URL、localStorage、sessionStorage、DSL、Rhai、Scene、WebMCPの画面スナップショットへトークンを保存・出力しない。JWTを差し替える場合は新しい値を入力して再適用する。
+自動更新には「アクセストークンを自動更新する」を有効にし、更新URL・リフレッシュトークン・更新APIの形式を指定する。JWTの残り有効秒数は任意。未指定なら401時に更新する。
+
+JWT・リフレッシュトークンの入力欄はpassword型で、適用後は空にする。設定はページ内メモリにだけ保持する。再読み込み・HMRでは認証なしに戻る。URL、localStorage、sessionStorage、DSL、Rhai、Scene、WebMCPの画面スナップショットへトークンを保存・出力しない。設定を差し替える場合は両方のトークンを入力して再適用する。
 
 デモのHTML/JS/CSS/WASMは認証なしで起動する。画面JSON/Rhai/テーマを保護する構成を想定する。同梱の静的サーバーはJWT検証を実装していないため、JWT設定自体で同梱画面へのアクセスが制限されることはない。
 
@@ -38,7 +40,7 @@ engine.load(screen, script);
 
 固定トークンは`getToken`の代わりに`token: accessToken`で渡せる。両方は指定しない。`getToken`は許可されたHTTP要求ごとに呼び、現在のトークンを返す。受け取ったAbortSignalを認証機構側でも扱う。JWTの内容はデコードせず、ヘッダーに使えるBearer文字列の形式と空値だけを検査する。
 
-`getAuthentication()`が返すのは`mode / allowedOrigins`だけ。認証なしではAuthorizationヘッダーを付けず、従来どおり同一オリジンのCookieをブラウザが扱う。JWTモードは`credentials: "omit"`でCookieやブラウザのHTTP認証を併用しない。
+`getAuthentication()`は`mode / allowedOrigins`と、自動更新設定がある場合に`refresh: { url, format }`を返す。トークンは返さない。認証なしではAuthorizationヘッダーを付けず、従来どおり同一オリジンのCookieをブラウザが扱う。JWTモードは`credentials: "omit"`でCookieやブラウザのHTTP認証を併用しない。
 
 WASMファイル自体も認証付きで取得するホストでは、起動前にResourceClientへ設定して渡す。
 
@@ -51,16 +53,54 @@ const engine = await WasmEngine.create(new URL("https://screens.example.com/engi
 
 `WasmEngine.create(url)`だけの既存の呼び出しも利用できる。`resources.text(url, { signal })`は既存の1,000,000文字の上限を維持する。`resources.fetch(url, { signal })`は成功したResponseを返し、WASMなどのバイナリ取得にも使える。
 
+## リフレッシュトークンによる自動更新
+
+```js
+resources.setAuthentication({
+  mode: "jwt",
+  token: accessToken,
+  allowedOrigins: ["https://screens.example.com"],
+  expiresIn: 3600, // 現在のJWTの残り有効秒数。省略可。
+  refresh: {
+    url: "https://auth.example.com/refresh",
+    token: refreshToken,
+    format: "json", // 既定。OAuth形式なら "oauth"。
+  },
+});
+```
+
+トークンは発行済みの値を指定する。リフレッシュトークンはJWTの形式に限定しない。`getToken`と組み込みの`refresh`は併用しない。独自の認証SDKを使う場合は引き続き`getToken`に任せる。
+
+| 形式    | 送信                                                                                  | 成功時のJSON応答                                                                        |
+| ------- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `json`  | POST、application/json、`{ "refreshToken": "..." }`                                   | `accessToken`必須。`refreshToken / expiresIn / tokenType`任意。tokenTypeはBearerのみ。  |
+| `oauth` | POST、application/x-www-form-urlencoded、`grant_type=refresh_token&refresh_token=...` | `access_token / token_type`必須。token_typeはBearer。`refresh_token / expires_in`任意。 |
+
+OAuth形式では`refresh.clientId`に公開クライアントIDを追加できる。client secretをブラウザへ配置する設定は提供しない。別の認証・Cookie方式や応答形式が必要なら、ホストの認証SDKと`getToken`を使う。
+
+更新URLは独立した送信先で、JWTの送信先許可リストへ加える必要はない。HTTPSとローカルHTTPの規則はJWTと同じ。userinfo・fragment付きURLを拒否する。リフレッシュトークンはこのURLのPOST本文だけへ送る。更新要求にはAuthorization・Cookieを付けず、CORS、no-store、リダイレクト拒否を使う。
+
+- 有効秒数があれば、次のHTTP要求時に期限前の更新を行う。猶予は最大30秒、短い寿命ではその半分。定期タイマーによる更新やJWTのexpのデコードは行わない。
+- 401なら更新し、同じGETを1回だけ再試行する。403、通信・CORS失敗、5xxでは更新しない。更新設定がなければ従来どおりエラーを返す。
+- 同じResourceClientの同時取得は1つの更新要求を共有する。遅れた旧世代の401も更新後のトークンを使う。別インスタンス・別タブ間では共有しない。
+- 応答全体を検証してから両トークンを差し替える。新しいリフレッシュトークンが省略された場合は以前の値を維持する。有効秒数も省略された場合は、その後は401時に更新する。
+- 更新待ちは10秒、JSON応答本文は64,000文字まで。更新拒否・通信失敗・無効な応答・再試行後の401ではセッションを停止し、保持するトークンを破棄する。匿名取得や自動再ログインへ切り替えず、新しい認証設定を必要とする。
+- 1つの取得のキャンセルはその待機・再試行を止める。共有する更新は継続し、ローテーション結果を保持する。認証なしへの切替・設定変更は更新要求自体も中止し、遅れた応答で古い認証を復元しない。
+
+手動更新は`await resources.refreshAuthentication({ signal })`。戻り値は設定メタデータで、トークンは含まない。更新設定がなければエラーになる。画面state/revisionは変更しない。
+
+更新API側でリフレッシュトークンを検証・失効・ローテーションする。形式とローテーションの根拠は[RFC 6749 §6](https://www.rfc-editor.org/rfc/rfc6749.html#section-6)、[RFC 9700 §4.14](https://www.rfc-editor.org/rfc/rfc9700.html#section-4.14)。
+
 ## 送信先と失敗時の動作
 
 - 許可リストはscheme・host・portの完全一致。パス・query・fragment・ユーザー情報付きオリジンは設定できない。既定はbaseUrlのオリジン。
 - JWTモードでは許可されていないオリジンへの取得を送信前に拒否する。パッケージ内のscript URLから送信先を自動追加しない。
 - JWTはHTTPSで送る。ローカル開発の`localhost / 127.0.0.1 / [::1]`のHTTPだけ例外とする。
 - JWT付き取得は`cache: "no-store"`、`redirect: "error"`。同一オリジンを含めリダイレクトに追従せず、最終URLを直接指定する。認証なしは従来どおり追従する。
-- 401/403は認証・権限エラーとして表示する。JWTを外した再試行、ログインページへの遷移、自動更新は行わない。新しいトークンを適用して手動で再取得する。
+- 401は任意のリフレッシュ設定があれば上記の更新・再試行を行い、403は権限エラーとして表示する。JWTを外した再試行やログインページへの遷移は行わない。
 - 取得やコンパイルの失敗は表示中の画面・状態・revision、適用中のテーマを維持する。取得中はデモの認証設定を変更できない。APIで設定を変更した場合、共通クライアントで読み込み中の画面・スクリプト・テーマの応答は破棄する。`fetch()`で返したResponseを利用するホストは、その後の本文読み込み・適用を管理する。
 
-画像・動画・iframeはブラウザのネイティブURL読み込みで、今回のBearerヘッダーの対象外。保護されたメディアには署名付きURLなどの別契約が必要。HTML/JS/CSS・外部フォント・Rhai内の非同期通信もこのAPIの対象ではない。ログイン、JWTの発行・更新、サーバーの検証処理、WASM内のJWT検証は未実装。
+画像・動画・iframeはブラウザのネイティブURL読み込みで、Bearerヘッダーの対象外。保護されたメディアには署名付きURLなどの別契約が必要。HTML/JS/CSS・外部フォント・Rhai内の非同期通信もこのAPIの対象ではない。ログイン、JWTの発行・更新サーバー、サーバーの検証処理、WASM内のJWT検証は未実装。
 
 ## CORSを標準で扱う
 
@@ -68,11 +108,13 @@ const engine = await WasmEngine.create(new URL("https://screens.example.com/engi
 
 ```http
 Access-Control-Allow-Origin: *
-Access-Control-Allow-Methods: GET, HEAD, OPTIONS
+Access-Control-Allow-Methods: GET, HEAD, POST, OPTIONS
 Access-Control-Allow-Headers: Authorization, Content-Type
 ```
 
 別オリジンへBearerヘッダーを送る場合、ブラウザはOPTIONSプリフライトを行う。配信サーバーはOPTIONSへ2xxで応答し、上のヘッダーを返す。Authorizationは許可ヘッダーに明記する。GETの成功・401・403応答にもAccess-Control-Allow-Originを付ける。OPTIONSにはBearerが付かないので、JWT検証より先に処理する。
+
+JSON形式の更新POSTにもOPTIONSが必要。更新サーバーはPOSTとContent-Typeを許可し、成功・失敗の応答にもCORSヘッダーを返す。同梱のVite+はPOSTのCORS許可を持つが、更新エンドポイント自体は提供しない。
 
 JWTモードはCookieを送らないため、公開デモの`*`で利用できる。本番の配信サーバーでは利用するWebアプリのオリジンへ制限できる。複数オリジンを動的に許可する場合は、その許可リストを検査して値を返し、`Vary: Origin`を付ける。JWTの送信先許可リストと、配信側のCORS許可リストは別の設定。
 
@@ -85,3 +127,5 @@ JWTモードはCookieを送らないため、公開デモの`*`で利用でき�
 2026-10-02：自動テスト65件（Vitest 62、Rust 3）、本番ビルド・静的チェック・文書リンク確認が成功。Chromiumで別オリジンのHTTPサーバーを使い、JWT付きJSON/Rhai/テーマの取得、OPTIONS、401/403時の状態保持、未許可script・リダイレクト拒否、認証無効化・再読み込み、DOM/Canvas編集、WebMCPへの非公開、390pxの表示を確認した。Vite+の開発4173・プレビュー4174の両方で、別オリジンからBearerヘッダー付きの取得が成功した。
 
 ブラウザ確認は一時Playwrightスクリプトによるもの。サーバーのテスト用トークン照合はBearer送信を確認するfixtureであり、JWT署名・期限の検証処理ではない。既存のHTTP読み込み・テーマ・native WebMCPの3シナリオも回帰確認した。
+
+同日のリフレッシュ対応追加後：自動テスト80件（Vitest 77、Rust 3）とビルド・静的チェック・文書リンク確認が成功。JSON/OAuth、期限前更新、共有更新、遅れた401、キャンセル・認証解除、失敗・タイムアウトの15テストを追加した。ブラウザで更新POSTのCORS、401からの更新・再試行、ローテーション後のテーマ取得、invalid_grant時の停止・状態保持、OAuth公開クライアントと省略されたrefresh_token、リダイレクト拒否、JWT無効化・再読み込み、狭い幅を確認した。既存のJWT/CORSとnative WebMCPも回帰確認した。

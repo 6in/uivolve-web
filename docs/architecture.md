@@ -70,6 +70,8 @@ Rustのcrate名`wasm-ui-engine`と同梱の画面作成スキル名`wasm-ui-auth
 
 HTTP認証はホストのResourceClientへ置く。画面・Rhai・テーマは同じ設定で取得し、必要ならWASMファイルの起動取得にも利用できる。JWTはWASMのリクエスト・共通state・Sceneへ入れない。CORSを既定で使用し、JWTの送信先・失敗・配信側の設定は[JWT・CORS契約](authentication.md)に定める。
 
+任意のリフレッシュ設定は`token-session.js`が両トークン・有効秒数・ローテーションを保持し、同時要求の更新を共有する。ResourceClientは401時の1回の再試行を担当する。`http-policy.js`は両取得経路のURLとBearer形式の検証を共有する。
+
 ## 境界と今後
 
 WebMCPも人の入力と同じWASMイベントを実行する。ツールの登録機構とUI処理は独立し、WebMCP未対応でも通常UIは動く。ツールの変更要求はscreen token・revision・可視性を検査するが、クライアント内のUI検証はサーバーの認可を代替しない。

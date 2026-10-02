@@ -1021,6 +1021,16 @@ dd {
 .auth-fields textarea {
   resize: vertical;
 }
+.auth-refresh-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  font-size: 12px;
+}
+.auth-fields.refresh-fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
 :root[data-theme-mode="dark"] {
   background: var(--ui-background);
 }
@@ -1169,7 +1179,8 @@ dd {
   .source-editors {
     grid-template-columns: 1fr;
   }
-  .auth-fields {
+  .auth-fields,
+  .auth-fields.refresh-fields {
     grid-template-columns: 1fr;
   }
   .url-form {

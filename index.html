@@ -123,9 +123,59 @@
               ></textarea>
             </label>
           </div>
+          <label class="auth-refresh-toggle" for="auth-refresh-enabled">
+            <input
+              id="auth-refresh-enabled"
+              type="checkbox"
+              disabled
+            />アクセストークンを自動更新する
+          </label>
+          <div id="auth-refresh-fields" class="auth-fields refresh-fields" hidden>
+            <label for="auth-refresh-url"
+              >トークン更新URL
+              <input
+                id="auth-refresh-url"
+                type="url"
+                placeholder="https://auth.example.com/refresh"
+                disabled
+              />
+            </label>
+            <label for="auth-refresh-token"
+              >リフレッシュトークン
+              <input
+                id="auth-refresh-token"
+                type="password"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="発行済みのリフレッシュトークン"
+                disabled
+              />
+            </label>
+            <label for="auth-refresh-format"
+              >更新APIの形式
+              <select id="auth-refresh-format" disabled>
+                <option value="json">JSON</option>
+                <option value="oauth">OAuth</option>
+              </select>
+            </label>
+            <label for="auth-refresh-client"
+              >公開クライアントID（OAuth・任意）
+              <input id="auth-refresh-client" type="text" autocomplete="off" disabled />
+            </label>
+            <label for="auth-expires-in"
+              >JWTの残り有効秒数（任意）
+              <input
+                id="auth-expires-in"
+                type="number"
+                min="1"
+                placeholder="未指定なら401時に更新"
+                disabled
+              />
+            </label>
+          </div>
           <p id="auth-help">
             送信先は https://example.com
-            のようなオリジンを、1行ずつ指定します。JWTはページ内だけに保持し、再読み込みすると消えます。
+            のようなオリジンを、1行ずつ指定します。トークンはページ内だけに保持し、再読み込みすると消えます。リフレッシュトークンは更新URLだけへ送ります。
           </p>
           <p id="auth-message" role="status"></p>
           <div id="auth-error" class="error-banner" role="alert" hidden></div>

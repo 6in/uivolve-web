@@ -3,7 +3,7 @@ import { defineConfig } from "vite-plus";
 // Public demo assets. Protected production endpoints must also validate JWTs.
 const cors = {
   origin: "*",
-  methods: ["GET", "HEAD", "OPTIONS"],
+  methods: ["GET", "HEAD", "POST", "OPTIONS"],
   allowedHeaders: ["Authorization", "Content-Type"],
   credentials: false,
 };

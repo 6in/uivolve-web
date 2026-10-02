@@ -1,27 +1,6 @@
 // HTTP resources belong to the host boundary, never to DSL/Rhai state.
-function httpUrl(value, base) {
-  let url;
-  try {
-    url = new URL(value, base);
-  } catch {
-    throw new Error("HTTP / HTTPSのURLを指定してください");
-  }
-  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password)
-    throw new Error("認証情報を含まないHTTP / HTTPSのURLを指定してください");
-  return url;
-}
-
-function secureOrigin(url) {
-  return url.protocol === "https:" || ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
-}
-
-function bearerToken(value) {
-  if (typeof value !== "string" || !value.trim()) throw new Error("JWTを指定してください");
-  const token = value.trim();
-  if (!/^[A-Za-z0-9._~+/-]+=*$/.test(token))
-    throw new Error("JWTにはBearerトークンの文字列だけを指定してください");
-  return token;
-}
+import { bearerToken, httpUrl, secureOrigin } from "./http-policy.js";
+import { TokenSession } from "./token-session.js";
 
 export class ResourceClient {
   #base;
@@ -34,9 +13,17 @@ export class ResourceClient {
     this.#fetch = fetcher;
   }
 
-  setAuthentication({ mode = "none", token, getToken, allowedOrigins = [this.#base.origin] } = {}) {
+  setAuthentication({
+    mode = "none",
+    token,
+    getToken,
+    allowedOrigins = [this.#base.origin],
+    refresh,
+    expiresIn,
+  } = {}) {
+    let policy;
     if (mode === "none") {
-      this.#policy = { mode, allowedOrigins: [] };
+      policy = { mode, allowedOrigins: [] };
     } else if (mode === "jwt") {
       if (!Array.isArray(allowedOrigins) || !allowedOrigins.length)
         throw new Error("JWTの送信先オリジンを指定してください");
@@ -50,19 +37,33 @@ export class ResourceClient {
       });
       if (getToken !== undefined && (typeof getToken !== "function" || token !== undefined))
         throw new Error("tokenまたはgetTokenのどちらか一方を指定してください");
+      if (getToken !== undefined && refresh !== undefined)
+        throw new Error("getTokenと組み込みのリフレッシュ設定は併用できません");
       const fixedToken = getToken === undefined ? bearerToken(token) : undefined;
-      this.#policy = {
+      const session =
+        refresh === undefined
+          ? undefined
+          : new TokenSession({ token: fixedToken, expiresIn, refresh, fetch: this.#fetch });
+      policy = {
         mode,
         allowedOrigins: [...new Set(origins)],
-        getToken: getToken ?? (() => fixedToken),
+        getToken: session ? undefined : (getToken ?? (() => fixedToken)),
+        session,
       };
     } else throw new Error("認証モードはnoneまたはjwtを指定してください");
+    const previous = this.#policy;
+    this.#policy = policy;
+    previous.session?.invalidate();
     return this.getAuthentication();
   }
 
   // Metadata only: no token/provider can be read through this API.
   getAuthentication() {
-    return { mode: this.#policy.mode, allowedOrigins: [...this.#policy.allowedOrigins] };
+    return {
+      mode: this.#policy.mode,
+      allowedOrigins: [...this.#policy.allowedOrigins],
+      ...(this.#policy.session ? { refresh: this.#policy.session.metadata() } : {}),
+    };
   }
 
   #check(policy, signal) {
@@ -74,21 +75,67 @@ export class ResourceClient {
     const url = httpUrl(value, this.#base);
     const policy = this.#policy;
     this.#check(policy, signal);
-    const headers = new Headers();
     const authenticated = policy.mode === "jwt";
+    let credential;
     if (authenticated) {
       if (!policy.allowedOrigins.includes(url.origin))
         throw new Error("このURLはJWTの送信先として許可されていません");
-      let token;
       try {
-        token = await policy.getToken({ url: new URL(url), signal });
+        credential = policy.session
+          ? await policy.session.access({ signal })
+          : { token: await policy.getToken({ url: new URL(url), signal }) };
       } catch {
         this.#check(policy, signal);
-        throw new Error("JWTを取得できませんでした");
+        throw new Error(
+          policy.session
+            ? "トークンを更新できませんでした。再認証してください"
+            : "JWTを取得できませんでした",
+        );
       }
       this.#check(policy, signal);
-      headers.set("Authorization", `Bearer ${bearerToken(token)}`);
+      credential.token = bearerToken(credential.token);
     }
+    let response = await this.#request(url, policy, credential?.token, signal);
+    if (response.status === 401 && policy.session) {
+      await response.body?.cancel().catch(() => {});
+      try {
+        credential = await policy.session.renew(credential.generation, { signal });
+      } catch {
+        this.#check(policy, signal);
+        throw new Error("トークンを更新できませんでした。再認証してください");
+      }
+      this.#check(policy, signal);
+      response = await this.#request(url, policy, credential.token, signal);
+      if (response.status === 401) policy.session.invalidate();
+    }
+    if (!response.ok) {
+      if (response.status === 401)
+        throw new Error("HTTP 401: 認証が必要、またはJWTが無効・期限切れです");
+      if (response.status === 403)
+        throw new Error("HTTP 403: このリソースへのアクセス権限がありません");
+      throw new Error(`HTTP ${response.status}: リソースを取得できませんでした`);
+    }
+    return response;
+  }
+
+  async refreshAuthentication({ signal } = {}) {
+    const policy = this.#policy;
+    this.#check(policy, signal);
+    if (!policy.session) throw new Error("リフレッシュ設定がありません");
+    try {
+      await policy.session.renew(undefined, { signal });
+    } catch {
+      this.#check(policy, signal);
+      throw new Error("トークンを更新できませんでした。再認証してください");
+    }
+    this.#check(policy, signal);
+    return this.getAuthentication();
+  }
+
+  async #request(url, policy, token, signal) {
+    const headers = new Headers();
+    if (token !== undefined) headers.set("Authorization", `Bearer ${token}`);
+    const authenticated = policy.mode === "jwt";
     let response;
     try {
       response = await this.#fetch(url, {
@@ -105,13 +152,6 @@ export class ResourceClient {
       throw new Error("HTTP取得に失敗しました（通信・CORS・リダイレクトを確認してください）");
     }
     this.#check(policy, signal);
-    if (!response.ok) {
-      if (response.status === 401)
-        throw new Error("HTTP 401: 認証が必要、またはJWTが無効・期限切れです");
-      if (response.status === 403)
-        throw new Error("HTTP 403: このリソースへのアクセス権限がありません");
-      throw new Error(`HTTP ${response.status}: リソースを取得できませんでした`);
-    }
     return response;
   }
 

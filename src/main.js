@@ -24,6 +24,12 @@ const controls = [
   "auth-token",
   "auth-origins",
   "auth-apply",
+  "auth-refresh-enabled",
+  "auth-refresh-url",
+  "auth-refresh-token",
+  "auth-refresh-format",
+  "auth-refresh-client",
+  "auth-expires-in",
 ];
 let engine;
 let packageUrl;
@@ -47,8 +53,19 @@ function error(message) {
 function enableControls() {
   for (const id of controls)
     $(id).disabled = !engine || fetching || benchmarkRunning || themeFetching;
-  for (const id of ["auth-token", "auth-origins"])
+  for (const id of ["auth-token", "auth-origins", "auth-refresh-enabled"])
     $(id).disabled ||= $("auth-mode").value !== "jwt";
+  const refresh = $("auth-mode").value === "jwt" && $("auth-refresh-enabled").checked;
+  $("auth-refresh-fields").hidden = !refresh;
+  for (const id of [
+    "auth-refresh-url",
+    "auth-refresh-token",
+    "auth-refresh-format",
+    "auth-refresh-client",
+    "auth-expires-in",
+  ])
+    $(id).disabled ||= !refresh;
+  $("auth-refresh-client").disabled ||= $("auth-refresh-format").value !== "oauth";
 }
 function updateState(result) {
   currentState = result.state;
@@ -284,6 +301,9 @@ $("theme-apply").addEventListener("click", () => {
 
 $("auth-origins").value = base.origin;
 $("auth-mode").value = "none";
+$("auth-refresh-enabled").checked = false;
+$("auth-refresh-format").value = "json";
+$("auth-refresh-token").value = "";
 $("auth-toggle").textContent = "認証: なし";
 $("auth-message").textContent = "";
 $("auth-error").hidden = true;
@@ -293,6 +313,8 @@ $("auth-toggle").addEventListener("click", () => {
   $("auth-toggle").setAttribute("aria-expanded", String(open));
 });
 $("auth-mode").addEventListener("change", enableControls);
+$("auth-refresh-enabled").addEventListener("change", enableControls);
+$("auth-refresh-format").addEventListener("change", enableControls);
 $("auth-form").addEventListener("submit", (event) => {
   event.preventDefault();
   if (!engine || fetching || benchmarkRunning || themeFetching) return;
@@ -301,9 +323,23 @@ $("auth-form").addEventListener("submit", (event) => {
       mode: $("auth-mode").value,
       token: $("auth-token").value,
       allowedOrigins: $("auth-origins").value.split(/\s+/).filter(Boolean),
+      expiresIn: $("auth-expires-in").value ? Number($("auth-expires-in").value) : undefined,
+      refresh: $("auth-refresh-enabled").checked
+        ? {
+            url: $("auth-refresh-url").value,
+            token: $("auth-refresh-token").value,
+            format: $("auth-refresh-format").value,
+            clientId:
+              $("auth-refresh-format").value === "oauth" && $("auth-refresh-client").value
+                ? $("auth-refresh-client").value
+                : undefined,
+          }
+        : undefined,
     });
     $("auth-token").value = "";
-    $("auth-toggle").textContent = `認証: ${auth.mode === "jwt" ? "JWT" : "なし"}`;
+    $("auth-refresh-token").value = "";
+    $("auth-toggle").textContent =
+      `認証: ${auth.mode === "jwt" ? (auth.refresh ? "JWT（自動更新）" : "JWT") : "なし"}`;
     $("auth-message").textContent = "設定を適用しました。次のHTTP取得から使用します。";
     $("auth-error").hidden = true;
   } catch (exception) {
@@ -388,6 +424,7 @@ if (import.meta.hot) {
     disposed = true;
     resources.setAuthentication({ mode: "none" });
     $("auth-token").value = "";
+    $("auth-refresh-token").value = "";
     webmcpRegistration?.dispose();
     resize.disconnect();
     dom.dispose();
