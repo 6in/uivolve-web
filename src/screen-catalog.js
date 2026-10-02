@@ -3,6 +3,7 @@ export const SCREEN_CATALOG = Object.freeze(
   [
     { id: "orders", title: "受注管理" },
     { id: "tasks", title: "タスク管理" },
+    { id: "hello-world", title: "Hello World・はじめての画面" },
     { id: "components", title: "パネル・ウィンドウ" },
     { id: "uivolve-forms", title: "uivolve フォーム部品" },
     { id: "grid-lab", title: "Grid・タブ・ツリー・メニュー" },

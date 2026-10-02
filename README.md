@@ -4,6 +4,8 @@ uivolveの宣言的な部品・配置という考えを、Web向けのUIエン�
 
 開発環境は **Bun 1.3.12 + Vite+ 1.0.0**。ReactなどのUIフレームワークは使用しない。
 
+初めて画面を作るなら[Hello Worldチュートリアル](docs/tutorial-hello-world.md)から始められる。入力欄とボタンで、画面DSL・state・Rhaiのつながりを試せる。
+
 [文書案内](docs/README.md)から画面・部品の契約を辿れる。部品を増やす場合は[部品開発ガイド](docs/component-development.md)、実装全体は[アーキテクチャ](docs/architecture.md)、確認方法は[検証基準](docs/testing.md)を参照する。[開発への参加](CONTRIBUTING.md)に変更・レビューの進め方をまとめている。
 
 ## 起動
@@ -18,7 +20,7 @@ bun run dev
 
 開発サーバー: `http://127.0.0.1:4173/`。起動時にRustをWASMへビルドする。
 
-画面を直接開くにはURLへ`?screen=uivolve-forms`などを付ける。対応値は`orders`、`tasks`、`components`、`uivolve-forms`、`grid-lab`、`uivolve-gallery`、`layout-lab`。省略・不明な値は受注管理を開く。レイアウトのプレビュー: `http://127.0.0.1:4174/?screen=layout-lab`。
+画面を直接開くにはURLへ`?screen=hello-world`などを付ける。対応値は`orders`、`tasks`、`hello-world`、`components`、`uivolve-forms`、`grid-lab`、`uivolve-gallery`、`layout-lab`。省略・不明な値は受注管理を開く。Hello Worldのプレビュー: `http://127.0.0.1:4174/?screen=hello-world`。
 
 ```sh
 bun run build       # WASM + Vite+本番ビルド → dist/
@@ -34,6 +36,8 @@ Rustを変更したら`bun run build:wasm`を実行する。フロントエン�
 配布物は`dist/`一式。静的HTTPサーバーで配信し、配信先でBunやRustを実行する必要はない。取得URL・プレビュー更新・エラー確認は[運用手順](docs/operations.md)を参照する。
 
 ## 試せること
+
+- 「Hello World・はじめての画面」で、名前を入力して「挨拶する」を押すと「Hello 名前」を表示する。空欄なら「Hello World」。画面JSONとRhaiだけで構成する最小例。
 
 - 「Grid・Card・Border レイアウト」画面で、幅に応じたGrid配置と列span、入力を保持するCard切替、上下左右と中央を組むBorder、領域を使い切るFitを試せる。共通gap/paddingと最小高さを扱い、座標・寸法をWASMが計算する。詳細は[レイアウト契約](docs/layouts.md)。
 
@@ -79,7 +83,7 @@ Rust / WASM エンジン
 - `src/widget-contract.js`: DOM/Canvas/WebMCPで共有する操作部品の分類と許可action。
 - `src/screen-catalog.js`: 同梱画面のid・title。
 - `src/dom-renderer.js` / `src/canvas-renderer.js`: 描画・入力のアダプター。
-- `public/screens/`: エンジンとは別に配信する７画面。
+- `public/screens/`: エンジンとは別に配信する８画面。
 - `engine/src/layouts.rs` / `docs/layouts.md`: Grid/Card/Border/Fitと共通余白の計測・配置・契約。
 - `engine/src/grid.rs` / `navigation.rs`: Gridの操作・下書き・ページ生成とタブ・ツリー・メニューの共通状態。
 - `docs/screen-format.md`: 画面・スクリプトの契約。

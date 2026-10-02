@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "id": "hello-world",
+  "title": "Hello World・はじめての画面",
+  "script": "hello-world.rhai",
+  "state": {
+    "name": "",
+    "greeting": "名前を入力して「挨拶する」を押してください。"
+  },
+  "ui": {
+    "xtype": "container",
+    "layout": "vbox",
+    "items": [
+      {
+        "xtype": "textfield",
+        "itemId": "nameInput",
+        "fieldLabel": "名前",
+        "emptyText": "例：太郎",
+        "bind": "name"
+      },
+      {
+        "xtype": "button",
+        "itemId": "helloButton",
+        "text": "挨拶する",
+        "handler": "sayHello",
+        "variant": "primary"
+      },
+      {
+        "xtype": "label",
+        "itemId": "greetingLabel",
+        "bind": "greeting"
+      }
+    ]
+  }
+}

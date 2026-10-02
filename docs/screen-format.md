@@ -2,6 +2,8 @@
 
 画面パッケージはJSON。UI処理は別URLのRhaiテキスト。JSON内の`script`は、パッケージURLから解決する相対または絶対HTTP / HTTPS URL。
 
+初めて書く場合は、入力・ボタン・結果表示を使う[Hello Worldチュートリアル](tutorial-hello-world.md)を参照。実行例は[hello-world.json](../public/screens/hello-world.json)と[hello-world.rhai](../public/screens/hello-world.rhai)。
+
 ```json
 {
   "version": 1,

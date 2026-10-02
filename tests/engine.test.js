@@ -40,6 +40,27 @@ beforeEach(async () => {
 });
 
 describe("actual WASM engine, downloaded DSL and Rhai", () => {
+  it("runs the Hello World tutorial through input bindings and the downloaded button handler", async () => {
+    const screen = JSON.parse(
+      await readFile(new URL("../public/screens/hello-world.json", import.meta.url), "utf8"),
+    );
+    const script = await readFile(
+      new URL("../public/screens/hello-world.rhai", import.meta.url),
+      "utf8",
+    );
+    const initial = engine.load(screen, script);
+    const entered = engine.dispatch("nameInput", { value: "  太郎  " });
+    expect(entered.state.name).toBe("  太郎  ");
+    expect(entered.state.greeting).toBe(initial.state.greeting);
+    expect(engine.dispatch("helloButton").state.greeting).toBe("Hello 太郎");
+    expect(engine.layout(500).widgets.find((w) => w.key === "greetingLabel").text).toBe(
+      "Hello 太郎",
+    );
+    engine.dispatch("nameInput", { value: " \t " });
+    expect(engine.dispatch("helloButton").state.greeting).toBe("Hello World");
+    expect(engine.load(screen, script).state).toEqual(initial.state);
+  });
+
   it("changes the palette without resetting drafts, modal layers, geometry or revision", () => {
     expect(engine.theme().colors.primary).toBe("#286c5c");
     engine.load(components, componentScript);
