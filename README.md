@@ -47,6 +47,7 @@ Rustを変更したら`bun run build:wasm`を実行する。フロントエン�
 - 「uivolve コンポーネントギャラリー」画面でツールバー、分割ボタン、入力グループ、カレンダー、ページ操作、アコーディオン、通知、入力ダイアログ、コード/HTMLソース編集、差分、Markdown、図形、チャート、Git/ネットワーク/フロー図、会話とログ、画像・動画・iframeを試せる。重い部品は基本機能の対応で、差分・制限は[追加部品の契約](docs/uivolve-gallery.md)を参照。
 - WebMCP対応ブラウザへ5つの共通ツールを登録。表示中の部品・状態参照、画面切替、WASMイベント実行をDOM／Canvas共通で扱う。未対応ブラウザでは通常UIを維持する。仕様・操作例・ブラウザの中断通知の制限は[WebMCP契約](docs/webmcp.md)を参照。
 - 任意のHTTP / HTTPSパッケージURLの読み込み。別オリジンは配信側のCORS許可が必要。
+- HTTP取得の認証なし／JWT（Bearer）切替。画面・Rhai・テーマに共通設定を使い、JWTの送信先を指定できる。CORSモードとデモサーバーのAuthorizationプリフライト対応は既定で有効。使い方・ホストAPI・配信側の設定は[JWT・CORS契約](docs/authentication.md)。
 - DSL・Rhaiの編集、WASM内での再コンパイル。失敗した変更は現在の画面を置き換えない。
 - CanvasのTab移動とEnter / Space操作。編集中はブラウザのinput / textarea / selectを利用。スライダーはドラッグと矢印/Home/Endで操作できる。
 - 同じスナップショットの60回再描画。値はDOM更新・Canvas描画命令のCPU時間であり、GPU完了・FPS・総合性能の比較ではない。DOMは既存部品を更新し、Canvasは面を描き直す。
@@ -72,6 +73,7 @@ Rust / WASM エンジン
 - `engine/src/abi.rs`: UTF-8 JSON ABI、公開WASM関数、Runtime・応答バッファの管理。
 - `engine/src/fields.rs`: uivolveの部品設定、初期値、入力値の検証とスナップショット。
 - `src/engine.js`: WASM呼び出し。スクリプトをJavaScriptへ変換・evalしない。
+- `src/resource-client.js`: HTTP/CORS取得、認証なし／JWTと送信先制限。トークンをWASMやDSLへ渡さない。
 - `src/webmcp.js`: 描画方式に依存しない共通ツールとブラウザへの登録アダプター。
 - `src/widget-contract.js`: DOM/Canvas/WebMCPで共有する操作部品の分類と許可action。
 - `src/screen-catalog.js`: 同梱画面のid・title。

@@ -31,6 +31,7 @@ flowchart TD
 | `engine/src/navigation.rs`                   | タブ・ツリー・メニューの状態と表示・操作                                                              |
 | `engine/src/extras.rs` / `figures.rs`        | 追加部品・構成の展開、文書・図表の描画データ生成                                                      |
 | `src/main.js`                                | HTTP取得、URL・メディアの事前確認、カレンダーの日付補完、画面エディタ、テーマ切替、再描画、ホスト状態 |
+| `src/resource-client.js`                     | 共通HTTP/CORS取得、認証なし・Bearer JWT、送信先・リダイレクト・取得失敗の扱い                         |
 | `src/engine.js`                              | JSON/UTF-8の入出力。業務処理やスクリプトのevalは行わない                                              |
 | `src/widget-contract.js`                     | フィールド・ボタン分類、物理操作と意味的操作、WebMCPの許可actionと操作ブロック判定                    |
 | `src/screen-catalog.js`                      | 同梱画面のidとtitle。WebMCPからも利用する                                                             |
@@ -66,6 +67,8 @@ DOMはkeyを使って既存要素を更新し、Canvasは面全体を再描画�
 操作は`load / event / layout / theme`。成功は`{ "ok": true, "data": ... }`、失敗は`{ "ok": false, "error": "..." }`。入力の上限は2,000,000バイト。現在のWASMはブラウザのimportを要求しない。HTTP取得と描画APIはホストが担当する。各操作の詳細は[画面形式](screen-format.md)、[レイアウト](layouts.md)、[テーマ](theme-format.md)を参照する。
 
 Rustのcrate名`wasm-ui-engine`と同梱の画面作成スキル名`wasm-ui-authoring`は既存の識別子として保持している。製品名はuivolve-web。
+
+HTTP認証はホストのResourceClientへ置く。画面・Rhai・テーマは同じ設定で取得し、必要ならWASMファイルの起動取得にも利用できる。JWTはWASMのリクエスト・共通state・Sceneへ入れない。CORSを既定で使用し、JWTの送信先・失敗・配信側の設定は[JWT・CORS契約](authentication.md)に定める。
 
 ## 境界と今後
 

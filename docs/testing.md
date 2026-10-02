@@ -18,16 +18,17 @@ bun run docs:check
 
 ## 自動テストの役割
 
-| ファイル                                      | 主な対象                                                                  |
-| --------------------------------------------- | ------------------------------------------------------------------------- |
-| `tests/abi.test.js`                           | 公開関数とimport、UTF-8応答、壊れた入力、Runtime/テーマの独立性と巻き戻し |
-| `tests/engine.test.js` / Rustのlib.rs内テスト | 画面load、Rhai、イベント、上限、パネル/window、テーマ                     |
-| `tests/fields.test.js`                        | 入力型、選択肢、既定値、readOnly/disabled、値検証                         |
-| `tests/grid-navigation.test.js`               | 安定ID、ソート・検索・ページ、編集下書き、タブ・ツリー・メニュー          |
-| `tests/gallery.test.js`                       | 追加部品、図表・文書・メディア契約、ダイアログなど                        |
-| `tests/layouts.test.js`                       | Grid span、幅に応じた配置、Border/Fit、Card状態・可視性・WebMCP           |
-| `tests/widget-contract.test.js`               | 物理/意味的操作、readOnly・modalガード、カタログとパッケージの整合        |
-| `tests/webmcp.test.js`                        | ツール経由の実WASM操作、stale/token、可視性、登録・中断処理               |
+| ファイル                                      | 主な対象                                                                   |
+| --------------------------------------------- | -------------------------------------------------------------------------- |
+| `tests/abi.test.js`                           | 公開関数とimport、UTF-8応答、壊れた入力、Runtime/テーマの独立性と巻き戻し  |
+| `tests/engine.test.js` / Rustのlib.rs内テスト | 画面load、Rhai、イベント、上限、パネル/window、テーマ                      |
+| `tests/fields.test.js`                        | 入力型、選択肢、既定値、readOnly/disabled、値検証                          |
+| `tests/grid-navigation.test.js`               | 安定ID、ソート・検索・ページ、編集下書き、タブ・ツリー・メニュー           |
+| `tests/gallery.test.js`                       | 追加部品、図表・文書・メディア契約、ダイアログなど                         |
+| `tests/layouts.test.js`                       | Grid span、幅に応じた配置、Border/Fit、Card状態・可視性・WebMCP            |
+| `tests/widget-contract.test.js`               | 物理/意味的操作、readOnly・modalガード、カタログとパッケージの整合         |
+| `tests/webmcp.test.js`                        | ツール経由の実WASM操作、stale/token、可視性、登録・中断処理                |
+| `tests/resource-client.test.js`               | HTTP/CORS設定、JWT切替・送信先、トークン更新、中断・失敗・認証付きWASM起動 |
 
 ## 部品変更の確認
 
@@ -56,6 +57,8 @@ bun run docs:check
 入力やフォーカスに触れた場合は、変換開始→変換中の入力→テーマ/再描画→変換終了という流れを確認する。合成したCompositionEventはイベント処理の確認であり、実IMEの変換候補位置・OS固有動作の保証にはならない。実IMEとモバイルキーボードは対象OS/端末で手動確認する。
 
 WebMCPはJS単体テストに加え、対応ブラウザの登録・発見・実行を確認する。未対応環境でもUIが動くことを見る。中断については[WebMCP契約](webmcp.md)のChromium 152の制限を区別する。
+
+HTTP取得・認証に触れた場合は、別オリジンの実HTTPサーバーでAuthorizationのOPTIONS→GET、401/403、未許可のscript URL、リダイレクトの拒否、JWT無効化・再読み込み後の破棄を確認する。画面・スクリプトの失敗で以前のstate/revision、テーマの失敗で以前の配色が残ることを見る。CORSはmock fetchだけでは検証できないので、ブラウザでも確認する。
 
 現在、恒久的なPlaywright実行スクリプトやCI用ブラウザ環境はリポジトリへ同梱していない。ローカルのブラウザ確認では、一時スクリプトで上記の操作を実行できる。ブラウザテストを常設する場合は、ランタイム・サーバー起動・OSとブラウザの対象範囲を先に固定する。
 

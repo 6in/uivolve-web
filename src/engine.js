@@ -7,8 +7,10 @@ export class WasmEngine {
     this.decoder = new TextDecoder();
   }
 
-  static async create(url) {
-    const response = await fetch(url);
+  static async create(url, { resources, signal } = {}) {
+    const response = resources
+      ? await resources.fetch(url, { signal })
+      : await fetch(url, { signal });
     if (!response.ok) throw new Error(`WASM取得失敗: HTTP ${response.status}`);
     const bytes = await response.arrayBuffer();
     const { instance } = await WebAssembly.instantiate(bytes, {});

@@ -992,6 +992,35 @@ dd {
 .theme-panel .error-banner {
   margin-top: 16px;
 }
+.auth-panel {
+  margin: 0 0 20px;
+}
+.auth-fields {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  margin-top: 18px;
+}
+.auth-fields label {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+}
+.auth-fields :is(input, select, textarea) {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid #dce4de;
+  border-radius: 6px;
+  background: white;
+  color: #304b40;
+  font-size: 12px;
+}
+.auth-fields textarea {
+  resize: vertical;
+}
 :root[data-theme-mode="dark"] {
   background: var(--ui-background);
 }
@@ -1002,7 +1031,10 @@ dd {
     .source-panel,
     .screen-picker select,
     .subtle-button,
-    .url-form input
+    .url-form input,
+    .auth-fields input,
+    .auth-fields select,
+    .auth-fields textarea
   ) {
   background: var(--ui-surface);
   color: var(--ui-text);
@@ -1135,6 +1167,9 @@ dd {
     flex-direction: column;
   }
   .source-editors {
+    grid-template-columns: 1fr;
+  }
+  .auth-fields {
     grid-template-columns: 1fr;
   }
   .url-form {

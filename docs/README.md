@@ -14,6 +14,7 @@ uivolve-webは、uivolveの考えをWebへ実装する試作。画面定義・�
 | Data Grid・タブ・ツリー・メニューを使う            | [Grid・ナビゲーション契約](grid-navigation.md)                                     |
 | カレンダー・通知・図表・エディター・メディアを使う | [ギャラリー契約](uivolve-gallery.md)                                               |
 | 配色を変える                                       | [テーマ契約](theme-format.md)                                                      |
+| HTTP取得でJWTを使う・CORSを設定する                | [JWT・CORS契約](authentication.md)                                                 |
 | AIから画面を操作する                               | [WebMCP契約](webmcp.md)                                                            |
 | 今回の整理と次の課題を知る                         | [整備計画](maintenance-plan.md)                                                    |
 

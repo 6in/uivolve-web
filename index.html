@@ -67,6 +67,14 @@
               配色を編集
             </button>
           </div>
+          <button
+            id="auth-toggle"
+            class="subtle-button"
+            aria-expanded="false"
+            aria-controls="auth-panel"
+          >
+            認証: なし
+          </button>
         </div>
         <div class="toolbar-actions">
           <button id="benchmark" class="subtle-button" disabled>
@@ -75,6 +83,53 @@
             <span aria-hidden="true">〈 〉</span> 定義とスクリプト
           </button>
         </div>
+      </section>
+      <section id="auth-panel" class="source-panel auth-panel" hidden>
+        <form id="auth-form" autocomplete="off">
+          <header>
+            <div>
+              <h2>HTTPの認証</h2>
+              <p>画面・スクリプト・テーマの取得に使います。現在の画面と入力値は保たれます。</p>
+            </div>
+            <button id="auth-apply" class="primary-button" disabled>認証設定を適用</button>
+          </header>
+          <div class="auth-fields">
+            <label for="auth-mode"
+              >認証方式
+              <select id="auth-mode" disabled>
+                <option value="none">なし</option>
+                <option value="jwt">JWT（Bearer）</option>
+              </select>
+            </label>
+            <label for="auth-token"
+              >JWT
+              <input
+                id="auth-token"
+                type="password"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="発行済みのトークンを貼り付け"
+                disabled
+              />
+            </label>
+            <label for="auth-origins"
+              >JWTの送信先
+              <textarea
+                id="auth-origins"
+                rows="2"
+                spellcheck="false"
+                aria-describedby="auth-help"
+                disabled
+              ></textarea>
+            </label>
+          </div>
+          <p id="auth-help">
+            送信先は https://example.com
+            のようなオリジンを、1行ずつ指定します。JWTはページ内だけに保持し、再読み込みすると消えます。
+          </p>
+          <p id="auth-message" role="status"></p>
+          <div id="auth-error" class="error-banner" role="alert" hidden></div>
+        </form>
       </section>
       <div id="error" class="error-banner" role="alert" hidden></div>
       <div id="loading" class="loading-banner" role="status">

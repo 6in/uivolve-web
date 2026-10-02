@@ -26,6 +26,8 @@ Viteのbaseは`./`で、アセットと同梱パッケージはブラウザのba
 
 画面とscriptはHTTP/HTTPSのURLで取得する。scriptはパッケージURLを基準に解決し、メディアの相対URLもパッケージを基準にする。別オリジンへ置いた画面・script・テーマには配信側のCORS設定が必要。WebMCPの利用条件は[WebMCP契約](webmcp.md)を参照する。
 
+HTTP取得はCORSモードが既定。Vite+開発・プレビューは公開デモ用のCORSヘッダーとAuthorizationプリフライト許可を返す。`dist/`を別サーバーへ配信した場合、この設定は自動では引き継がれない。認証付き画面を配信するには、そのサーバーでJWTを検証し、OPTIONSと401/403にもCORSヘッダーを返す。[JWT・CORS契約](authentication.md)を参照する。
+
 現在はfile://での直接起動や単一HTMLへの全資源埋め込みには対応していない。
 
 ## 更新時の確認

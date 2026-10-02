@@ -5,9 +5,11 @@ import { CanvasRenderer } from "./canvas-renderer.js";
 import { applyTheme } from "./theme.js";
 import { SCREEN_CATALOG } from "./screen-catalog.js";
 import { createUiTools, registerUiTools } from "./webmcp.js";
+import { ResourceClient } from "./resource-client.js";
 
 const $ = (id) => document.getElementById(id);
 const base = new URL(import.meta.env.BASE_URL, window.location.href);
+const resources = new ResourceClient({ baseUrl: base });
 const bundledScreens = SCREEN_CATALOG.map((screen) => screen.id);
 const controls = [
   "screen-select",
@@ -18,6 +20,10 @@ const controls = [
   "theme-select",
   "theme-apply",
   "theme-load-url",
+  "auth-mode",
+  "auth-token",
+  "auth-origins",
+  "auth-apply",
 ];
 let engine;
 let packageUrl;
@@ -41,6 +47,8 @@ function error(message) {
 function enableControls() {
   for (const id of controls)
     $(id).disabled = !engine || fetching || benchmarkRunning || themeFetching;
+  for (const id of ["auth-token", "auth-origins"])
+    $(id).disabled ||= $("auth-mode").value !== "jwt";
 }
 function updateState(result) {
   currentState = result.state;
@@ -107,14 +115,6 @@ const resize = new ResizeObserver(scheduleRender);
 resize.observe($("dom-stage"));
 resize.observe($("canvas-stage"));
 
-async function fetchText(url, signal) {
-  const response = await fetch(url, { cache: "no-cache", signal });
-  if (!response.ok) throw new Error(`${url.pathname}: HTTP ${response.status}`);
-  const text = await response.text();
-  if (text.length > 1_000_000) throw new Error("ファイルが1 MBを超えています");
-  return text;
-}
-
 function compile(screen, script, source) {
   screen = structuredClone(screen);
   const now = new Date();
@@ -169,12 +169,12 @@ async function load(url, { signal, beforeCommit, throwOnError = false } = {}) {
   try {
     if (!["http:", "https:"].includes(url.protocol))
       throw new Error("HTTP / HTTPSのURLを指定してください");
-    const screen = JSON.parse(await fetchText(url, signal));
+    const screen = JSON.parse(await resources.text(url, { signal }));
     if (typeof screen.script !== "string") throw new Error("script URLがありません");
     const scriptUrl = new URL(screen.script, url);
     if (!["http:", "https:"].includes(scriptUrl.protocol))
       throw new Error("scriptにはHTTP / HTTPSのURLが必要です");
-    const script = await fetchText(scriptUrl, signal);
+    const script = await resources.text(scriptUrl, { signal });
     signal?.throwIfAborted();
     beforeCommit?.();
     compile(screen, script, url);
@@ -250,7 +250,7 @@ async function loadTheme(url, choice) {
   try {
     if (!["http:", "https:"].includes(url.protocol))
       throw new Error("HTTP / HTTPSのURLを指定してください");
-    setTheme(JSON.parse(await fetchText(url)), choice, url);
+    setTheme(JSON.parse(await resources.text(url)), choice, url);
   } catch (exception) {
     $("theme-select").value = themeChoice;
     $("theme-panel").hidden = false;
@@ -279,6 +279,37 @@ $("theme-apply").addEventListener("click", () => {
     setTheme(JSON.parse($("theme-source").value), "custom");
   } catch (exception) {
     themeError(`配色を変更できませんでした。${exception.message}`);
+  }
+});
+
+$("auth-origins").value = base.origin;
+$("auth-mode").value = "none";
+$("auth-toggle").textContent = "認証: なし";
+$("auth-message").textContent = "";
+$("auth-error").hidden = true;
+$("auth-toggle").addEventListener("click", () => {
+  const open = $("auth-panel").hidden;
+  $("auth-panel").hidden = !open;
+  $("auth-toggle").setAttribute("aria-expanded", String(open));
+});
+$("auth-mode").addEventListener("change", enableControls);
+$("auth-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (!engine || fetching || benchmarkRunning || themeFetching) return;
+  try {
+    const auth = resources.setAuthentication({
+      mode: $("auth-mode").value,
+      token: $("auth-token").value,
+      allowedOrigins: $("auth-origins").value.split(/\s+/).filter(Boolean),
+    });
+    $("auth-token").value = "";
+    $("auth-toggle").textContent = `認証: ${auth.mode === "jwt" ? "JWT" : "なし"}`;
+    $("auth-message").textContent = "設定を適用しました。次のHTTP取得から使用します。";
+    $("auth-error").hidden = true;
+  } catch (exception) {
+    $("auth-message").textContent = "";
+    $("auth-error").textContent = exception.message;
+    $("auth-error").hidden = false;
   }
 });
 
@@ -335,7 +366,7 @@ $("benchmark").addEventListener("click", async () => {
 
 async function start() {
   try {
-    engine = await WasmEngine.create(new URL("engine.wasm", base));
+    engine = await WasmEngine.create(new URL("engine.wasm", base), { resources });
     setTheme(engine.theme(), "light", new URL("themes/light.json", base));
     $("engine-status").textContent = "WASMエンジン稼働中";
     document.querySelector(".status-light").classList.add("ready");
@@ -355,6 +386,8 @@ start();
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     disposed = true;
+    resources.setAuthentication({ mode: "none" });
+    $("auth-token").value = "";
     webmcpRegistration?.dispose();
     resize.disconnect();
     dom.dispose();
