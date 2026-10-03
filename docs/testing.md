@@ -31,6 +31,7 @@ bun run docs:check
 | `tests/resource-client.test.js`               | HTTP/CORS設定、JWT切替・送信先、トークン更新、中断・失敗・認証付きWASM起動              |
 | `tests/http-grid.test.js`                     | RhaiのHTTP依頼と完了、JSON検証、一覧保持、重複・失敗の巻き戻し、中止・タイムアウト      |
 | `tests/native-extensions.test.js`             | 実WASMでのRust関数呼び出し、Unicode・キャプチャ・置換、集計、容量と型エラー時の巻き戻し |
+| `tests/platform-features.test.js`             | YAML/JSON互換、URL解決、型・bind・動的部品の検証、保存依頼・完了・中止とOPFS確定        |
 
 ## 部品変更の確認
 
@@ -51,17 +52,18 @@ bun run docs:check
 
 `bun run build`後に`bun run preview`で確認する。DOMとCanvasのどちらから操作しても、同じ状態が両方へ反映されることを見る。幅は通常のデスクトップと390px前後の画面、エンジン単体では240pxの下限も確認する。
 
-| 画面ID            | 主な操作                                                                            |
-| ----------------- | ----------------------------------------------------------------------------------- |
-| orders / tasks    | 検索・選択・編集・追加、HTTP再取得、定義適用失敗、状態同期                          |
-| hello-world       | 名前入力、押下まで結果保持、日本語の挨拶、空欄のWorld、HTTP再取得による初期化       |
-| http-grid         | DOM/CanvasからGET、取得中の無効化、Grid表示、失敗と再試行、画面切替時の遅延応答破棄 |
-| native-extensions | 正規表現の実行・日本語・結果保持・不正パターン、整数集計、両方式とWebMCPからの操作  |
-| components        | 折りたたみ、重なるwindow、背後への遮断、Tab/Escapeと閉じた後のフォーカス            |
-| uivolve-forms     | 各入力型、選択、スライダー、入力要素の保持                                          |
-| grid-lab          | ソート・検索・ページ・複数選択、Enter/Escape編集、Rhai拒否、タブ・ツリー・メニュー  |
-| uivolve-gallery   | 6タブの基本動作、ダイアログ、文書・図表、メディアの保持と終了                       |
-| layout-lab        | Grid列数/span/行高、Card入力保持、Border/Fit、両方式からの操作                      |
+| 画面ID            | 主な操作                                                                                 |
+| ----------------- | ---------------------------------------------------------------------------------------- |
+| orders / tasks    | 検索・選択・編集・追加、HTTP再取得、定義適用失敗、状態同期                               |
+| hello-world       | 名前入力、押下まで結果保持、日本語の挨拶、空欄のWorld、HTTP再取得による初期化            |
+| http-grid         | DOM/CanvasからGET、取得中の無効化、Grid表示、失敗と再試行、画面切替時の遅延応答破棄      |
+| storage-lab       | YAML読み込み、両方式の保存・復元・削除、再読み込み後の保持、型違反の状態保持、メタデータ |
+| native-extensions | 正規表現の実行・日本語・結果保持・不正パターン、整数集計、両方式とWebMCPからの操作       |
+| components        | 折りたたみ、重なるwindow、背後への遮断、Tab/Escapeと閉じた後のフォーカス                 |
+| uivolve-forms     | 各入力型、選択、スライダー、入力要素の保持                                               |
+| grid-lab          | ソート・検索・ページ・複数選択、Enter/Escape編集、Rhai拒否、タブ・ツリー・メニュー       |
+| uivolve-gallery   | 6タブの基本動作、ダイアログ、文書・図表、メディアの保持と終了                            |
+| layout-lab        | Grid列数/span/行高、Card入力保持、Border/Fit、両方式からの操作                           |
 
 入力やフォーカスに触れた場合は、変換開始→変換中の入力→テーマ/再描画→変換終了という流れを確認する。合成したCompositionEventはイベント処理の確認であり、実IMEの変換候補位置・OS固有動作の保証にはならない。実IMEとモバイルキーボードは対象OS/端末で手動確認する。
 

@@ -3,10 +3,13 @@ import { WasmEngine } from "./engine.js";
 import { DomRenderer } from "./dom-renderer.js";
 import { CanvasRenderer } from "./canvas-renderer.js";
 import { applyTheme } from "./theme.js";
-import { SCREEN_CATALOG } from "./screen-catalog.js";
+import { SCREEN_CATALOG, screenFile } from "./screen-catalog.js";
 import { createUiTools, registerUiTools } from "./webmcp.js";
 import { ResourceClient } from "./resource-client.js";
 import { HttpEffects } from "./http-effects.js";
+import { StorageEffects } from "./storage-effects.js";
+import { packageFormat, parsePackage, stringifyPackage } from "./package-format.js";
+import { readPageRoute, pageUrl } from "./page-router.js";
 
 const $ = (id) => document.getElementById(id);
 const base = new URL(import.meta.env.BASE_URL, window.location.href);
@@ -17,6 +20,7 @@ const controls = [
   "reload",
   "benchmark",
   "apply",
+  "source-format",
   "load-url",
   "theme-select",
   "theme-apply",
@@ -46,17 +50,59 @@ let frame = 0;
 let scenes;
 let themeFetching = false;
 let themeChoice = "light";
+let loadSequence = 0;
+let loadController;
+let pendingRoute;
+function completeEffect(method, id, response) {
+  const result = engine[method](id, response);
+  updateState(result);
+  error("");
+  render();
+  return result;
+}
 const httpEffects = new HttpEffects({
   resources,
-  complete: (id, response) => {
-    const result = engine.completeHttp(id, response);
-    updateState(result);
-    error("");
-    render();
-    return result;
-  },
+  complete: (id, response) => completeEffect("completeHttp", id, response),
+  runNext: runEffects,
   onError: (exception) => error(exception.message),
 });
+const storageEffects = new StorageEffects({
+  complete: (id, response) => completeEffect("completeStorage", id, response),
+  runNext: runEffects,
+  onError: (exception) => error(exception.message),
+});
+function runEffects(effects = []) {
+  return Promise.all([
+    httpEffects.run(effects.filter((effect) => effect.kind !== "storage")),
+    storageEffects.run(effects.filter((effect) => effect.kind === "storage")),
+  ]);
+}
+function writeRoute(id, mode = "push") {
+  const url = pageUrl(id, base, window.location.href);
+  if (url.href !== window.location.href)
+    window.history[mode === "replace" ? "replaceState" : "pushState"]({}, "", url);
+}
+async function loadBundled(id, options = {}) {
+  return load(new URL(`screens/${screenFile(id)}`, base), { ...options, routeId: id });
+}
+function restoreRoute() {
+  if (bundledScreens.includes(currentPackage?.id)) writeRoute(currentPackage.id, "replace");
+}
+function followHistory() {
+  if (!engine) return;
+  try {
+    const id = readPageRoute(window.location.href, base, bundledScreens);
+    if (benchmarkRunning || themeFetching) {
+      pendingRoute = id;
+      return;
+    }
+    void loadBundled(id, { replacePending: true, historyMode: "replace" });
+  } catch (exception) {
+    error(exception.message);
+    restoreRoute();
+  }
+}
+window.addEventListener("popstate", followHistory);
 
 function error(message) {
   $("error").textContent = message;
@@ -78,6 +124,11 @@ function enableControls() {
   ])
     $(id).disabled ||= !refresh;
   $("auth-refresh-client").disabled ||= $("auth-refresh-format").value !== "oauth";
+  if (pendingRoute && engine && !fetching && !benchmarkRunning && !themeFetching) {
+    const id = pendingRoute;
+    pendingRoute = undefined;
+    void loadBundled(id, { replacePending: true, historyMode: "replace" });
+  }
 }
 function updateState(result) {
   currentState = result.state;
@@ -93,7 +144,7 @@ function performEvent(target, payload) {
   updateState(result);
   error("");
   render();
-  void httpEffects.run(result.effects);
+  void runEffects(result.effects);
   return result;
 }
 
@@ -145,7 +196,7 @@ const resize = new ResizeObserver(scheduleRender);
 resize.observe($("dom-stage"));
 resize.observe($("canvas-stage"));
 
-function compile(screen, script, source) {
+function compile(screen, script, source, format = packageFormat(source), rawSource) {
   screen = structuredClone(screen);
   const now = new Date();
   const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
@@ -176,7 +227,10 @@ function compile(screen, script, source) {
   screenToken = crypto.randomUUID();
   packageUrl = source;
   httpEffects.reset(source);
-  $("dsl-source").value = JSON.stringify(screen, null, 2);
+  storageEffects.reset(screen.id);
+  $("source-format").value = format;
+  editorFormat = format;
+  $("dsl-source").value = rawSource ?? stringifyPackage(screen, format);
   $("script-source").value = script;
   $("screen-url").value = source.href;
   $("package-url").textContent = source.pathname;
@@ -185,15 +239,31 @@ function compile(screen, script, source) {
   updateState(result);
   render();
   error("");
-  void httpEffects.run(result.effects);
+  void runEffects(result.effects);
 }
 
-async function load(url, { signal, beforeCommit, throwOnError = false } = {}) {
-  if (fetching || benchmarkRunning || themeFetching) {
+async function load(
+  url,
+  {
+    signal,
+    beforeCommit,
+    throwOnError = false,
+    routeId,
+    historyMode = "push",
+    replacePending = false,
+  } = {},
+) {
+  if ((fetching && !replacePending) || benchmarkRunning || themeFetching) {
     if (throwOnError) throw new Error("画面の読み込み中です");
     return;
   }
   signal?.throwIfAborted();
+  loadController?.abort();
+  const controller = new AbortController();
+  loadController = controller;
+  const externalAbort = () => controller.abort(signal.reason);
+  signal?.addEventListener("abort", externalAbort, { once: true });
+  const sequence = ++loadSequence;
   fetching = true;
   enableControls();
   $("loading").hidden = false;
@@ -201,30 +271,48 @@ async function load(url, { signal, beforeCommit, throwOnError = false } = {}) {
   try {
     if (!["http:", "https:"].includes(url.protocol))
       throw new Error("HTTP / HTTPSのURLを指定してください");
-    const screen = JSON.parse(await resources.text(url, { signal }));
+    const source = await resources.text(url, { signal: controller.signal });
+    const format = packageFormat(url);
+    const screen = parsePackage(source, format);
     if (typeof screen.script !== "string") throw new Error("script URLがありません");
     const scriptUrl = new URL(screen.script, url);
     if (!["http:", "https:"].includes(scriptUrl.protocol))
       throw new Error("scriptにはHTTP / HTTPSのURLが必要です");
-    const script = await resources.text(scriptUrl, { signal });
-    signal?.throwIfAborted();
+    const script = await resources.text(scriptUrl, { signal: controller.signal });
+    controller.signal.throwIfAborted();
     beforeCommit?.();
-    compile(screen, script, url);
+    compile(screen, script, url, format, source);
     $("screen-select").value = bundledScreens.includes(screen.id) ? screen.id : "";
+    if (routeId) writeRoute(routeId, historyMode);
+    return true;
   } catch (exception) {
-    if (!signal?.aborted) error(`画面を読み込めませんでした。${exception.message}`);
+    if (!controller.signal.aborted) {
+      error(`画面を読み込めませんでした。${exception.message}`);
+      $("screen-select").value = bundledScreens.includes(currentPackage?.id)
+        ? currentPackage.id
+        : "";
+      if (routeId && historyMode === "replace") restoreRoute();
+    }
     if (throwOnError) throw exception;
   } finally {
-    fetching = false;
-    $("loading").hidden = true;
-    enableControls();
+    signal?.removeEventListener("abort", externalAbort);
+    if (sequence === loadSequence) {
+      fetching = false;
+      $("loading").hidden = true;
+      enableControls();
+    }
   }
 }
 
 function snapshot() {
   return {
     screen: currentPackage
-      ? { id: currentPackage.id, title: currentPackage.title, token: screenToken }
+      ? {
+          id: currentPackage.id,
+          title: currentPackage.title,
+          token: screenToken,
+          ...(scenes?.[0].webmcp ? { webmcp: scenes[0].webmcp } : {}),
+        }
       : null,
     revision,
     state: currentState,
@@ -239,8 +327,7 @@ async function connectWebMCP() {
       createUiTools({
         snapshot,
         dispatch: performEvent,
-        loadScreen: (id, options) =>
-          load(new URL(`screens/${id}.json`, base), { ...options, throwOnError: true }),
+        loadScreen: (id, options) => loadBundled(id, { ...options, throwOnError: true }),
       }),
     );
     if (disposed) {
@@ -364,9 +451,7 @@ $("auth-form").addEventListener("submit", (event) => {
   }
 });
 
-$("screen-select").addEventListener("change", () =>
-  load(new URL(`screens/${$("screen-select").value}.json`, base)),
-);
+$("screen-select").addEventListener("change", () => loadBundled($("screen-select").value));
 $("reload").addEventListener("click", () =>
   load(packageUrl || new URL("screens/orders.json", base)),
 );
@@ -381,9 +466,27 @@ $("url-form").addEventListener("submit", (event) => {
 });
 $("apply").addEventListener("click", () => {
   try {
-    compile(JSON.parse($("dsl-source").value), $("script-source").value, packageUrl);
+    const source = $("dsl-source").value;
+    const format = $("source-format").value;
+    compile(parsePackage(source, format), $("script-source").value, packageUrl, format, source);
   } catch (exception) {
     error(`変更を適用できませんでした。${exception.message}`);
+  }
+});
+let editorFormat = "json";
+$("source-format").addEventListener("focus", () => {
+  editorFormat = $("source-format").value;
+});
+$("source-format").addEventListener("change", () => {
+  try {
+    $("dsl-source").value = stringifyPackage(
+      parsePackage($("dsl-source").value, editorFormat),
+      $("source-format").value,
+    );
+    editorFormat = $("source-format").value;
+  } catch (exception) {
+    $("source-format").value = editorFormat;
+    error(exception.message);
   }
 });
 $("benchmark").addEventListener("click", async () => {
@@ -422,9 +525,16 @@ async function start() {
     $("engine-status").textContent = "WASMエンジン稼働中";
     document.querySelector(".status-light").classList.add("ready");
     $("wasm-size").textContent = `${Math.round(engine.bytes / 1024)} KiB`;
-    const requestedScreen = new URL(window.location.href).searchParams.get("screen");
-    const screenId = bundledScreens.includes(requestedScreen) ? requestedScreen : "orders";
-    await load(new URL(`screens/${screenId}.json`, base));
+    let screenId;
+    let routeError;
+    try {
+      screenId = readPageRoute(window.location.href, base, bundledScreens);
+    } catch (exception) {
+      screenId = "orders";
+      routeError = exception.message;
+    }
+    await loadBundled(screenId, { historyMode: "replace" });
+    if (routeError) error(routeError);
     await connectWebMCP();
   } catch (exception) {
     $("engine-status").textContent = "起動失敗";
@@ -438,6 +548,9 @@ if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     disposed = true;
     httpEffects.reset();
+    storageEffects.reset();
+    loadController?.abort();
+    window.removeEventListener("popstate", followHistory);
     resources.setAuthentication({ mode: "none" });
     $("auth-token").value = "";
     $("auth-refresh-token").value = "";

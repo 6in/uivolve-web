@@ -38,9 +38,9 @@
 
 ## 追加TODO
 
-- [ ] DSLに型情報を宣言し、bindで紐付くstate・入力値を共通WASMエンジンで検証できるようにする。
+- [x] DSLに型情報を宣言し、bindで紐付くstate・入力値を共通WASMエンジンで検証できるようにする。
 
-2026-10-03追加。型定義の基準を画面DSLに置く。基本型、配列・オブジェクト、必須・null許容の表現と、bind先の型との対応を設計する。属性名や具体的な記法は未決定。
+2026-10-03追加・実装。型定義の基準を画面DSLの`stateSchema`に置き、基本型、配列・オブジェクト、必須・null許容とbindの整合を検証する。[対応計画](platform-features-plan.md)と[限定語彙・実行例](platform-features.md)を参照。完全なJSON SchemaとRhaiの静的型検査は省略した。
 
 初期state、Rhaiのinit後・イベントハンドラ後のstate、itemsBindで追加した部品のbindについて、確定前に型の整合性を確認する。違反時は既存の画面・state・revisionを保持し、対象のbind、期待する型、実際の型を診断できるようにする。DOM/Canvas/WebMCPで同じ検証を使い、型情報を持たない既存パッケージとの互換性も検討する。
 

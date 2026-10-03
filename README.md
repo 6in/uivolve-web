@@ -20,7 +20,7 @@ bun run dev
 
 開発サーバー: `http://127.0.0.1:4173/`。起動時にRustをWASMへビルドする。
 
-画面を直接開くにはURLへ`?screen=hello-world`などを付ける。対応値は`orders`、`tasks`、`hello-world`、`dynamic-tabs`、`http-grid`、`native-extensions`、`components`、`uivolve-forms`、`grid-lab`、`uivolve-gallery`、`layout-lab`。省略・不明な値は受注管理を開く。Hello Worldのプレビュー: `http://127.0.0.1:4174/?screen=hello-world`。
+画面を直接開くには`/pages/hello-world`などを指定する。対応IDは画面選択欄にある12画面。旧`?screen=hello-world`も同じ画面を読み込む。プレビュー例: `http://127.0.0.1:4174/pages/hello-world`。戻る・進むにも対応する。
 
 ```sh
 bun run build       # WASM + Vite+本番ビルド → dist/
@@ -31,11 +31,13 @@ bun run docs:check  # 文書のローカルリンクを確認
 bun run fmt
 ```
 
-Rustを変更したら`bun run build:wasm`を実行する。フロントエンドはVite+で更新される。画面JSON・Rhaiは「再取得」、またはエディタの「変更を適用」で再読み込みできる。
+Rustを変更したら`bun run build:wasm`を実行する。フロントエンドはVite+で更新される。画面JSON/YAML・Rhaiは「再取得」、またはエディタの「変更を適用」で再読み込みできる。
 
 配布物は`dist/`一式。静的HTTPサーバーで配信し、配信先でBunやRustを実行する必要はない。取得URL・プレビュー更新・エラー確認は[運用手順](docs/operations.md)を参照する。
 
 ## 試せること
+
+- 「保存・型・YAML」で、名前と年齢をIndexedDB / OPFSへ保存・復元・削除する。YAML画面を同じWASMで処理し、DSLのstateSchemaによる型・範囲チェックとWebMCP向け説明を試せる。[使い方と契約](docs/platform-features.md)、[対応計画と検証結果](docs/platform-features-plan.md)を参照。
 
 - 「Hello World・はじめての画面」で、名前を入力して「挨拶する」を押すと「Hello 名前」を表示する。空欄なら「Hello World」。画面JSONとRhaiだけで構成する最小例。
 
@@ -65,7 +67,7 @@ Rustを変更したら`bun run build:wasm`を実行する。フロントエン�
 ## 構成
 
 ```text
-HTTP → 画面JSON + Rhaiソース
+HTTP → 画面JSON / YAML + Rhaiソース
              ↓
 Rust / WASM エンジン
   DSL解析・構造検証
@@ -77,7 +79,7 @@ Rust / WASM エンジン
   Canvas: Canvas 2Dで描画、座標から操作対象を判定
 ```
 
-画面処理はRust/WASM内で実行する。JavaScriptはHTTP取得、WASMメモリとの受け渡し、DOM更新・Canvas API呼び出しを担当する。Canvasの描画命令発行はこの段階ではJavaScript側のバックエンドにある。
+画面処理はRust/WASM内で実行する。JavaScriptはHTTP取得、YAMLのJSON変換、ブラウザ保存API、WASMメモリとの受け渡し、DOM更新・Canvas API呼び出しを担当する。Canvasの描画命令発行はこの段階ではJavaScript側のバックエンドにある。
 
 - `engine/src/lib.rs`: DSL・Runtime・共通検証・基本部品の計測と配置。
 - `engine/src/abi.rs`: UTF-8 JSON ABI、公開WASM関数、Runtime・応答バッファの管理。
@@ -89,7 +91,10 @@ Rust / WASM エンジン
 - `src/widget-contract.js`: DOM/Canvas/WebMCPで共有する操作部品の分類と許可action。
 - `src/screen-catalog.js`: 同梱画面のid・title。
 - `src/dom-renderer.js` / `src/canvas-renderer.js`: 描画・入力のアダプター。
-- `public/screens/`: エンジンとは別に配信する９画面。
+- `public/screens/`: エンジンとは別に配信する12画面。
+- `engine/src/state_schema.rs` / `metadata.rs`: DSLの型検証とWebMCPメタデータ。
+- `engine/src/storage.rs` / `src/storage-effects.js` / `src/storage-client.js`: 保存依頼・完了とIndexedDB/OPFSアダプター。
+- `src/package-format.js` / `src/page-router.js`: JSON/YAML変換と同梱画面のルート解決。
 - `engine/src/dynamic_ui.rs`: tabpanelのitemsBind展開、動的定義の上限確認、新しい部品の初期値補完。
 - `engine/src/layouts.rs` / `docs/layouts.md`: Grid/Card/Border/Fitと共通余白の計測・配置・契約。
 - `engine/src/grid.rs` / `navigation.rs`: Gridの操作・下書き・ページ生成とタブ・ツリー・メニューの共通状態。

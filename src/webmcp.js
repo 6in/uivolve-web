@@ -131,6 +131,7 @@ export function createUiTools(host) {
         const offset = integer(input.offset, 0, 0, 10000);
         const limit = integer(input.limit, 100, 1, 200);
         const widgets = snapshot.scene.widgets;
+        const schema = snapshot.scene.stateSchema ? preview(snapshot.scene.stateSchema) : null;
         return {
           screen: snapshot.screen,
           revision: snapshot.revision,
@@ -138,6 +139,7 @@ export function createUiTools(host) {
           modal: snapshot.scene.modal,
           popup: snapshot.scene.popup,
           stateKeys: Object.keys(snapshot.state),
+          ...(schema ? { stateSchema: schema.value, stateSchemaTruncated: schema.truncated } : {}),
           offset,
           total: widgets.length,
           nextOffset: offset + limit < widgets.length ? offset + limit : null,

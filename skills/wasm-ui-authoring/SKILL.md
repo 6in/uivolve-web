@@ -1,6 +1,6 @@
 ---
 name: wasm-ui-authoring
-description: uivolve-webの画面JSONとRhaiハンドラを作成・修正する。DOM版とCanvas版で共有するパッケージ契約に従う。エンジンの部品追加は部品開発ガイドを使う。
+description: uivolve-webの画面JSON/YAMLとRhaiハンドラを作成・修正する。DOM版とCanvas版で共有するパッケージ契約に従う。エンジンの部品追加は部品開発ガイドを使う。
 ---
 
 # uivolve-web画面の作成
@@ -8,6 +8,8 @@ description: uivolve-webの画面JSONとRhaiハンドラを作成・修正する
 リポジトリ同梱のスキル。画面パッケージはエンジンと別にHTTPで取得され、RhaiはWASM内でASTへコンパイルされる。
 
 - まず[画面形式](../../docs/screen-format.md)を読み、必要な部品とイベント契約を確認する。
+- YAML・stateの型・保存・WebMCP説明は[ブラウザ機能の契約](../../docs/platform-features.md)と[保存YAML](../../public/screens/storage-lab.yaml)、[処理](../../public/screens/storage-lab.rhai)を参照。YAMLはJSON互換値だけを使い、型名のnullは引用する。stateSchemaは各ノードのtypeが必須の限定語彙で、Rhaiの静的型宣言を捏造しない。requiredは元の初期stateにも置き、additionalProperties=falseではUI補助キーも宣言する。入力途中に空欄を許すならminLengthの保存検証をRhaiへ置く。
+- 保存は宣言したstorage名にstorage_read / storage_write / storage_removeを発行し、完了handlerで最新stateへ反映する。同期で保存値が返ると仮定しない。response.ok/data/error/request/operationを使い、読み込みデータの形と型を確認する。OPFS非対応や容量不足を通常の失敗として扱い、JWTを保存例へ混ぜない。
 - 配置は[共通レイアウト契約](../../docs/layouts.md)と[実行例](../../public/screens/layout-lab.json)を参照する。layoutのgridは画面配置で、xtypeのgridは一覧表示。Gridは最大列数とcolSpan、CardはactiveBindの整数index、Borderは一意のregionと必須center、Fitは1つの子を使う。共通gap/paddingは0..64。高さは最小高で、内容が多ければ広がる。rowSpan、splitter、内部スクロール等の未対応機能を捏造しない。Cardの操作ボタンはCardの外側へ置く。
 - 配色は[テーマ形式](../../docs/theme-format.md)に従う別JSONとして作成する。画面JSONへ未対応のtheme/style属性を追加しない。テーマは色だけを指定し、modeごとの既定値で不足を補完する。
 - 一覧・編集は[受注JSON](../../public/screens/orders.json)と[処理](../../public/screens/orders.rhai)、追加・状態変更は[タスクJSON](../../public/screens/tasks.json)と[処理](../../public/screens/tasks.rhai)を参考にする。

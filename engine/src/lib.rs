@@ -14,7 +14,10 @@ mod figures;
 mod grid;
 mod http;
 mod layouts;
+mod metadata;
 mod navigation;
+mod state_schema;
+mod storage;
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -27,11 +30,19 @@ pub struct Package {
     pub ui: Node,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub requests: HashMap<String, http::Request>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub storage: HashMap<String, storage::Definition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_schema: Option<state_schema::Schema>,
+    #[serde(default, skip_serializing_if = "metadata::Metadata::is_empty")]
+    pub webmcp: metadata::Metadata,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Node {
+    #[serde(default, skip_serializing_if = "metadata::Metadata::is_empty")]
+    pub webmcp: metadata::Metadata,
     #[serde(default)]
     pub xtype: String,
     #[serde(default)]
@@ -309,6 +320,10 @@ pub struct Widget {
 
 #[derive(Serialize)]
 pub struct Scene {
+    #[serde(skip_serializing_if = "metadata::Metadata::is_empty")]
+    pub webmcp: metadata::Metadata,
+    #[serde(rename = "stateSchema", skip_serializing_if = "Option::is_none")]
+    pub state_schema: Option<state_schema::Schema>,
     pub theme: Theme,
     pub width: f64,
     pub height: f64,
@@ -332,6 +347,7 @@ pub struct Runtime {
     ast: AST,
     state: Dynamic,
     http: http::Requests,
+    storage: storage::Requests,
     pub revision: u32,
 }
 
@@ -352,6 +368,11 @@ impl Runtime {
         if !package.state.is_object() {
             return Err("Initial state must be an object".into());
         }
+        package.webmcp.validate()?;
+        if let Some(schema) = &package.state_schema {
+            schema.definition()?;
+            schema.validate(&package.state)?;
+        }
         if script.len() > 100_000 {
             return Err("Script exceeds 100 KB".into());
         }
@@ -359,6 +380,10 @@ impl Runtime {
         validate(&package.ui, &mut HashSet::new(), &mut 0, 0)?;
         let initial_ui = dynamic_ui::resolve(&package.ui, &package.state)?;
         initialize_ui(&initial_ui, &mut package.state);
+        if let Some(schema) = &package.state_schema {
+            schema.bindings(&initial_ui)?;
+            schema.validate(&package.state)?;
+        }
         if package.ui.xtype == "window" {
             return Err("A window must be inside a container or panel".into());
         }
@@ -366,6 +391,8 @@ impl Runtime {
         extensions::register(&mut engine);
         let mut http = http::Requests::default();
         http.register(&mut engine);
+        let mut storage = storage::Requests::default();
+        storage.register(&mut engine);
         register(&mut engine);
         engine.set_max_operations(50_000);
         engine.set_max_call_levels(32);
@@ -399,6 +426,27 @@ impl Runtime {
                 ));
             }
         }
+        if package.storage.len() > 8 {
+            return Err("At most 8 storage definitions".into());
+        }
+        if !package.storage.is_empty() && !storage::safe_key(&package.id) {
+            return Err(
+                "Storage requires a page id with 1–80 ASCII letters, digits, - or _".into(),
+            );
+        }
+        for (name, definition) in &package.storage {
+            if !storage::safe_key(name) || !storage::safe_key(&definition.key) {
+                return Err(
+                    "Storage names and keys require 1–80 ASCII letters, digits, - or _".into(),
+                );
+            }
+            if !functions.contains(&definition.handler) {
+                return Err(format!(
+                    "Storage request {name}: undefined handler {}",
+                    definition.handler
+                ));
+            }
+        }
         let state = rhai::serde::to_dynamic(&package.state).map_err(|e| e.to_string())?;
         let state: Dynamic = engine
             .call_fn(&mut Scope::new(), &ast, "init", (state,))
@@ -411,10 +459,16 @@ impl Runtime {
         let ui = dynamic_ui::resolve(&package.ui, &initial)?;
         validate_handlers(&ui, &functions)?;
         validate_ui_state(&ui, &initial)?;
+        if let Some(schema) = &package.state_schema {
+            schema.bindings(&ui)?;
+            schema.validate(&initial)?;
+        }
         let state = rhai::serde::to_dynamic(initial).map_err(|e| e.to_string())?;
         check_state(&state)?;
         let names = http.prepare(&package.requests)?;
+        let intents = storage.prepare(&package.storage)?;
         http.commit(names, &package.requests);
+        storage.commit(intents, &package.storage);
         Ok(Self {
             package,
             ui,
@@ -423,12 +477,14 @@ impl Runtime {
             ast,
             state,
             http,
+            storage,
             revision: 0,
         })
     }
 
     pub fn dispatch(&mut self, target: &str, mut payload: Value) -> Result<(), String> {
         self.http.clear();
+        self.storage.clear();
         let mut state = self.state_json()?;
         let mut path = Vec::new();
         if !find_path(&self.ui, target, &mut path) {
@@ -530,6 +586,7 @@ impl Runtime {
     pub fn complete_http(&mut self, id: u64, response: Value) -> Result<(), String> {
         let name = self.http.consume(id)?;
         self.http.clear();
+        self.storage.clear();
         let handler = &self.package.requests[&name].handler;
         let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
         // Use current state, including edits made while the HTTP request was in flight.
@@ -545,8 +602,43 @@ impl Runtime {
         self.commit_state(next)
     }
 
-    pub fn take_effects(&mut self) -> Vec<http::Effect> {
-        self.http.take()
+    pub fn complete_storage(&mut self, id: u64, mut response: Value) -> Result<(), String> {
+        let (name, operation) = self.storage.consume(id)?;
+        self.http.clear();
+        self.storage.clear();
+        response["operation"] = serde_json::to_value(operation).map_err(|e| e.to_string())?;
+        response["request"] = json!(name);
+        let handler = &self.package.storage[&name].handler;
+        let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
+        let next = self
+            .engine
+            .call_fn(
+                &mut Scope::new(),
+                &self.ast,
+                handler,
+                (self.state.clone(), response),
+            )
+            .map_err(|e| {
+                format!(
+                    "{} / storage {} / {}: {e}",
+                    self.package.script, name, handler
+                )
+            })?;
+        self.commit_state(next)
+    }
+
+    pub fn take_effects(&mut self) -> Vec<Value> {
+        self.http
+            .take()
+            .into_iter()
+            .map(|effect| serde_json::to_value(effect).unwrap())
+            .chain(
+                self.storage
+                    .take()
+                    .into_iter()
+                    .map(|effect| serde_json::to_value(effect).unwrap()),
+            )
+            .collect()
     }
 
     fn commit_state(&mut self, mut next: Dynamic) -> Result<(), String> {
@@ -565,12 +657,18 @@ impl Runtime {
         let ui = dynamic_ui::resolve(&self.package.ui, &candidate)?;
         validate_handlers(&ui, &self.functions)?;
         validate_ui_state(&ui, &candidate)?;
+        if let Some(schema) = &self.package.state_schema {
+            schema.bindings(&ui)?;
+            schema.validate(&candidate)?;
+        }
         next = rhai::serde::to_dynamic(candidate).map_err(|e| e.to_string())?;
         check_state(&next)?;
         let names = self.http.prepare(&self.package.requests)?;
+        let intents = self.storage.prepare(&self.package.storage)?;
         self.state = next;
         self.ui = ui;
         self.http.commit(names, &self.package.requests);
+        self.storage.commit(intents, &self.package.storage);
         self.revision += 1;
         Ok(())
     }
@@ -702,7 +800,19 @@ impl Runtime {
             .rev()
             .find(|w| w.kind == "menu-surface" && !w.disabled)
             .map(|w| json!({"target":w.target,"layer":w.layer}));
+        for widget in &mut widgets {
+            let mut path = Vec::new();
+            if find_path(&self.ui, &widget.target, &mut path) {
+                let metadata = &path.last().unwrap().webmcp;
+                if !metadata.is_empty() {
+                    widget.config["webmcp"] =
+                        serde_json::to_value(metadata).map_err(|e| e.to_string())?;
+                }
+            }
+        }
         Ok(Scene {
+            webmcp: self.package.webmcp.clone(),
+            state_schema: self.package.state_schema.clone(),
             theme: theme::current(),
             width,
             height,
@@ -745,6 +855,7 @@ fn validate(
     count: &mut usize,
     depth: usize,
 ) -> Result<(), String> {
+    node.webmcp.validate()?;
     *count += 1;
     if *count > 200 || depth > 20 {
         return Err("UI exceeds 200 nodes or 20 nesting levels".into());

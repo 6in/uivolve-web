@@ -13,6 +13,9 @@
     "docs:check": "bun scripts/check-docs.mjs",
     "fmt": "vp fmt && cargo fmt --manifest-path engine/Cargo.toml"
   },
+  "dependencies": {
+    "yaml": "^2.9.1"
+  },
   "devDependencies": {
     "vite-plus": "1.0.0"
   },

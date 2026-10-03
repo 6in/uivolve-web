@@ -7,7 +7,8 @@ import {
   isBlocked,
   widgetActions,
 } from "../src/widget-contract.js";
-import { SCREEN_CATALOG } from "../src/screen-catalog.js";
+import { SCREEN_CATALOG, screenFile } from "../src/screen-catalog.js";
+import { parsePackage, packageFormat } from "../src/package-format.js";
 import { SCREEN_CATALOG as legacyCatalog } from "../src/webmcp.js";
 import { fieldKinds as legacyFields } from "../src/field-control.js";
 import { readFile } from "node:fs/promises";
@@ -60,8 +61,8 @@ it("keeps catalog identities compatible and resolves every bundled package and s
   expect(new Set(SCREEN_CATALOG.map((s) => s.id)).size).toBe(SCREEN_CATALOG.length);
   const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
   for (const { id, title } of SCREEN_CATALOG) {
-    const url = new URL(`../public/screens/${id}.json`, import.meta.url);
-    const screen = JSON.parse(await readFile(url, "utf8"));
+    const url = new URL(`../public/screens/${screenFile(id)}`, import.meta.url);
+    const screen = parsePackage(await readFile(url, "utf8"), packageFormat(url));
     expect(screen.id).toBe(id);
     expect(screen.title).toBe(title);
     expect(html).toContain(`value="${id}"`);

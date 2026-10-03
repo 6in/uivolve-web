@@ -9,7 +9,7 @@ const cors = {
 };
 
 export default defineConfig({
-  base: "./",
+  base: "/",
   server: { host: "127.0.0.1", port: 4173, strictPort: true, cors },
   preview: { host: "127.0.0.1", port: 4174, strictPort: true, cors },
   build: { target: "es2022" },

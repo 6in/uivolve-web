@@ -38,14 +38,16 @@ fn execute(request: Value) -> Result<Value, String> {
             runtime.dispatch(target, request.get("payload").cloned().unwrap_or(json!({})))?;
             result(runtime)
         }),
-        "http_result" => RUNTIME.with(|r| {
+        "http_result" | "storage_result" => RUNTIME.with(|r| {
             let mut slot = r.borrow_mut();
             let runtime = slot.as_mut().ok_or("No screen loaded")?;
-            let id = request.get("id").and_then(Value::as_u64).ok_or("Missing HTTP request id")?;
-            let ok = request.get("ok").and_then(Value::as_bool).ok_or("Missing HTTP result ok")?;
+            let channel = if request["op"]=="storage_result" {"Storage"} else {"HTTP"};
+            let id = request.get("id").and_then(Value::as_u64).ok_or_else(|| format!("Missing {channel} request id"))?;
+            let ok = request.get("ok").and_then(Value::as_bool).ok_or_else(|| format!("Missing {channel} result ok"))?;
             let error = request.get("error").and_then(Value::as_str).unwrap_or("");
-            if error.len() > 2048 { return Err("HTTP error exceeds 2048 bytes".into()); }
-            runtime.complete_http(id, json!({"ok":ok,"data":request.get("data").cloned().unwrap_or(Value::Null),"error":error}))?;
+            if error.len() > 2048 { return Err(format!("{channel} error exceeds 2048 bytes")); }
+            let response=json!({"ok":ok,"data":request.get("data").cloned().unwrap_or(Value::Null),"error":error});
+            if request["op"]=="storage_result" {runtime.complete_storage(id,response)?;} else {runtime.complete_http(id,response)?;}
             result(runtime)
         }),
         "layout" => RUNTIME.with(|r| {

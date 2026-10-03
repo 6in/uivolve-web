@@ -4,11 +4,12 @@ export class HttpEffects {
   #base;
   #controllers = new Set();
 
-  constructor({ resources, complete, onError, timeout = 15_000 }) {
+  constructor({ resources, complete, onError, runNext, timeout = 15_000 }) {
     this.resources = resources;
     this.complete = complete;
     this.onError = onError;
     this.timeout = timeout;
+    this.runNext = runNext || ((effects) => this.run(effects));
   }
 
   reset(base) {
@@ -59,7 +60,7 @@ export class HttpEffects {
     if (generation !== this.#generation) return;
     try {
       const next = this.complete(effect.id, result);
-      await this.run(next.effects);
+      await this.runNext(next.effects);
     } catch (exception) {
       this.onError(exception);
     }

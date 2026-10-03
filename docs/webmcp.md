@@ -58,4 +58,6 @@ WebMCPを使うには対応ブラウザとsecure contextが必要。Chromeのロ
 
 現段階は試作用の共通操作契約。任意URLの読み込み、スクリプト評価、状態への直接書き込みはツールに含めない。ui_load_screenは同梱画面だけを受け付け、状態を初期化する。
 
-業務アプリでは、DSLから「注文検索」「見積確定」などの名前・説明・入力schema・結果schemaを宣言し、WASMのハンドラへ接続する専用ツールを追加する余地がある。公開する状態キー、操作ごとの権限・確認、機密値の扱いもその契約に含める。これらのDSL属性・認可・外部MCPサーバー・クロスオリジン公開は今回の実装範囲に含まない。
+画面と部品には任意の`webmcp: {label, description, tags}`を記述できる。`ui_get_screen.screen.webmcp`と`widgets[].metadata.webmcp`へ公開し、stateSchemaも同ツールのプレビューへ含める。省略したschema内容は`stateSchemaTruncated:true`で通知する。上限・記法は[ブラウザ機能の契約](platform-features.md)を参照。これらは説明情報で、共通ツールの許可action・入力schemaや認可を変更しない。
+
+業務アプリでは、DSLから「注文検索」「見積確定」などの入力schema・結果schemaを宣言し、WASMのハンドラへ接続する専用ツールを追加する余地がある。公開する状態キー、操作ごとの権限・確認、機密値の扱いもその契約に含める。専用ツールのDSL属性・認可・外部MCPサーバー・クロスオリジン公開は今回の実装範囲に含まない。

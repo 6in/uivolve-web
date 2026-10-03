@@ -45,6 +45,9 @@ export class WasmEngine {
   completeHttp(id, response) {
     return this.call({ op: "http_result", id, ...response });
   }
+  completeStorage(id, response) {
+    return this.call({ op: "storage_result", id, ...response });
+  }
   layout(width) {
     return this.call({ op: "layout", width });
   }

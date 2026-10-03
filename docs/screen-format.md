@@ -1,6 +1,8 @@
 # Screen package v1
 
-画面パッケージはJSON。UI処理は別URLのRhaiテキスト。JSON内の`script`は、パッケージURLから解決する相対または絶対HTTP / HTTPS URL。
+画面パッケージはJSONまたはYAML。UI処理は別URLのRhaiテキスト。`script`は、パッケージURLから解決する相対または絶対HTTP / HTTPS URL。YAMLの対応範囲は[ブラウザ機能の契約](platform-features.md)を参照。
+
+トップレベルには必須の`version / id / title / script / state / ui`と、任意の`requests / storage / stateSchema / webmcp`がある。`stateSchema`はDSLで宣言したstateの型・範囲を確定前に検証する。`storage`はIndexedDB/OPFSの名前付き保存レコード、`webmcp`は画面や部品の説明メタデータ。記法・制限・実行例は[保存・型・メタデータの契約](platform-features.md)にまとめる。
 
 初めて書く場合は、入力・ボタン・結果表示を使う[Hello Worldチュートリアル](tutorial-hello-world.md)を参照。実行例は[hello-world.json](../public/screens/hello-world.json)と[hello-world.rhai](../public/screens/hello-world.rhai)。
 
