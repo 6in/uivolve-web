@@ -1,7 +1,6 @@
-import { beforeAll, beforeEach, expect, it, vi } from "vite-plus/test";
+import { beforeAll, beforeEach, expect, it } from "vite-plus/test";
 import { readFile } from "node:fs/promises";
 import { WasmEngine } from "../src/engine.js";
-import { DialogEffects } from "../src/dialog-effects.js";
 import { parsePackage } from "../src/package-format.js";
 import { resolveDialogIcon } from "../src/dialog-icons.js";
 
@@ -26,71 +25,188 @@ function load(body, done = 's.notice=""+r.operation;s') {
   simple.ui = { xtype: "button", itemId: "go", handler: "start", text: "Go" };
   return engine.load(simple, `fn init(s){s} fn start(s,e){${body};s} fn done(s,r){${done}}`);
 }
-function host(dialogs, complete = (id, response) => engine.completeDialog(id, response)) {
-  return new DialogEffects({
-    client: {
-      execute(effect) {
-        const method = dialogs[effect.operation];
-        if (typeof method !== "function") throw new Error("ダイアログを表示できません");
-        const data =
-          effect.operation === "prompt"
-            ? method(effect.message, effect.defaultValue)
-            : method(effect.message);
-        return effect.operation === "alert" ? null : data;
-      },
-    },
-    complete,
-    onError: vi.fn(),
-  });
-}
-it("queues dialogs once in the common engine and delivers alert dismissal", async () => {
+
+const active = () => engine.layout(500).dialog;
+const key = (suffix = "") => ":dialog:" + active().id + suffix;
+const answer = () => engine.dispatch(key(":ok"));
+it("draws an engine-owned alert and consumes a shared answer only once", () => {
   const effect = engine.dispatch("showAlert").effects[0];
   expect(effect).toMatchObject({ kind: "dialog", operation: "alert", message: "Hello 太郎" });
-  expect(engine.dispatch("showAlert").effects).toBeUndefined();
-  const alert = vi.fn();
-  await host({ alert }).run([effect]);
-  expect(alert).toHaveBeenCalledTimes(1);
+  const scene = engine.layout(500);
+  expect(scene.dialog.message).toBe("Hello 太郎");
+  expect(scene.modal.key).toBe(key());
+  expect(scene.widgets.find((w) => w.kind === "dialog-icon").config.icon).toBe("info");
+  expect(scene.widgets.find((w) => w.key === "showAlert").disabled).toBe(true);
+  const button = key(":ok");
+  const revision = answer().revision;
+  expect(engine.layout(500).dialog).toBeNull();
   expect(engine.layout(500).widgets.some((w) => w.text === "alertを閉じました。")).toBe(true);
+  expect(engine.dispatch(button).revision).toBe(revision);
   expect(() => engine.completeDialog(effect.id, ok())).toThrow(/completed/);
 });
-it.each([true, false])("receives confirm %s with matching cancel semantics", (data) => {
+it.each([true, false])("handles confirm %s through scene controls", (data) => {
   load('confirm("確認","done")', 's.notice=""+r.data+":"+r.cancelled;s');
-  const effect = engine.dispatch("go").effects[0];
-  expect(engine.completeDialog(effect.id, ok(data)).state.notice).toBe(`${data}:${!data}`);
+  engine.dispatch("go");
+  expect(engine.dispatch(key(data ? ":ok" : ":cancel")).state.notice).toBe(data + ":" + !data);
 });
-it.each([null, "", "花子"])(
-  "preserves prompt cancel, empty OK, and Japanese input: %j",
-  async (data) => {
-    const effect = engine.dispatch("showPrompt").effects[0];
-    const prompt = vi.fn(() => data);
-    let result;
-    await host({ prompt }, (id, response) => (result = engine.completeDialog(id, response))).run([
-      effect,
-    ]);
-    expect(prompt).toHaveBeenCalledWith("名前を入力してください。", "太郎");
-    expect(result.state.loading).toBe(false);
-    expect(result.state.name).toBe(data === null ? "太郎" : data);
-    expect(result.state.notice).toContain(data === null ? "キャンセル" : "prompt: 「");
-  },
-);
-it("supports alert without a callback, prompt without a default, and FIFO dispatch", async () => {
+it.each([null, "", "花子"])("preserves prompt cancel, empty OK and Japanese input: %j", (data) => {
+  engine.dispatch("showPrompt");
+  const field = key(":input");
+  expect(engine.layout(500).widgets.find((w) => w.target === field).value).toBe("太郎");
+  let result;
+  if (data === null) result = engine.dispatch(key(":cancel"));
+  else {
+    const before = engine.dispatch(field, { value: data });
+    expect(before.state.name).toBe("太郎");
+    expect(active().value).toBe(data);
+    result = answer();
+  }
+  expect(result.state.loading).toBe(false);
+  expect(result.state.name).toBe(data === null ? "太郎" : data);
+  expect(result.state.notice).toContain(data === null ? "キャンセル" : "prompt: 「");
+});
+it("supports callback-free alert and FIFO with prompt defaulting to empty", () => {
   load('alert("first");prompt("second","done");alert("third","done")');
   const effects = engine.dispatch("go").effects;
-  const order = [];
-  const dialogs = {
-    alert: (message) => order.push(message),
-    prompt: (message, value) => {
-      order.push(message);
-      expect(value).toBe("");
-      return "回答";
-    },
-  };
-  let result;
-  await host(dialogs, (id, response) => (result = engine.completeDialog(id, response))).run(
-    effects,
+  expect(effects).toHaveLength(3);
+  expect(active().message).toBe("first");
+  expect(engine.dispatch(":dialog:" + effects[1].id + ":ok").revision).toBe(1);
+  answer();
+  expect(active()).toMatchObject({ message: "second", value: "" });
+  engine.dispatch(key(":input"), { action: "accept", value: "回答" });
+  expect(active().message).toBe("third");
+  expect(answer().revision).toBe(4);
+  expect(active()).toBeNull();
+});
+it("caps pending dialogs before a completion callback can enqueue more", () => {
+  load('for i in 0..8 {alert("x","done");}', 'for i in 0..8 {alert("new");}s');
+  const effects = engine.dispatch("go").effects;
+  expect(effects).toHaveLength(8);
+  expect(() => answer()).toThrow(/pending dialogs/);
+  expect(active().id).toBe(effects[1].id);
+  expect(engine.layout(500).widgets.filter((w) => w.kind === "window")).toHaveLength(1);
+});
+it("rejects malformed completion data, consumes requests, and rolls back callback state", () => {
+  for (const [body, data] of [
+    ['alert("x")', true],
+    ['confirm("x","done")', "true"],
+    ['prompt("x","done")', 123],
+    ['prompt("x","done")', "あ".repeat(1366)],
+  ]) {
+    load(body);
+    const before = engine.dispatch("go");
+    const effect = before.effects[0];
+    expect(() => engine.completeDialog(effect.id, ok(data))).toThrow(/response/);
+    expect(engine.dispatch(":dialog:stale").revision).toBe(before.revision);
+    expect(active()).toBeNull();
+    expect(() => engine.completeDialog(effect.id, ok(data))).toThrow(/completed/);
+  }
+  load('confirm("x","done")', 'alert("must not display");s.loading="bad";s');
+  const before = engine.dispatch("go");
+  expect(() => answer()).toThrow();
+  expect(engine.dispatch(":dialog:stale").revision).toBe(before.revision);
+  expect(active()).toBeNull();
+});
+it("chains dialogs from callbacks without a host presenter", () => {
+  load(
+    'prompt("x","done")',
+    'if r.operation=="prompt" {s.name=r.data;alert("Hello "+s.name,"done");} else {s.notice="completed";}s',
   );
-  expect(order).toEqual(["first", "second", "third"]);
-  expect(result.revision).toBe(4);
+  engine.dispatch("go");
+  engine.dispatch(key(":input"), { action: "accept", value: "花子" });
+  expect(active().message).toBe("Hello 花子");
+  expect(answer().state.notice).toBe("completed");
+  expect(active()).toBeNull();
+});
+it("blocks background events in the engine, retaining private prompt drafts", () => {
+  const editable = structuredClone(screen);
+  editable.ui.items[1].disabledBind = "";
+  engine.load(editable, script);
+  const before = engine.dispatch("showPrompt");
+  expect(engine.dispatch("dialogName", { value: "background" }).revision).toBe(before.revision);
+  expect(engine.dispatch("showConfirm").effects).toBeUndefined();
+  const draft = engine.dispatch(key(":input"), { value: "日本語" });
+  expect(draft.revision).toBe(before.revision + 1);
+  expect(draft.state.name).toBe("太郎");
+  expect(engine.layout(700).dialog.value).toBe("日本語");
+  const cancelled = engine.dispatch(key(), { action: "close" });
+  expect(cancelled.state.name).toBe("太郎");
+  expect(active()).toBeNull();
+});
+it("uses current state after an asynchronous response while a dialog remains open", () => {
+  const simple = structuredClone(screen);
+  simple.requests = { api: { url: "data.json", handler: "received" } };
+  simple.ui = { xtype: "button", itemId: "go", handler: "start" };
+  engine.load(
+    simple,
+    'fn init(s){s} fn start(s,e){http_get("api");confirm("x","done");s} fn received(s,r){s.name=r.data;s} fn done(s,r){s.notice=s.name;s}',
+  );
+  const effects = engine.dispatch("go").effects;
+  engine.completeHttp(effects.find((e) => !e.kind).id, ok("花子"));
+  expect(answer().state.notice).toBe("花子");
+});
+it("drops dialogs on screen replacement and ignores stale scene controls", () => {
+  load('alert("old");alert("queued")');
+  engine.dispatch("go");
+  const old = key(":ok");
+  engine.load(screen, script);
+  expect(active()).toBeNull();
+  expect(engine.dispatch(old).revision).toBe(0);
+  engine.dispatch("showAlert");
+  expect(active().message).toBe("Hello 太郎");
+  const before = active();
+  engine.dispatch(old);
+  expect(active()).toEqual(before);
+  expect(() => engine.completeDialog(Number(old.split(":")[2]), ok())).toThrow(/completed/);
+});
+it.each([240, 500, 1000])("keeps dialogs and controls within a %spx stage", (width) => {
+  load("prompt(" + JSON.stringify("長い本文\n" + "あ".repeat(800)) + ',"done")');
+  engine.dispatch("go");
+  const scene = engine.layout(width);
+  const dialogWidgets = scene.widgets.filter((w) => w.layer === scene.modal.layer);
+  for (const w of dialogWidgets) {
+    expect(w.x).toBeGreaterThanOrEqual(0);
+    expect(w.y).toBeGreaterThanOrEqual(0);
+    expect(w.x + w.width).toBeLessThanOrEqual(scene.width);
+    expect(w.y + w.height).toBeLessThanOrEqual(scene.height);
+  }
+  const message = dialogWidgets.find((w) => w.kind === "dialog-message");
+  expect(message.height).toBeLessThanOrEqual(220);
+  expect(message.config.lines.join("")).toBe("長い本文" + "あ".repeat(800));
+});
+it("rejects oversize drafts without changing the scene and accepts Enter's current value", () => {
+  engine.dispatch("showPrompt");
+  const before = engine.layout(500);
+  expect(() => engine.dispatch(key(":input"), { value: "あ".repeat(1366) })).toThrow(/4096/);
+  expect(engine.layout(500)).toEqual(before);
+  expect(engine.dispatch(key(":input"), { action: "accept", value: "確定" }).state.name).toBe(
+    "確定",
+  );
+});
+it("omits the icon widget for none and puts dialogs above page windows", () => {
+  const simple = structuredClone(screen);
+  simple.state.loading = true;
+  simple.ui = {
+    xtype: "container",
+    items: [
+      {
+        xtype: "window",
+        itemId: "pageWindow",
+        title: "Page",
+        visibleBind: "loading",
+        width: 420,
+        items: [{ xtype: "button", itemId: "go", handler: "start" }],
+      },
+    ],
+  };
+  engine.load(simple, 'fn init(s){s} fn start(s,e){alert("x",#{icon:"none"});s}');
+  engine.dispatch("go");
+  const scene = engine.layout(500);
+  expect(scene.widgets.filter((w) => w.kind === "window")).toHaveLength(2);
+  expect(scene.widgets.some((w) => w.kind === "dialog-icon")).toBe(false);
+  expect(scene.widgets.find((w) => w.key === "pageWindow").disabled).toBe(true);
+  answer();
+  expect(engine.layout(500).modal.key).toBe("pageWindow");
 });
 it("checks handlers, argument sizes and request limits before committing state or other I/O", () => {
   for (const body of [
@@ -118,94 +234,6 @@ it("checks handlers, argument sizes and request limits before committing state o
     /Unknown or completed/,
   );
 });
-it("caps pending dialogs and consumes each validated completion only once", () => {
-  load('for i in 0..8 {alert("x");}');
-  const effects = engine.dispatch("go").effects;
-  expect(effects).toHaveLength(8);
-  expect(() => engine.dispatch("go")).toThrow(/pending dialogs/);
-  effects.forEach((e) => engine.completeDialog(e.id, ok()));
-  expect(engine.dispatch("go").effects).toHaveLength(8);
-});
-it("rejects malformed completion data and rolls back failing completion state", () => {
-  for (const [body, data] of [
-    ['alert("x")', true],
-    ['confirm("x","done")', "true"],
-    ['prompt("x","done")', 123],
-    ['prompt("x","done")', "あ".repeat(1366)],
-  ]) {
-    load(body);
-    const effect = engine.dispatch("go").effects[0];
-    const before = engine.layout(500);
-    expect(() => engine.completeDialog(effect.id, ok(data))).toThrow(/response/);
-    expect(engine.layout(500)).toEqual(before);
-    expect(() => engine.completeDialog(effect.id, ok(data))).toThrow(/completed/);
-  }
-  load('confirm("x","done")', 'alert("must not display");s.loading="bad";s');
-  const effect = engine.dispatch("go").effects[0],
-    before = engine.layout(500);
-  expect(() => engine.completeDialog(effect.id, ok(true))).toThrow();
-  expect(engine.layout(500)).toEqual(before);
-});
-it("chains completion dialogs without reentering or deadlocking WASM", async () => {
-  load(
-    'prompt("x","done")',
-    'if r.operation=="prompt" {s.name=r.data;alert("Hello "+s.name,"done");} else {s.notice="completed";}s',
-  );
-  const dialogs = { prompt: vi.fn(() => "花子"), alert: vi.fn() };
-  let result;
-  const h = host(dialogs, (id, response) => (result = engine.completeDialog(id, response)));
-  await h.run(engine.dispatch("go").effects);
-  await vi.waitFor(() => expect(result.revision).toBe(3));
-  expect(dialogs.alert).toHaveBeenCalledWith("Hello 花子");
-  expect(h.onError).not.toHaveBeenCalled();
-});
-it("uses the latest state when other events arrive before a dialog completion", () => {
-  const editable = structuredClone(screen);
-  editable.ui.items[1].disabledBind = "";
-  engine.load(editable, script + "\n");
-  const effect = engine.dispatch("showConfirm").effects[0];
-  engine.dispatch("dialogName", { value: "花子" });
-  expect(engine.completeDialog(effect.id, ok(true)).state.name).toBe("花子");
-});
-it("reports unavailable/throwing dialogs and oversize replies through the completion handler", async () => {
-  for (const dialogs of [
-    {},
-    {
-      prompt: () => {
-        throw new Error("blocked");
-      },
-    },
-    { prompt: () => "x".repeat(4097) },
-  ]) {
-    engine.load(screen, script);
-    let result;
-    await host(dialogs, (id, response) => (result = engine.completeDialog(id, response))).run(
-      engine.dispatch("showPrompt").effects,
-    );
-    expect(result.state.loading).toBe(false);
-    expect(result.state.name).toBe("太郎");
-    expect(result.state.notice).toContain("失敗:");
-  }
-});
-it("drops queued dialogs on reset and ignores a returned result after screen replacement", async () => {
-  const dialogs = { alert: vi.fn() },
-    complete = vi.fn(() => ({}));
-  const h = host(dialogs, complete);
-  const queued = h.run([{ id: 1, operation: "alert", message: "old" }]);
-  h.reset();
-  await queued;
-  expect(dialogs.alert).not.toHaveBeenCalled();
-  expect(complete).not.toHaveBeenCalled();
-  dialogs.confirm = () => {
-    h.reset();
-    return true;
-  };
-  await h.run([{ id: 2, operation: "confirm", message: "old" }]);
-  expect(complete).not.toHaveBeenCalled();
-  await h.run([{ id: 3, operation: "alert", message: "new" }]);
-  expect(dialogs.alert).toHaveBeenCalledWith("new");
-  expect(complete).toHaveBeenCalledTimes(1);
-});
 it("validates init dialogs and callback arity before replacing the active screen", () => {
   const simple = structuredClone(screen);
   simple.ui = { xtype: "container", items: [] };
@@ -223,30 +251,6 @@ it("validates init dialogs and callback arity before replacing the active screen
   );
   expect(started.effects).toHaveLength(1);
   expect(engine.completeDialog(started.effects[0].id, ok()).state.notice).toBe("closed");
-});
-it("aborts a displayed asynchronous dialog on screen replacement and resumes the new queue", async () => {
-  const complete = vi.fn(() => ({}));
-  let signal;
-  const client = {
-    execute: vi.fn((_, options) => {
-      signal = options.signal;
-      return new Promise((_, reject) =>
-        signal.addEventListener("abort", () => reject(signal.reason), { once: true }),
-      );
-    }),
-  };
-  const h = new DialogEffects({ client, complete });
-  const pending = h.run([{ id: 1, operation: "prompt", message: "old" }]);
-  await vi.waitFor(() => expect(client.execute).toHaveBeenCalledTimes(1));
-  expect(h.busy).toBe(true);
-  h.reset();
-  expect(signal.aborted).toBe(true);
-  await pending;
-  expect(h.busy).toBe(false);
-  expect(complete).not.toHaveBeenCalled();
-  client.execute.mockResolvedValueOnce(true);
-  await h.run([{ id: 2, operation: "confirm", message: "new" }]);
-  expect(complete).toHaveBeenCalledWith(2, ok(true));
 });
 it("supplies type-specific defaults without changing the existing API", () => {
   load('alert("x");confirm("x","done");prompt("x","done")');

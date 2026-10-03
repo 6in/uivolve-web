@@ -110,3 +110,84 @@ export function createDialogIcon(doc, icon) {
   } else root.textContent = icon.text;
   return root;
 }
+
+// Canvas owns its bitmap and image lifetime; it does not mount HTML dialog surfaces.
+export class CanvasDialogIcons {
+  constructor(invalidate) {
+    this.invalidate = invalidate;
+    this.records = new Map();
+  }
+  sync(widgets, baseUrl) {
+    const keys = new Set();
+    for (const widget of widgets.filter((w) => w.kind === "dialog-icon")) {
+      keys.add(widget.key);
+      const signature = JSON.stringify([widget.config, baseUrl]);
+      if (this.records.get(widget.key)?.signature === signature) continue;
+      let icon;
+      try {
+        icon = resolveDialogIcon(widget.config.icon, widget.config.operation, baseUrl);
+      } catch {
+        icon = "info";
+      }
+      const record = { signature, icon };
+      this.records.set(widget.key, record);
+      if (icon.src) {
+        const img = document.createElement("img");
+        img.referrerPolicy = "no-referrer";
+        record.image = img;
+        const refresh = () => {
+          if (this.records.get(widget.key) === record) this.invalidate();
+        };
+        img.onload = refresh;
+        img.onerror = refresh;
+        img.src = icon.src;
+      }
+    }
+    for (const key of this.records.keys()) if (!keys.has(key)) this.records.delete(key);
+  }
+  paint(ctx, widget, colors) {
+    const record = this.records.get(widget.key);
+    let icon = record?.icon ?? "info";
+    const { x, y, width, height } = widget;
+    if (icon === "none") return;
+    ctx.beginPath();
+    ctx.rect(x, y, width, height);
+    ctx.clip();
+    if (icon.src) {
+      const img = record.image;
+      if (img.complete && img.naturalWidth) {
+        const scale = Math.min(width / img.naturalWidth, height / img.naturalHeight);
+        ctx.drawImage(
+          img,
+          x + (width - img.naturalWidth * scale) / 2,
+          y + (height - img.naturalHeight * scale) / 2,
+          img.naturalWidth * scale,
+          img.naturalHeight * scale,
+        );
+        return;
+      }
+      icon = "info";
+    }
+    const color =
+      { success: colors.successText, warning: colors.warningText, error: colors.text }[icon] ??
+      colors.infoText;
+    if (icon.text) {
+      ctx.fillStyle = colors.infoText;
+      ctx.font = '30px "Inter", "Noto Sans JP", system-ui, sans-serif';
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(icon.text, x + width / 2, y + height / 2, width);
+      return;
+    }
+    ctx.translate(x, y);
+    ctx.scale(width / 24, height / 24);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.8;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    for (const path of definitions[icon].paths) ctx.stroke(new Path2D(path));
+  }
+  reset() {
+    this.records.clear();
+  }
+}

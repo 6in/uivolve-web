@@ -37,7 +37,7 @@ Rustを変更したら`bun run build:wasm`を実行する。フロントエン�
 
 ## 試せること
 
-- 「ダイアログ」で、Rhaiの`alert / confirm / prompt`からテーマに合わせた独自モーダルを表示する。標準アイコン6種類・任意画像URL・絵文字・非表示を指定できる。DOM・Canvas共通で1つだけ開き、回答は完了handlerで受け取る。空文字でのOKとキャンセルを区別し、画面切替時は破棄する。[呼び出し方と拡張方法](docs/dialogs.md)を参照。
+- 「ダイアログ」で、Rhaiの`alert / confirm / prompt`からテーマに合わせた独自モーダルを表示する。標準アイコン6種類・任意画像URL・絵文字・非表示を指定できる。WASMが同じ依頼を両側の表示領域内に構成し、各レンダラーで描画する。どちらで回答しても完了handlerを1回呼ぶ。空文字でのOKとキャンセルを区別し、画面切替時は破棄する。[呼び出し方と拡張方法](docs/dialogs.md)を参照。
 - 「OPFS・ファイル操作」で、日本語のテキスト・バイナリの読み書き、フォルダー作成、一覧、存在・サイズ確認、削除を試せる。ツールバーの「通信優先＋保存版」で同じ版のYAML/Rhai/Descriptorをキャッシュし、通信障害時に復元する。[ファイル・キャッシュ契約](docs/files-cache-rpc.md)を参照。
 - 「Protobuf・Unary RPC」で、ConnectとgRPC-Webのバイナリ通信を比較する。別ターミナルで`bun run demo:rpc`を起動する。ダウンロードしたDescriptorをWASMで解釈し、64bit整数・bytesも扱う。[RPCの使い方](docs/files-cache-rpc.md)を参照。
 
@@ -89,7 +89,7 @@ Rust / WASM エンジン
 - `engine/src/abi.rs`: UTF-8 JSON ABI、公開WASM関数、Runtime・応答バッファの管理。
 - `engine/src/fields.rs`: uivolveの部品設定、初期値、入力値の検証とスナップショット。
 - `src/engine.js`: WASM呼び出し。スクリプトをJavaScriptへ変換・evalしない。
-- `engine/src/dialogs.rs` / `src/dialog-effects.js` / `src/dialog-presenter.js`: ダイアログ依頼と完了、順次表示、共通モーダルと表示パターン。
+- `engine/src/dialogs.rs` / `src/dialog-icons.js`: ダイアログの順次表示・入力・回答・Scene構成と、DOM/Canvasのアイコン描画。
 - `src/resource-client.js`: HTTP/CORS取得、認証なし／JWTと送信先制限。トークンをWASMやDSLへ渡さない。
 - `src/token-session.js` / `src/http-policy.js`: 任意のトークン更新・ローテーション・同時要求の共有、HTTP URLとBearer形式の検証。
 - `src/webmcp.js`: 描画方式に依存しない共通ツールとブラウザへの登録アダプター。

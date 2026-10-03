@@ -38,6 +38,7 @@ export function widgetActions(widget) {
   const actions = [widget.payload?.action || ""];
   if (widget.kind === "grid-cell" && widget.config.editable) actions.push("beginEdit");
   if (widget.config.gridEditor) actions.push("commitEdit", "cancelEdit");
+  if (widget.config.dialog && widget.kind === "textfield") actions.push("accept");
   if (widget.kind === "menu-trigger") actions.push("close");
   return actions;
 }

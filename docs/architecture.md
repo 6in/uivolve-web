@@ -20,35 +20,35 @@ flowchart TD
 
 ## 責務
 
-| 場所                                                                          | 担当                                                                                                  |
-| ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `engine/src/lib.rs`                                                           | Package/Node/Widget/Scene、Runtime、共通検証、イベントの確定、基本部品の計測・配置、windowの重ね表示  |
-| `engine/src/abi.rs`                                                           | UTF-8 JSONの操作振り分け、WASMインスタンス内のRuntime・応答バッファ、公開メモリ関数                   |
-| `engine/src/extensions/`                                                      | Rhaiへ公開するRust関数の共通登録、正規表現のキャッシュ・容量制限、整数配列の一括集計                  |
-| `engine/src/theme.rs`                                                         | テーマの検証・色トークンの解決・現在テーマ。画面切替後も同じWASMインスタンス内で保持                  |
-| `engine/src/fields.rs`                                                        | xtype別名・入力の初期値、型・範囲・選択肢検証、入力Widget設定                                         |
-| `engine/src/layouts.rs`                                                       | 共通レイアウトの設定・Card状態・必要高・配置スロット                                                  |
-| `engine/src/grid.rs`                                                          | Data Gridの列・行・選択・ソート・検索・ページ・編集下書き                                             |
-| `engine/src/navigation.rs`                                                    | タブ・ツリー・メニューの状態と表示・操作                                                              |
-| `engine/src/extras.rs` / `figures.rs`                                         | 追加部品・構成の展開、文書・図表の描画データ生成                                                      |
-| `src/main.js`                                                                 | HTTP取得、URL・メディアの事前確認、カレンダーの日付補完、画面エディタ、テーマ切替、再描画、ホスト状態 |
-| `src/resource-client.js`                                                      | 共通HTTP/CORS取得、認証なし・Bearer JWT、送信先・リダイレクト・取得失敗の扱い                         |
-| `engine/src/http.rs` / `src/http-effects.js`                                  | RhaiのGET依頼の確定・追跡、非同期JSON取得・タイムアウト・画面切替時の中止、WASMへの完了通知           |
-| `engine/src/storage.rs` / `src/storage-effects.js` / `src/storage-client.js`  | 保存依頼の確定・追跡、IndexedDB/OPFSの非同期処理と完了通知                                            |
-| `engine/src/files.rs` / `src/file-client.js` / `src/opfs.js`                  | ファイル依頼、FileBytes、名前付きOPFS領域と排他制御                                                   |
-| `src/application-loader.js` / `scripts/publish-packages.mjs`                  | ソース一式の取得・検証・保存版復元、配信用マニフェスト生成                                            |
-| `engine/src/rpc.rs` / `src/rpc-client.js`                                     | 配信Descriptorによる動的Protobuf処理、Unary RPCのフレーム・通信・完了                                 |
-| `engine/src/buffers.rs`                                                       | バイナリ用バッファABI、容量・id・寿命管理                                                             |
-| `engine/src/dialogs.rs` / `src/dialog-effects.js` / `src/dialog-presenter.js` | Rhaiのダイアログ依頼・完了、FIFOと世代管理、共通モーダルシェルと表示パターン                          |
-| `engine/src/state_schema.rs` / `metadata.rs`                                  | DSLのstate型・制約とWebMCP説明の検証                                                                  |
-| `src/package-format.js` / `src/page-router.js`                                | JSON/YAMLの同一データへの変換、同梱画面のURL解決                                                      |
-| `src/engine.js`                                                               | JSON/UTF-8の入出力。業務処理やスクリプトのevalは行わない                                              |
-| `src/widget-contract.js`                                                      | フィールド・ボタン分類、物理操作と意味的操作、WebMCPの許可actionと操作ブロック判定                    |
-| `src/screen-catalog.js`                                                       | 同梱画面のidとtitle。WebMCPからも利用する                                                             |
-| `src/dom-renderer.js` / `canvas-renderer.js`                                  | Widgetの描画、フォーカス、入力・ポインターのイベント変換                                              |
-| `src/field-control.js`                                                        | 両描画方式のネイティブ入力、型付き値、IMEイベント、入力要素の更新                                     |
-| `src/surfaces.js`                                                             | 図表・文書の共通描画データ、SVG/Canvas描画、画像・動画・iframeのライフサイクル                        |
-| `src/webmcp.js`                                                               | 意味的なUIツール、可視性・token/revision確認、対応ブラウザへの登録・解除                              |
+| 場所                                                                         | 担当                                                                                                  |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `engine/src/lib.rs`                                                          | Package/Node/Widget/Scene、Runtime、共通検証、イベントの確定、基本部品の計測・配置、windowの重ね表示  |
+| `engine/src/abi.rs`                                                          | UTF-8 JSONの操作振り分け、WASMインスタンス内のRuntime・応答バッファ、公開メモリ関数                   |
+| `engine/src/extensions/`                                                     | Rhaiへ公開するRust関数の共通登録、正規表現のキャッシュ・容量制限、整数配列の一括集計                  |
+| `engine/src/theme.rs`                                                        | テーマの検証・色トークンの解決・現在テーマ。画面切替後も同じWASMインスタンス内で保持                  |
+| `engine/src/fields.rs`                                                       | xtype別名・入力の初期値、型・範囲・選択肢検証、入力Widget設定                                         |
+| `engine/src/layouts.rs`                                                      | 共通レイアウトの設定・Card状態・必要高・配置スロット                                                  |
+| `engine/src/grid.rs`                                                         | Data Gridの列・行・選択・ソート・検索・ページ・編集下書き                                             |
+| `engine/src/navigation.rs`                                                   | タブ・ツリー・メニューの状態と表示・操作                                                              |
+| `engine/src/extras.rs` / `figures.rs`                                        | 追加部品・構成の展開、文書・図表の描画データ生成                                                      |
+| `src/main.js`                                                                | HTTP取得、URL・メディアの事前確認、カレンダーの日付補完、画面エディタ、テーマ切替、再描画、ホスト状態 |
+| `src/resource-client.js`                                                     | 共通HTTP/CORS取得、認証なし・Bearer JWT、送信先・リダイレクト・取得失敗の扱い                         |
+| `engine/src/http.rs` / `src/http-effects.js`                                 | RhaiのGET依頼の確定・追跡、非同期JSON取得・タイムアウト・画面切替時の中止、WASMへの完了通知           |
+| `engine/src/storage.rs` / `src/storage-effects.js` / `src/storage-client.js` | 保存依頼の確定・追跡、IndexedDB/OPFSの非同期処理と完了通知                                            |
+| `engine/src/files.rs` / `src/file-client.js` / `src/opfs.js`                 | ファイル依頼、FileBytes、名前付きOPFS領域と排他制御                                                   |
+| `src/application-loader.js` / `scripts/publish-packages.mjs`                 | ソース一式の取得・検証・保存版復元、配信用マニフェスト生成                                            |
+| `engine/src/rpc.rs` / `src/rpc-client.js`                                    | 配信Descriptorによる動的Protobuf処理、Unary RPCのフレーム・通信・完了                                 |
+| `engine/src/buffers.rs`                                                      | バイナリ用バッファABI、容量・id・寿命管理                                                             |
+| `engine/src/dialogs.rs` / `src/dialog-icons.js`                              | WASMのダイアログ依頼・FIFO・入力・回答・Scene構成、DOM/Canvasのアイコン描画                           |
+| `engine/src/state_schema.rs` / `metadata.rs`                                 | DSLのstate型・制約とWebMCP説明の検証                                                                  |
+| `src/package-format.js` / `src/page-router.js`                               | JSON/YAMLの同一データへの変換、同梱画面のURL解決                                                      |
+| `src/engine.js`                                                              | JSON/UTF-8の入出力。業務処理やスクリプトのevalは行わない                                              |
+| `src/widget-contract.js`                                                     | フィールド・ボタン分類、物理操作と意味的操作、WebMCPの許可actionと操作ブロック判定                    |
+| `src/screen-catalog.js`                                                      | 同梱画面のidとtitle。WebMCPからも利用する                                                             |
+| `src/dom-renderer.js` / `canvas-renderer.js`                                 | Widgetの描画、フォーカス、入力・ポインターのイベント変換                                              |
+| `src/field-control.js`                                                       | 両描画方式のネイティブ入力、型付き値、IMEイベント、入力要素の更新                                     |
+| `src/surfaces.js`                                                            | 図表・文書の共通描画データ、SVG/Canvas描画、画像・動画・iframeのライフサイクル                        |
+| `src/webmcp.js`                                                              | 意味的なUIツール、可視性・token/revision確認、対応ブラウザへの登録・解除                              |
 
 ## 画面とイベントの確定
 
@@ -90,6 +90,6 @@ HTTP認証はホストのResourceClientへ置く。画面・Rhai・テーマは�
 
 WebMCPも人の入力と同じWASMイベントを実行する。ツールの登録機構とUI処理は独立し、WebMCP未対応でも通常UIは動く。ツールの変更要求はscreen token・revision・可視性を検査するが、クライアント内のUI検証はサーバーの認可を代替しない。
 
-Rhaiは同期実行で、操作数などの制限を持つ。非同期HTTP GET・Unary RPC・ブラウザ保存・ファイル操作・ダイアログは依頼・完了handlerの契約で扱う。HTTP・JSON保存・ファイル・RPC・ダイアログすべての準備とバッファ容量の確認が通ってからstateとeffectsを確定する。HTTPは従来のkind省略、追加操作はkind=storage/file/rpc/dialogでホストへ振り分ける。完了handlerもstateSchemaの検証を通る。汎用POST・タイマー・GPU描画・サーバー同期は未対応。現段階の制限は[README](../README.md)と部品別の契約に記載する。
+Rhaiは同期実行で、操作数などの制限を持つ。非同期HTTP GET・Unary RPC・ブラウザ保存・ファイル操作・ダイアログは依頼・完了handlerの契約で扱う。HTTP・JSON保存・ファイル・RPC・ダイアログすべての準備とバッファ容量の確認が通ってからstateとeffectsを確定する。HTTPは従来のkind省略、追加操作はkind=storage/file/rpcでホストへ振り分ける。kind=dialogは発行通知で、表示はSceneの構成を両レンダラーが描画する。完了handlerもstateSchemaの検証を通る。汎用POST・タイマー・GPU描画・サーバー同期は未対応。現段階の制限は[README](../README.md)と部品別の契約に記載する。
 
-`alert / confirm / prompt`の独自ダイアログはホスト全体に1つだけ表示し、両レンダラーとWebMCPの背景操作を待機させる。Rhaiへ同期で回答を返さず、`dialog_result`で最新stateを完了handlerへ渡す。Presenterの表示パターンをFIFO・世代管理から分け、今後の種類追加に備える。DSLのwindow/messageboxは各描画領域内のモーダルで、範囲が異なる。
+`alert / confirm / prompt`はWASMがFIFO・入力下書き・回答・レイアウトを管理し、既存windowと同じmodal層の部品としてSceneへ構成する。DOMは領域内のDOM、CanvasはCanvasへ描画する。両側は同じ1件の依頼を共有し、回答は通常のeventから最新stateの完了handlerへ届く。WebMCPも表示中の入力・ボタンを通常のui_dispatchで操作でき、背景はBLOCKEDになる。独自ホスト用のdialog_result ABIも維持する。

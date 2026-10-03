@@ -30,6 +30,7 @@ beforeEach(async () => {
       state: result.state,
       revision: result.revision,
       scene: engine.layout(500),
+      dialog: engine.layout(500).dialog,
       busy,
     }),
     dispatch: (target, payload) => {
@@ -146,19 +147,21 @@ it("validates arguments and returns structured errors rather than false success"
   host.dispatch = () => {};
   expect((await event("inventory:cell:1:customer")).error.code).toBe("NOT_APPLIED");
 });
-it("exposes an active app dialog while blocking background mutations", async () => {
-  const snapshot = host.snapshot;
-  const dialog = { id: 42, operation: "prompt", title: "入力", message: "名前", value: "太郎" };
-  host.snapshot = () => ({ ...snapshot(), dialog });
-  busy = true;
+it("exposes actual engine dialogs and permits only their active controls", async () => {
+  const simple = structuredClone(components);
+  simple.ui = { xtype: "container", items: [{ xtype: "button", itemId: "go", handler: "start" }] };
+  load(simple, 'fn init(s){s} fn start(s,e){prompt("名前","太郎","done");s} fn done(s,r){s}');
+  await event("go");
   const view = await call("ui_get_screen");
-  expect(view.dialog).toEqual(dialog);
-  expect(view.busy).toBe(true);
-  expect((await event("inventory:cell:1:customer")).error.code).toBe("BUSY");
-  expect((await call("ui_load_screen", { ...version(), id: "hello-world" })).error.code).toBe(
-    "BUSY",
-  );
-  expect(result.revision).toBe(0);
+  expect(view.dialog).toMatchObject({ operation: "prompt", value: "太郎", icon: "input" });
+  expect(view.busy).toBe(false);
+  expect((await event("go")).error.code).toBe("BLOCKED");
+  const prefix = ":dialog:" + view.dialog.id;
+  expect((await event(prefix + ":input", { value: "花子" })).ok).toBe(true);
+  expect((await call("ui_get_screen")).dialog.value).toBe("花子");
+  expect((await event(prefix + ":input", { action: "accept", value: "花子" })).ok).toBe(true);
+  expect((await call("ui_get_screen")).dialog).toBeNull();
+  expect((await event(prefix + ":ok")).error.code).toBe("NOT_VISIBLE");
 });
 it("propagates cancellation before a mutation and checks version again before loading commits", async () => {
   const controller = new AbortController();

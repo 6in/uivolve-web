@@ -2,6 +2,7 @@ import { applyTheme } from "./theme.js";
 import { createControl, syncControl } from "./field-control.js";
 import { isField, isBox, isEditor, isInteractive as interactive } from "./widget-contract.js";
 import { paintSurface, syncMedia, mediaKinds, disposeMedia } from "./surfaces.js";
+import { CanvasDialogIcons } from "./dialog-icons.js";
 
 const FONT = '"Inter", "Noto Sans JP", system-ui, sans-serif';
 export class CanvasRenderer {
@@ -15,9 +16,40 @@ export class CanvasRenderer {
     this.focusKey = null;
     this.editor = null;
     this.media = new Map();
+    this.dialogIcons = new CanvasDialogIcons(() => this.paint());
+    this.messageScroll = new Map();
     this.returnFocus = new Map();
     this.events = new AbortController();
     const options = { signal: this.events.signal };
+    canvas.addEventListener(
+      "wheel",
+      (event) => {
+        if (!this.scene) return;
+        const rect = canvas.getBoundingClientRect();
+        const x = ((event.clientX - rect.left) * this.scene.width) / rect.width;
+        const y = ((event.clientY - rect.top) * this.scene.height) / rect.height;
+        const hit = this.scene.widgets.find(
+          (w) =>
+            w.kind === "dialog-message" &&
+            x >= w.x &&
+            x < w.x + w.width &&
+            y >= w.y &&
+            y < w.y + w.height,
+        );
+        if (!hit) return;
+        const max = Math.max(0, hit.config.lines.length * 22 - hit.height);
+        if (!max) return;
+        event.preventDefault();
+        const delta =
+          event.deltaY * (event.deltaMode === 1 ? 22 : event.deltaMode === 2 ? hit.height : 1);
+        this.messageScroll.set(
+          hit.key,
+          Math.max(0, Math.min(max, (this.messageScroll.get(hit.key) ?? 0) + delta)),
+        );
+        this.paint();
+      },
+      { ...options, passive: false },
+    );
     canvas.addEventListener(
       "pointerdown",
       (event) => {
@@ -291,6 +323,11 @@ export class CanvasRenderer {
     record.key = widget.key;
     input.addEventListener("keydown", (event) => {
       if (record.composing || event.isComposing || event.keyCode === 229) return;
+      if (record.widget.config.dialog && event.key === "Enter") {
+        event.preventDefault();
+        this.dispatch(record.widget.target, { action: "accept", value: input.value });
+        return;
+      }
       if (record.widget.config.gridEditor && ["Enter", "Escape", "Tab"].includes(event.key)) {
         event.preventDefault();
         const ok = this.dispatch(record.widget.target, {
@@ -360,9 +397,13 @@ export class CanvasRenderer {
     const oldPopup = this.scene?.popup;
     const changedModal = oldModal?.key !== scene.modal?.key;
     if (changedModal && scene.modal && ownsFocus && !this.returnFocus.has(scene.modal.key)) {
-      this.returnFocus.set(scene.modal.key, this.focusKey);
+      const origin = oldModal?.key.startsWith(":dialog:") && this.returnFocus.get(oldModal.key);
+      this.returnFocus.set(scene.modal.key, origin || this.focusKey);
     }
     this.scene = scene;
+    this.dialogIcons.sync(scene.widgets, scene.assetBase);
+    for (const key of this.messageScroll.keys())
+      if (!scene.widgets.some((w) => w.key === key)) this.messageScroll.delete(key);
     const mediaKeys = new Set();
     for (const w of scene.widgets.filter((widget) => mediaKinds.includes(widget.kind))) {
       mediaKeys.add(w.key);
@@ -499,7 +540,18 @@ export class CanvasRenderer {
         (isField(widget) || ["button", "row", "panel-toggle", "window-close"].includes(kind))
       )
         ctx.globalAlpha = 0.5;
-      if (["figure", "document"].includes(kind)) {
+      if (kind === "dialog-icon") {
+        this.dialogIcons.paint(ctx, widget, colors);
+      } else if (kind === "dialog-message") {
+        ctx.beginPath();
+        ctx.rect(x, y, width, height);
+        ctx.clip();
+        const scroll = this.messageScroll.get(widget.key) ?? 0;
+        widget.config.lines.forEach((line, i) => {
+          const cy = y + 11 + i * 22 - scroll;
+          if (cy >= y - 11 && cy <= y + height + 11) this.text(line, x, cy, width, colors.text, 13);
+        });
+      } else if (["figure", "document"].includes(kind)) {
         paintSurface(ctx, widget, this.scene.theme);
       } else if (mediaKinds.includes(kind)) {
         this.box(x, y, width, height, colors.surface, colors.border);
@@ -536,7 +588,8 @@ export class CanvasRenderer {
         ctx.shadowOffsetY = 8;
         this.box(x, y, width, height, colors.background, colors.border, 9);
         ctx.restore();
-        this.text(text, x + 14, y + 22, width - 64, colors.text, 12, 600);
+        const inset = widget.config.dialog && widget.config.icon ? 58 : 14;
+        this.text(text, x + inset, y + 22, width - inset - 50, colors.text, 12, 600);
       } else if (kind === "panel-toggle") {
         this.text(text, x + 13, y + 21, width - 26, colors.text, 12, 600);
       } else if (kind === "window-close") {
@@ -829,6 +882,8 @@ export class CanvasRenderer {
   }
 
   reset() {
+    this.dialogIcons.reset();
+    this.messageScroll.clear();
     for (const record of this.media.values()) disposeMedia(record);
     this.media.clear();
     this.closeEditor();
@@ -838,6 +893,8 @@ export class CanvasRenderer {
     this.returnFocus.clear();
   }
   dispose() {
+    this.dialogIcons.reset();
+    this.messageScroll.clear();
     for (const record of this.media.values()) disposeMedia(record);
     this.media.clear();
     this.closeEditor();

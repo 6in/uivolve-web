@@ -79,7 +79,7 @@ ui:
       itemId: dialogNotice
       bind: notice
     - xtype: label
-      text: DOM・Canvasのどちらからも、共通のダイアログを1つ表示します。配色もテーマに合わせて変わります。
+      text: 同じダイアログをDOM・Canvasの各領域内に描画します。どちらで回答しても両側へ反映されます。
       variant: muted
     - xtype: label
       text: confirmのキャンセルはfalse、promptのキャンセルはnull、空文字のOKは空文字として受け取ります。

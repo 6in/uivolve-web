@@ -340,6 +340,7 @@ pub struct Scene {
     pub widgets: Vec<Widget>,
     pub modal: Option<Modal>,
     pub popup: Option<Value>,
+    pub dialog: Option<Value>,
 }
 
 #[derive(Serialize)]
@@ -553,6 +554,21 @@ impl Runtime {
         self.files.clear();
         self.rpc.clear();
         self.dialogs.clear();
+        if self.dialogs.active().is_some() {
+            return match self.dialogs.event(target, &payload)? {
+                dialogs::Event::Ignore => Ok(()),
+                dialogs::Event::Draft => {
+                    self.revision += 1;
+                    Ok(())
+                }
+                dialogs::Event::Answer(id, data) => {
+                    self.complete_dialog(id, json!({"ok":true,"data":data,"error":""}))
+                }
+            };
+        }
+        if target.starts_with(":dialog:") {
+            return Ok(());
+        }
         let mut state = self.state_json()?;
         let mut path = Vec::new();
         if !find_path(&self.ui, target, &mut path) {
@@ -931,6 +947,12 @@ impl Runtime {
                 layer,
             });
         }
+        if let Some(dialog_modal) =
+            self.dialogs
+                .layout(width, &mut height, windows.len() + 1, &mut widgets)
+        {
+            modal = Some(dialog_modal);
+        }
         if let Some(m) = &modal {
             for w in &mut widgets {
                 if w.layer != m.layer {
@@ -980,6 +1002,7 @@ impl Runtime {
             widgets,
             modal,
             popup,
+            dialog: self.dialogs.snapshot(),
         })
     }
 }

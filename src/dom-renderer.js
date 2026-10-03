@@ -2,6 +2,7 @@ import { applyTheme } from "./theme.js";
 import { createControl, syncControl } from "./field-control.js";
 import { isButton, isField, isBox } from "./widget-contract.js";
 import { renderSvg, syncMedia, mediaKinds, disposeMedia } from "./surfaces.js";
+import { resolveDialogIcon, createDialogIcon } from "./dialog-icons.js";
 
 function position(element, widget, origin = { x: 0, y: 0 }) {
   Object.assign(element.style, {
@@ -33,6 +34,8 @@ export class DomRenderer {
       "keydown",
       (event) => {
         if (event.isComposing || event.keyCode === 229) return;
+        const key = event.target.closest(".ui-widget")?.dataset.key;
+        if (this.nodes.get(key)?.control?.composing) return;
         if (event.key === "Escape" && this.popup) {
           event.preventDefault();
           this.dispatch(this.popup.target, { action: "close" });
@@ -145,6 +148,13 @@ export class DomRenderer {
       const control = createControl(widget, this.dispatch, "dom");
       const input = control.input;
       input.addEventListener("keydown", (event) => {
+        if (control.widget.config.dialog && event.key === "Enter") {
+          if (control.composing || event.isComposing || event.keyCode === 229) return;
+          event.preventDefault();
+          event.stopPropagation();
+          this.dispatch(control.widget.target, { action: "accept", value: input.value });
+          return;
+        }
         if (
           !control.widget.config.gridEditor ||
           control.composing ||
@@ -204,7 +214,8 @@ export class DomRenderer {
     const oldModal = this.modal;
     const changedModal = oldModal?.key !== scene.modal?.key;
     if (changedModal && scene.modal && ownsFocus && !this.returnFocus.has(scene.modal.key)) {
-      this.returnFocus.set(scene.modal.key, active);
+      const origin = oldModal?.key.startsWith(":dialog:") && this.returnFocus.get(oldModal.key);
+      this.returnFocus.set(scene.modal.key, origin || active);
     }
     this.modal = scene.modal;
     this.stage.style.height = `${scene.height}px`;
@@ -295,6 +306,23 @@ export class DomRenderer {
       if (widget.kind === "window" || widget.kind === "tree-shell") {
         record.title.textContent = widget.text;
         root.setAttribute("aria-label", widget.text);
+        record.title.style.paddingLeft =
+          widget.config.dialog && widget.config.icon ? "58px" : "14px";
+      } else if (widget.kind === "dialog-icon") {
+        const signature = JSON.stringify([widget.config, scene.assetBase]);
+        if (record.iconSignature !== signature) {
+          let icon;
+          try {
+            icon = resolveDialogIcon(widget.config.icon, widget.config.operation, scene.assetBase);
+          } catch {
+            icon = "info";
+          }
+          const element = createDialogIcon(document, icon);
+          root.replaceChildren(...(element ? [element] : []));
+          record.iconSignature = signature;
+        }
+      } else if (widget.kind === "dialog-message") {
+        root.textContent = widget.config.lines.join("\n");
       } else if (isField(widget)) {
         root.classList.add("ui-field");
         record.label.textContent = widget.text;

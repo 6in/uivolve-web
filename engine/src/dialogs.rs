@@ -1,7 +1,17 @@
+use super::{Modal, Widget};
 use rhai::{Dynamic, Engine, EvalAltResult, ImmutableString, Map, AST};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::{HashMap, VecDeque},
+    rc::Rc,
+};
+
+thread_local! {
+    // Scene keys must not alias controls from a replaced screen in the same engine.
+    static SEQUENCE: Cell<u64> = const { Cell::new(0) };
+}
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -99,13 +109,19 @@ pub struct Intent {
     default_value: String,
     handler: String,
     icon: Icon,
+    draft: String,
+}
+pub enum Event {
+    Ignore,
+    Draft,
+    Answer(u64, Value),
 }
 #[derive(Default)]
 pub struct Requests {
     queue: Rc<RefCell<Vec<Intent>>>,
     pending: HashMap<u64, Intent>,
+    order: VecDeque<u64>,
     ready: Vec<Value>,
-    sequence: u64,
 }
 impl Requests {
     pub fn register(&self, engine: &mut Engine) {
@@ -224,16 +240,82 @@ impl Requests {
     }
     pub fn commit(&mut self, intents: Vec<Intent>) {
         for intent in intents {
-            self.sequence += 1;
-            self.ready.push(json!({"kind":"dialog", "id":self.sequence, "operation":intent.operation, "message":intent.message, "defaultValue":intent.default_value, "icon":intent.icon}));
-            self.pending.insert(self.sequence, intent);
+            let id = SEQUENCE.with(|sequence| {
+                let id = sequence.get() + 1;
+                sequence.set(id);
+                id
+            });
+            self.ready.push(json!({"kind":"dialog", "id":id, "operation":intent.operation, "message":intent.message, "defaultValue":intent.default_value, "icon":intent.icon}));
+            self.pending.insert(id, intent);
+            self.order.push_back(id);
         }
+    }
+    pub fn active(&self) -> Option<(u64, &Intent)> {
+        let id = *self.order.front()?;
+        self.pending.get(&id).map(|intent| (id, intent))
+    }
+    pub fn snapshot(&self) -> Option<Value> {
+        let (id, intent) = self.active()?;
+        let mut data = json!({"id":id,"operation":intent.operation,"title":title(&intent.operation),"message":intent.message,"icon":intent.icon});
+        if matches!(intent.operation, Operation::Prompt) {
+            data["value"] = json!(intent.draft);
+        }
+        Some(data)
+    }
+    pub fn event(&mut self, target: &str, payload: &Value) -> Result<Event, String> {
+        let Some((id, _)) = self.active() else {
+            return Ok(Event::Ignore);
+        };
+        let key = format!(":dialog:{id}");
+        let intent = self.pending.get_mut(&id).unwrap();
+        let action = payload["action"].as_str().unwrap_or("");
+        if target == format!("{key}:input") && matches!(intent.operation, Operation::Prompt) {
+            if !["", "accept"].contains(&action) {
+                return Err("Invalid dialog input action".into());
+            }
+            let value = payload["value"]
+                .as_str()
+                .ok_or("Dialog input must be a string")?;
+            if value.len() > 4096 {
+                return Err("Dialog input exceeds 4096 bytes".into());
+            }
+            if action == "accept" {
+                return Ok(Event::Answer(id, json!(value)));
+            }
+            intent.draft = value.into();
+            return Ok(Event::Draft);
+        }
+        if target == format!("{key}:ok") && action.is_empty() {
+            let data = match intent.operation {
+                Operation::Alert => Value::Null,
+                Operation::Confirm => json!(true),
+                Operation::Prompt => json!(intent.draft),
+            };
+            return Ok(Event::Answer(id, data));
+        }
+        if (target == key && action == "close")
+            || (target == format!("{key}:cancel")
+                && action.is_empty()
+                && !matches!(intent.operation, Operation::Alert))
+        {
+            return Ok(Event::Answer(
+                id,
+                if matches!(intent.operation, Operation::Confirm) {
+                    json!(false)
+                } else {
+                    Value::Null
+                },
+            ));
+        }
+        // Background, queued and stale dialog controls do not mutate the active screen.
+        Ok(Event::Ignore)
     }
     pub fn consume(&mut self, id: u64, response: &mut Value) -> Result<String, String> {
         let intent = self
             .pending
             .remove(&id)
             .ok_or("Unknown or completed dialog request")?;
+        self.order.retain(|queued| *queued != id);
         let ok = response["ok"].as_bool().ok_or("Missing dialog result ok")?;
         let data = &response["data"];
         if ok {
@@ -264,6 +346,195 @@ impl Requests {
     pub fn take(&mut self) -> Vec<Value> {
         std::mem::take(&mut self.ready)
     }
+    pub fn layout(
+        &self,
+        width: f64,
+        height: &mut f64,
+        layer: usize,
+        widgets: &mut Vec<Widget>,
+    ) -> Option<Modal> {
+        let (id, intent) = self.active()?;
+        let key = format!(":dialog:{id}");
+        let ww = 440.0_f64.min(width - 32.0);
+        let content_width = ww - 32.0;
+        let lines = wrap_message(&intent.message, (content_width / 14.0).floor() as usize);
+        let mh = (lines.len() as f64 * 22.0).clamp(22.0, 220.0);
+        let prompt = matches!(intent.operation, Operation::Prompt);
+        let wh = 58.0 + mh + 12.0 + if prompt { 78.0 } else { 0.0 } + 40.0 + 20.0;
+        *height = height.max(320.0).max(wh + 32.0);
+        let x = (width - ww) / 2.0;
+        let y = (*height - wh) / 2.0;
+        let mut add = |kind: &str,
+                       suffix: &str,
+                       px,
+                       py,
+                       pw,
+                       ph,
+                       text: &str,
+                       payload: Value,
+                       config: Value| {
+            let part_key = if suffix.is_empty() {
+                key.clone()
+            } else {
+                format!("{key}:{suffix}")
+            };
+            let target = if ["window", "window-close"].contains(&kind) {
+                key.clone()
+            } else {
+                part_key.clone()
+            };
+            let mut w = Widget {
+                layer,
+                key: part_key,
+                target,
+                kind: kind.into(),
+                x: px,
+                y: py,
+                width: pw,
+                height: ph,
+                text: text.into(),
+                value: String::new(),
+                variant: String::new(),
+                disabled: false,
+                selected: false,
+                cells: vec![],
+                fractions: vec![],
+                payload,
+                config,
+            };
+            if kind == "textfield" {
+                w.value = intent.draft.clone();
+            }
+            if suffix == "ok" {
+                w.variant = "primary".into();
+            }
+            widgets.push(w);
+        };
+        add(
+            "backdrop",
+            "backdrop",
+            0.0,
+            0.0,
+            width,
+            *height,
+            "",
+            json!({}),
+            json!({}),
+        );
+        let has_icon = !matches!(intent.icon, Icon::Named(NamedIcon::None));
+        add(
+            "window",
+            "",
+            x,
+            y,
+            ww,
+            wh,
+            title(&intent.operation),
+            json!({}),
+            json!({"dialog":true,"icon":has_icon}),
+        );
+        add(
+            "window-close",
+            "close",
+            x + ww - 42.0,
+            y + 8.0,
+            32.0,
+            30.0,
+            "×",
+            json!({"action":"close"}),
+            json!({}),
+        );
+        if has_icon {
+            add(
+                "dialog-icon",
+                "icon",
+                x + 14.0,
+                y + 8.0,
+                32.0,
+                32.0,
+                "",
+                json!({}),
+                json!({"icon":intent.icon,"operation":intent.operation}),
+            );
+        }
+        add(
+            "dialog-message",
+            "message",
+            x + 16.0,
+            y + 58.0,
+            content_width,
+            mh,
+            &intent.message,
+            json!({}),
+            json!({"lines":lines}),
+        );
+        if prompt {
+            add(
+                "textfield",
+                "input",
+                x + 16.0,
+                y + 58.0 + mh + 12.0,
+                content_width,
+                62.0,
+                "入力内容",
+                json!({}),
+                json!({"dialog":true,"labelHeight":22,"inputType":"text","placeholder":"","required":false,"readOnly":false,"maxLength":4096,"minLength":null}),
+            );
+        }
+        let button_width = 88.0_f64.min((content_width - 10.0) / 2.0);
+        if !matches!(intent.operation, Operation::Alert) {
+            add(
+                "button",
+                "cancel",
+                x + ww - 16.0 - button_width * 2.0 - 10.0,
+                y + wh - 60.0,
+                button_width,
+                40.0,
+                "キャンセル",
+                json!({}),
+                json!({}),
+            );
+        }
+        add(
+            "button",
+            "ok",
+            x + ww - 16.0 - button_width,
+            y + wh - 60.0,
+            button_width,
+            40.0,
+            "OK",
+            json!({}),
+            json!({}),
+        );
+        Some(Modal {
+            key: key.clone(),
+            target: key,
+            layer,
+        })
+    }
+}
+fn title(operation: &Operation) -> &'static str {
+    match operation {
+        Operation::Alert => "お知らせ",
+        Operation::Confirm => "確認",
+        Operation::Prompt => "入力",
+    }
+}
+fn wrap_message(message: &str, columns: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    for paragraph in message.split('\n') {
+        let chars: Vec<char> = paragraph.chars().collect();
+        if chars.is_empty() {
+            lines.push(String::new());
+        } else {
+            lines.extend(
+                chars
+                    .chunks(columns.max(1))
+                    .map(|chunk| chunk.iter().collect::<String>()),
+            );
+        }
+    }
+    lines
 }
 fn enqueue(
     queue: &RefCell<Vec<Intent>>,
@@ -298,6 +569,7 @@ fn enqueue(
         operation,
         message: message.to_string(),
         default_value: default_value.to_string(),
+        draft: default_value.to_string(),
         handler: handler.to_string(),
         icon,
     });

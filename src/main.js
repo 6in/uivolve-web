@@ -11,8 +11,6 @@ import { StorageEffects } from "./storage-effects.js";
 import { FileClient } from "./file-client.js";
 import { ApplicationLoader } from "./application-loader.js";
 import { RpcClient } from "./rpc-client.js";
-import { DialogEffects } from "./dialog-effects.js";
-import { DialogPresenter } from "./dialog-presenter.js";
 import { packageFormat, parsePackage, stringifyPackage } from "./package-format.js";
 import { readPageRoute, pageUrl } from "./page-router.js";
 
@@ -94,22 +92,12 @@ const rpcEffects = new StorageEffects({
   runNext: runEffects,
   onError: (exception) => error(exception.message),
 });
-const dialogPresenter = new DialogPresenter({
-  getAssetBase: () => packageUrl?.href || document.baseURI,
-});
-const dialogEffects = new DialogEffects({
-  client: dialogPresenter,
-  complete: (id, response) => completeEffect("completeDialog", id, response),
-  runNext: runEffects,
-  onError: (exception) => error(exception.message),
-});
 function runEffects(effects = []) {
   return Promise.all([
     httpEffects.run(effects.filter((effect) => !effect.kind || effect.kind === "http")),
     storageEffects.run(effects.filter((effect) => effect.kind === "storage")),
     fileEffects.run(effects.filter((effect) => effect.kind === "file")),
     rpcEffects.run(effects.filter((effect) => effect.kind === "rpc")),
-    dialogEffects.run(effects.filter((effect) => effect.kind === "dialog")),
   ]);
 }
 function writeRoute(id, mode = "push") {
@@ -174,9 +162,16 @@ function updateState(result) {
 }
 
 function performEvent(target, payload) {
-  if (!currentPackage || fetching || benchmarkRunning || dialogEffects.busy)
+  if (!currentPackage || fetching || benchmarkRunning)
     throw new Error("画面の準備ができていません");
-  const result = engine.dispatch(target, payload);
+  let result;
+  try {
+    result = engine.dispatch(target, payload);
+  } catch (exception) {
+    // A failed completion consumes its dialog; redraw the next engine-owned modal.
+    render();
+    throw exception;
+  }
   updateState(result);
   error("");
   render();
@@ -197,7 +192,7 @@ function dispatch(target, payload) {
 const dom = new DomRenderer($("dom-stage"), dispatch);
 const canvas = new CanvasRenderer($("canvas-stage"), $("canvas"), dispatch);
 document.addEventListener("pointerdown", (event) => {
-  if (!dialogEffects.busy && scenes?.[0].popup && !event.target.closest(".stage"))
+  if (scenes?.[0].popup && !event.target.closest(".stage"))
     dispatch(scenes[0].popup.target, { action: "close" });
 });
 
@@ -274,7 +269,6 @@ function compile(
   storageEffects.reset(screen.id);
   fileEffects.reset(screen.id);
   rpcEffects.reset(source);
-  dialogEffects.reset();
   $("source-format").value = format;
   editorFormat = format;
   $("dsl-source").value = rawSource ?? stringifyPackage(screen, format);
@@ -375,8 +369,8 @@ function snapshot() {
     revision,
     state: currentState,
     scene: scenes?.[0],
-    busy: fetching || benchmarkRunning || themeFetching || dialogEffects.busy,
-    dialog: dialogPresenter.snapshot(),
+    busy: fetching || benchmarkRunning || themeFetching,
+    dialog: scenes?.[0].dialog ?? null,
   };
 }
 
@@ -626,7 +620,6 @@ if (import.meta.hot) {
     storageEffects.reset();
     fileEffects.reset();
     rpcEffects.reset();
-    dialogEffects.reset();
     loadController?.abort();
     window.removeEventListener("popstate", followHistory);
     resources.setAuthentication({ mode: "none" });
