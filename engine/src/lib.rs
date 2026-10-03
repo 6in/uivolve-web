@@ -7,6 +7,7 @@ pub use abi::{input_alloc, input_free, request, response_len};
 mod theme;
 use theme::Theme;
 mod buffers;
+mod dialogs;
 mod dynamic_ui;
 pub mod extensions;
 mod extras;
@@ -359,6 +360,7 @@ pub struct Runtime {
     storage: storage::Requests,
     files: files::Requests,
     rpc: rpc::Requests,
+    dialogs: dialogs::Requests,
     pub revision: u32,
 }
 
@@ -417,6 +419,8 @@ impl Runtime {
         let mut rpc = rpc::Requests::default();
         rpc.initialize(&package.rpc, descriptors)?;
         rpc.register(&mut engine);
+        let mut dialogs = dialogs::Requests::default();
+        dialogs.register(&mut engine);
         register(&mut engine);
         engine.set_max_operations(50_000);
         engine.set_max_call_levels(32);
@@ -518,6 +522,7 @@ impl Runtime {
         let intents = storage.prepare(&package.storage)?;
         let file_intents = files.prepare(&package.files)?;
         let rpc_intents = rpc.prepare()?;
+        let dialog_intents = dialogs.prepare(&ast)?;
         let (file_bytes, file_count) = files::Requests::size(&file_intents);
         let (rpc_bytes, rpc_count) = rpc::Requests::size(&rpc_intents);
         buffers::capacity(file_bytes + rpc_bytes, file_count + rpc_count)?;
@@ -525,6 +530,7 @@ impl Runtime {
         storage.commit(intents, &package.storage);
         files.commit(file_intents);
         rpc.commit(rpc_intents, &package.rpc);
+        dialogs.commit(dialog_intents);
         Ok(Self {
             package,
             ui,
@@ -536,6 +542,7 @@ impl Runtime {
             storage,
             files,
             rpc,
+            dialogs,
             revision: 0,
         })
     }
@@ -545,6 +552,7 @@ impl Runtime {
         self.storage.clear();
         self.files.clear();
         self.rpc.clear();
+        self.dialogs.clear();
         let mut state = self.state_json()?;
         let mut path = Vec::new();
         if !find_path(&self.ui, target, &mut path) {
@@ -649,6 +657,7 @@ impl Runtime {
         self.storage.clear();
         self.files.clear();
         self.rpc.clear();
+        self.dialogs.clear();
         let handler = &self.package.requests[&name].handler;
         let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
         // Use current state, including edits made while the HTTP request was in flight.
@@ -670,6 +679,7 @@ impl Runtime {
         self.storage.clear();
         self.files.clear();
         self.rpc.clear();
+        self.dialogs.clear();
         response["operation"] = serde_json::to_value(operation).map_err(|e| e.to_string())?;
         response["request"] = json!(name);
         let handler = &self.package.storage[&name].handler;
@@ -701,6 +711,7 @@ impl Runtime {
         self.storage.clear();
         self.files.clear();
         self.rpc.clear();
+        self.dialogs.clear();
         let mut response: rhai::Map = rhai::serde::to_dynamic(response)
             .map_err(|e| e.to_string())?
             .cast();
@@ -728,6 +739,7 @@ impl Runtime {
         self.storage.clear();
         self.files.clear();
         self.rpc.clear();
+        self.dialogs.clear();
         let name = self.rpc.consume(id, &mut response, buffer)?;
         let handler = &self.package.rpc[&name].handler;
         let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
@@ -740,6 +752,28 @@ impl Runtime {
                 (self.state.clone(), response),
             )
             .map_err(|e| format!("{} / RPC {} / {}: {e}", self.package.script, name, handler))?;
+        self.commit_state(next)
+    }
+    pub fn complete_dialog(&mut self, id: u64, mut response: Value) -> Result<(), String> {
+        self.http.clear();
+        self.storage.clear();
+        self.files.clear();
+        self.rpc.clear();
+        self.dialogs.clear();
+        let handler = self.dialogs.consume(id, &mut response)?;
+        let next = if handler.is_empty() {
+            self.state.clone()
+        } else {
+            let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
+            self.engine
+                .call_fn(
+                    &mut Scope::new(),
+                    &self.ast,
+                    &handler,
+                    (self.state.clone(), response),
+                )
+                .map_err(|e| format!("{} / dialog / {}: {e}", self.package.script, handler))?
+        };
         self.commit_state(next)
     }
     pub fn take_effects(&mut self) -> Vec<Value> {
@@ -755,6 +789,7 @@ impl Runtime {
             )
             .chain(self.files.take())
             .chain(self.rpc.take())
+            .chain(self.dialogs.take())
             .collect()
     }
 
@@ -784,6 +819,7 @@ impl Runtime {
         let intents = self.storage.prepare(&self.package.storage)?;
         let file_intents = self.files.prepare(&self.package.files)?;
         let rpc_intents = self.rpc.prepare()?;
+        let dialog_intents = self.dialogs.prepare(&self.ast)?;
         let (file_bytes, file_count) = files::Requests::size(&file_intents);
         let (rpc_bytes, rpc_count) = rpc::Requests::size(&rpc_intents);
         buffers::capacity(file_bytes + rpc_bytes, file_count + rpc_count)?;
@@ -793,6 +829,7 @@ impl Runtime {
         self.storage.commit(intents, &self.package.storage);
         self.files.commit(file_intents);
         self.rpc.commit(rpc_intents, &self.package.rpc);
+        self.dialogs.commit(dialog_intents);
         self.revision += 1;
         Ok(())
     }

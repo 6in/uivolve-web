@@ -146,6 +146,20 @@ it("validates arguments and returns structured errors rather than false success"
   host.dispatch = () => {};
   expect((await event("inventory:cell:1:customer")).error.code).toBe("NOT_APPLIED");
 });
+it("exposes an active app dialog while blocking background mutations", async () => {
+  const snapshot = host.snapshot;
+  const dialog = { id: 42, operation: "prompt", title: "入力", message: "名前", value: "太郎" };
+  host.snapshot = () => ({ ...snapshot(), dialog });
+  busy = true;
+  const view = await call("ui_get_screen");
+  expect(view.dialog).toEqual(dialog);
+  expect(view.busy).toBe(true);
+  expect((await event("inventory:cell:1:customer")).error.code).toBe("BUSY");
+  expect((await call("ui_load_screen", { ...version(), id: "hello-world" })).error.code).toBe(
+    "BUSY",
+  );
+  expect(result.revision).toBe(0);
+});
 it("propagates cancellation before a mutation and checks version again before loading commits", async () => {
   const controller = new AbortController();
   controller.abort();

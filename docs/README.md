@@ -8,6 +8,7 @@ uivolve-webは、uivolveの考えをWebへ実装する試作。画面定義・�
 | はじめての画面を作る                               | [Hello Worldチュートリアル](tutorial-hello-world.md)                                  |
 | ページ側のコードでタブと部品を追加する             | [動的タブのチュートリアル](tutorial-dynamic-tabs.md)                                  |
 | ボタンからJSONを取得してGridへ表示する             | [HTTPグリッドのチュートリアル](tutorial-http-grid.md)                                 |
+| Rhaiから通知・確認・入力ダイアログを開く           | [独自ダイアログの契約](dialogs.md)                                                    |
 | 正規表現を使う・Rust関数をRhaiへ追加する           | [WASM内のRust拡張](native-extensions.md)                                              |
 | 保存・YAML・自然なURL・stateの型を使う             | [ブラウザ機能の契約](platform-features.md)、[対応計画](platform-features-plan.md)     |
 | OPFSのファイル操作・アプリキャッシュ・RPCを使う    | [使い方と契約](files-cache-rpc.md)、[検討と実装結果](opfs-cache-rpc-investigation.md) |

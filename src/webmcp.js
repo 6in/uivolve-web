@@ -136,6 +136,7 @@ export function createUiTools(host) {
           screen: snapshot.screen,
           revision: snapshot.revision,
           busy: snapshot.busy,
+          dialog: snapshot.dialog ? preview(snapshot.dialog).value : null,
           modal: snapshot.scene.modal,
           popup: snapshot.scene.popup,
           stateKeys: Object.keys(snapshot.state),

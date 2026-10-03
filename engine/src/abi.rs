@@ -47,16 +47,17 @@ fn execute(request: Value) -> Result<Value, String> {
             runtime.dispatch(target, request.get("payload").cloned().unwrap_or(json!({})))?;
             result(runtime)
         }),
-        "http_result" | "storage_result" | "file_result" | "rpc_result" => RUNTIME.with(|r| {
+        "http_result" | "storage_result" | "file_result" | "rpc_result" | "dialog_result" => RUNTIME.with(|r| {
             let mut slot = r.borrow_mut();
             let runtime = slot.as_mut().ok_or("No screen loaded")?;
-            let channel = match request["op"].as_str() {Some("storage_result")=>"Storage",Some("file_result")=>"File",Some("rpc_result")=>"RPC",_=>"HTTP"};
+            let channel = match request["op"].as_str() {Some("storage_result")=>"Storage",Some("file_result")=>"File",Some("rpc_result")=>"RPC",Some("dialog_result")=>"Dialog",_=>"HTTP"};
             let id = request.get("id").and_then(Value::as_u64).ok_or_else(|| format!("Missing {channel} request id"))?;
             let ok = request.get("ok").and_then(Value::as_bool).ok_or_else(|| format!("Missing {channel} result ok"))?;
             let error = request.get("error").and_then(Value::as_str).unwrap_or("");
             if error.len() > 2048 { return Err(format!("{channel} error exceeds 2048 bytes")); }
             let response=json!({"ok":ok,"data":request.get("data").cloned().unwrap_or(Value::Null),"error":error});
             if request["op"]=="storage_result" {runtime.complete_storage(id,response)?;}
+            else if request["op"]=="dialog_result" {runtime.complete_dialog(id,response)?;}
             else if request["op"]=="file_result" || request["op"]=="rpc_result" {
                 let buffer = request.get("buffer").map(|v| v.as_u64().filter(|id| *id>0 && *id<=u32::MAX as u64).map(|id| id as u32).ok_or("Invalid buffer id")).transpose()?;
                 if !ok && buffer.is_some() { return Err("Failed completion must not carry a binary buffer".into()); }

@@ -126,6 +126,8 @@ Rhaiは同期実行。トップレベルの任意の`requests`にHTTP GETのURL�
 
 ## 診断と制限
 
+`alert / confirm / prompt`でテーマ共通の独自ダイアログを依頼できる。同期の戻り値はなく、確認・入力の回答は`handler(state, response)`で受け取る。画面全体をモーダルにするため、表示中は両レンダラーの背景操作を止める。DSLの`window`とは範囲が異なる。[ダイアログ契約](dialogs.md)と`public/screens/dialogs.*`を参照。
+
 構文エラーにはスクリプト名とRhaiの位置情報。実行エラーにはスクリプト名・itemId・handler名とRhaiの診断を表示する。
 
 - UI: 200ノード、20階層。

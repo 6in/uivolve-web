@@ -1,0 +1,57 @@
+version: 1
+id: dialogs
+title: ダイアログ
+script: dialogs.rhai
+state:
+  name: 太郎
+  notice: ボタンで通知・確認・入力ダイアログを試せます。
+  loading: false
+stateSchema:
+  type: object
+  properties:
+    name:
+      type: string
+    notice:
+      type: string
+    loading:
+      type: boolean
+  required: [name, notice, loading]
+ui:
+  xtype: container
+  layout: vbox
+  items:
+    - xtype: label
+      text: テーマに合わせたダイアログ
+      variant: heading
+    - xtype: textfield
+      itemId: dialogName
+      fieldLabel: 名前
+      bind: name
+      disabledBind: loading
+    - xtype: container
+      layout: hbox
+      items:
+        - xtype: button
+          itemId: showAlert
+          text: 通知（alert）
+          handler: showAlert
+          disabledBind: loading
+        - xtype: button
+          itemId: showConfirm
+          text: 確認（confirm）
+          handler: showConfirm
+          disabledBind: loading
+        - xtype: button
+          itemId: showPrompt
+          text: 入力（prompt）
+          handler: showPrompt
+          disabledBind: loading
+    - xtype: label
+      itemId: dialogNotice
+      bind: notice
+    - xtype: label
+      text: DOM・Canvasのどちらからも、共通のダイアログを1つ表示します。配色もテーマに合わせて変わります。
+      variant: muted
+    - xtype: label
+      text: confirmのキャンセルはfalse、promptのキャンセルはnull、空文字のOKは空文字として受け取ります。
+      variant: muted

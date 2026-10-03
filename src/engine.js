@@ -58,6 +58,9 @@ export class WasmEngine {
   completeStorage(id, response) {
     return this.call({ op: "storage_result", id, ...response });
   }
+  completeDialog(id, response) {
+    return this.call({ op: "dialog_result", id, ...response });
+  }
   storeBuffer(bytes) {
     if (!(bytes instanceof Uint8Array) || bytes.length > 1_000_000)
       throw new Error("バイナリは1 MB以内のUint8Arrayで指定してください");
