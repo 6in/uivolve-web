@@ -1,0 +1,8 @@
+{
+  "name": "uivolve-web",
+  "version": "0.1.0",
+  "description": "Develop uivolve-web applications with YAML and Rhai, or extend the Rust/WASM engine and DOM/Canvas adapters.",
+  "author": { "name": "6in" },
+  "repository": "https://github.com/6in/uivolve-web",
+  "keywords": ["uivolve-web", "wasm", "rhai", "ui"]
+}

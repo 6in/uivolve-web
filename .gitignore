@@ -8,3 +8,5 @@ public/screens/*.manifest.json
 public/screens/packages/
 public/screens/rpc-demo.pb
 .skill-bundles/
+.skill-release/
+.skill-release-catalog/

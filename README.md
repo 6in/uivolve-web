@@ -6,6 +6,8 @@ uivolveの宣言的な部品・配置という考えを、Web向けのUIエン�
 
 初めて画面を作るなら[Hello Worldチュートリアル](docs/tutorial-hello-world.md)から始められる。入力欄とボタンで、画面DSL・state・Rhaiのつながりを試せる。
 
+[公開デモ](https://6in.github.io/uivolve-web/pages/hello-world/)をGitHub Pagesで配信する。Actionsによる公開とClaude Code向けマーケットプレイスの使い方は[GitHub配布手順](docs/github-publishing.md)を参照。
+
 [文書案内](docs/README.md)から画面・部品の契約を辿れる。部品を増やす場合は[部品開発ガイド](docs/component-development.md)、実装全体は[アーキテクチャ](docs/architecture.md)、確認方法は[検証基準](docs/testing.md)を参照する。[開発への参加](CONTRIBUTING.md)に変更・レビューの進め方をまとめている。
 
 ## 起動

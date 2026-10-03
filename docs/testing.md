@@ -18,6 +18,8 @@ bun run docs:check
 
 AI向けスキルは[スキル案内](skills.md)に従う。`tests/skills.test.js`は配布用フォルダーをリポジトリ外へ移して相対リンクを検査し、同梱YAML/Rhaiの実WASM動作と型違反時の保持、再生成時の出力範囲を確認する。
 
+`tests/distribution.test.js`はClaudeプラグインZIPの展開とカタログのハッシュ、Pagesの全画面の入口、初回リリース前の空カタログを確認する。公開後にはサブディレクトリの実URLで直接表示・再読み込み・HTTP取得を確認する。
+
 ## 自動テストの役割
 
 | ファイル                                      | 主な対象                                                                                |

@@ -1,5 +1,7 @@
 # ドキュメント案内
 
+公開デモ・Actions・Claude Code向けマーケットプレイスは[GitHub配布手順](github-publishing.md)を参照。
+
 uivolve-webは、uivolveの考えをWebへ実装する試作。画面定義・状態・イベント・配置をRust/WASMへ置き、DOMとCanvasで比較する。部品の基本機能の移植であり、uivolve/ExtJSの全機能互換を意味しない。
 
 | やりたいこと                                       | 読む文書                                                                                 |

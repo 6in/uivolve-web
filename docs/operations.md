@@ -1,5 +1,7 @@
 # 起動・配信・更新
 
+GitHub Pagesでの公開とActionsによるスキル配布は[GitHub配布手順](github-publishing.md)にまとめる。
+
 開発に必要な環境と基本コマンドは[README](../README.md)を参照する。uivolve-webの画面処理はブラウザ内で実行され、配信側には静的HTTPサーバーが必要。
 
 ## 開発とプレビュー
