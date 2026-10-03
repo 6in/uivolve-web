@@ -11,6 +11,7 @@ uivolve-webは、uivolveの考えをWebへ実装する試作。画面定義・�
 | ページ側のコードでタブと部品を追加する             | [動的タブのチュートリアル](tutorial-dynamic-tabs.md)                                     |
 | ボタンからJSONを取得してGridへ表示する             | [HTTPグリッドのチュートリアル](tutorial-http-grid.md)                                    |
 | ボタンから別の画面を取得して表示を切り替える       | [画面遷移のチュートリアル](tutorial-page-navigation.md)                                  |
+| カードをドラッグして移動・並べ替えする             | [KANBANとドラッグ＆ドロップ](kanban.md)                                                  |
 | Rhaiから通知・確認・入力ダイアログを開く           | [独自ダイアログの契約](dialogs.md)                                                       |
 | 正規表現を使う・Rust関数をRhaiへ追加する           | [WASM内のRust拡張](native-extensions.md)                                                 |
 | 保存・YAML・自然なURL・stateの型を使う             | [ブラウザ機能の契約](platform-features.md)、[対応計画](platform-features-plan.md)        |

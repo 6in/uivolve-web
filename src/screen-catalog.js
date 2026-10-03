@@ -122,6 +122,14 @@ export const SCREEN_CATALOG = Object.freeze(
       description: "受注検索・行選択・顧客情報の編集",
     },
     {
+      id: "kanban",
+      title: "KANBAN・ドラッグ＆ドロップ",
+      label: "KANBAN",
+      category: "apps",
+      description: "カードの列移動・並べ替えとRhaiによる移動検証",
+      file: "kanban.yaml",
+    },
+    {
       id: "tasks",
       title: "タスク管理",
       category: "apps",

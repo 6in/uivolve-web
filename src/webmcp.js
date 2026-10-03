@@ -212,6 +212,7 @@ export function createUiTools(host) {
             value: {},
             id: {},
             column: { type: "string" },
+            beforeId: { type: ["string", "null"] },
             additive: { type: "boolean" },
             range: { type: "boolean" },
             toggle: { type: "boolean" },
@@ -233,12 +234,24 @@ export function createUiTools(host) {
           !isObject(payload) ||
           Object.keys(payload).some(
             (key) =>
-              !["action", "value", "id", "column", "additive", "range", "toggle"].includes(key),
+              ![
+                "action",
+                "value",
+                "id",
+                "column",
+                "beforeId",
+                "additive",
+                "range",
+                "toggle",
+              ].includes(key),
           ) ||
           ["additive", "range", "toggle"].some(
             (key) => key in payload && typeof payload[key] !== "boolean",
           ) ||
           ("column" in payload && typeof payload.column !== "string") ||
+          ("beforeId" in payload &&
+            payload.beforeId !== null &&
+            typeof payload.beforeId !== "string") ||
           JSON.stringify(payload).length > 10000
         )
           fail("INVALID_INPUT", "Invalid event payload.");

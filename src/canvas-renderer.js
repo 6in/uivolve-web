@@ -3,6 +3,7 @@ import { createControl, syncControl } from "./field-control.js";
 import { isField, isBox, isEditor, isInteractive as interactive } from "./widget-contract.js";
 import { paintSurface, syncMedia, mediaKinds, disposeMedia } from "./surfaces.js";
 import { CanvasDialogIcons } from "./dialog-icons.js";
+import { KanbanDrag, keyboardMove } from "./kanban-interaction.js";
 
 const FONT = '"Inter", "Noto Sans JP", system-ui, sans-serif';
 export class CanvasRenderer {
@@ -20,6 +21,11 @@ export class CanvasRenderer {
     this.messageScroll = new Map();
     this.returnFocus = new Map();
     this.events = new AbortController();
+    this.kanban = new KanbanDrag(stage, {
+      dispatch,
+      focus: (widget) => this.focus(widget),
+      change: () => this.paint(),
+    });
     const options = { signal: this.events.signal };
     canvas.addEventListener(
       "wheel",
@@ -53,7 +59,7 @@ export class CanvasRenderer {
     canvas.addEventListener(
       "pointerdown",
       (event) => {
-        if (!this.scene) return;
+        if (!this.scene || event.defaultPrevented) return;
         const rect = canvas.getBoundingClientRect();
         const x = ((event.clientX - rect.left) * this.scene.width) / rect.width;
         const y = ((event.clientY - rect.top) * this.scene.height) / rect.height;
@@ -111,6 +117,10 @@ export class CanvasRenderer {
       "pointermove",
       (event) => {
         if (!this.scene) return;
+        if (this.kanban.drag) {
+          canvas.style.cursor = "grabbing";
+          return;
+        }
         const rect = canvas.getBoundingClientRect();
         const x = ((event.clientX - rect.left) * this.scene.width) / rect.width;
         const y = ((event.clientY - rect.top) * this.scene.height) / rect.height;
@@ -122,7 +132,13 @@ export class CanvasRenderer {
         const hit = this.scene.widgets.find(
           (w) => interactive(w) && x >= w.x && x < w.x + w.width && y >= w.y && y < w.y + w.height,
         );
-        canvas.style.cursor = hit ? (isEditor(hit) ? "text" : "pointer") : "default";
+        canvas.style.cursor = hit
+          ? hit.kind === "kanban-card"
+            ? "grab"
+            : isEditor(hit)
+              ? "text"
+              : "pointer"
+          : "default";
       },
       options,
     );
@@ -143,8 +159,19 @@ export class CanvasRenderer {
     canvas.addEventListener(
       "keydown",
       (event) => {
-        if (!this.scene) return;
+        if (!this.scene || event.defaultPrevented) return;
         const current = this.scene.widgets.find((w) => w.key === this.focusKey);
+        if (
+          current?.kind === "kanban-card" &&
+          event.altKey &&
+          !event.isComposing &&
+          event.key.startsWith("Arrow")
+        ) {
+          event.preventDefault();
+          const payload = keyboardMove(this.scene, current, event.key);
+          if (payload) this.dispatch(current.target, payload);
+          return;
+        }
         if (this.scene.popup && event.key === "Escape") {
           event.preventDefault();
           this.dispatch(this.scene.popup.target, { action: "close" });
@@ -282,13 +309,14 @@ export class CanvasRenderer {
     if (isEditor(widget)) this.openEditor(widget);
     else {
       this.closeEditor();
-      this.canvas.focus();
+      this.canvas.focus({ preventScroll: true });
       this.paint();
     }
   }
 
   activate(widget) {
     this.focus(widget);
+    if (widget.kind === "kanban-card") return;
     if (isBox(widget))
       this.dispatch(widget.target, {
         ...widget.payload,
@@ -391,6 +419,7 @@ export class CanvasRenderer {
   }
 
   render(scene) {
+    this.kanban.setScene(scene);
     applyTheme(this.stage, scene.theme);
     const ownsFocus = this.stage.contains(document.activeElement);
     const oldModal = this.scene?.modal;
@@ -535,12 +564,32 @@ export class CanvasRenderer {
     for (const widget of this.scene.widgets) {
       const { x, y, width, height, kind, text, value } = widget;
       ctx.save();
+      if (this.kanban.drag?.active && this.kanban.drag.card.key === widget.key)
+        ctx.globalAlpha = 0.35;
       if (
         widget.disabled &&
         (isField(widget) || ["button", "row", "panel-toggle", "window-close"].includes(kind))
       )
         ctx.globalAlpha = 0.5;
-      if (kind === "dialog-icon") {
+      if (kind === "kanban-lane") {
+        this.box(
+          x,
+          y,
+          width,
+          height,
+          colors.subtle,
+          this.kanban.drag?.drop?.lane.key === widget.key ? colors.focus : colors.border,
+          8,
+        );
+        this.text(text, x + 12, y + 23, width - 40, colors.text, 12, 600);
+        this.text(String(widget.config.count), x + width - 25, y + 23, 18, colors.muted, 11);
+      } else if (kind === "kanban-card") {
+        if (widget.disabled) ctx.globalAlpha = 0.5;
+        this.box(x, y, width, height, colors.background, colors.border, 7);
+        this.text(text, x + 10, y + 23, width - 20, colors.text, 12, 600);
+        this.text(value, x + 10, y + 53, width - 20, colors.muted, 11);
+        this.text(widget.payload.id, x + 10, y + 72, width - 20, colors.muted, 9);
+      } else if (kind === "dialog-icon") {
         this.dialogIcons.paint(ctx, widget, colors);
       } else if (kind === "dialog-message") {
         ctx.beginPath();
@@ -771,6 +820,38 @@ export class CanvasRenderer {
       }
       ctx.restore();
     }
+    const drag = this.kanban.drag;
+    if (drag?.active) {
+      if (drag.drop) {
+        ctx.fillStyle = colors.focus;
+        ctx.fillRect(drag.drop.lane.x + 10, drag.drop.lineY, drag.drop.lane.width - 20, 3);
+      }
+      ctx.save();
+      ctx.globalAlpha = 0.9;
+      ctx.shadowColor = colors.shadow;
+      ctx.shadowBlur = 14;
+      this.box(
+        drag.x,
+        drag.y,
+        drag.card.width,
+        drag.card.height,
+        colors.background,
+        colors.focus,
+        7,
+      );
+      ctx.shadowBlur = 0;
+      this.text(
+        drag.card.text,
+        drag.x + 10,
+        drag.y + 23,
+        drag.card.width - 20,
+        colors.text,
+        12,
+        600,
+      );
+      this.text(drag.card.value, drag.x + 10, drag.y + 53, drag.card.width - 20, colors.muted, 11);
+      ctx.restore();
+    }
   }
 
   paintField(widget) {
@@ -882,6 +963,7 @@ export class CanvasRenderer {
   }
 
   reset() {
+    this.kanban.setScene(null);
     this.dialogIcons.reset();
     this.messageScroll.clear();
     for (const record of this.media.values()) disposeMedia(record);
@@ -893,6 +975,7 @@ export class CanvasRenderer {
     this.returnFocus.clear();
   }
   dispose() {
+    this.kanban.dispose();
     this.dialogIcons.reset();
     this.messageScroll.clear();
     for (const record of this.media.values()) disposeMedia(record);

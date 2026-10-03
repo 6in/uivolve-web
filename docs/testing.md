@@ -30,6 +30,7 @@ AI向けスキルは[スキル案内](skills.md)に従う。`tests/skills.test.j
 | `tests/grid-navigation.test.js`               | 安定ID、ソート・検索・ページ、編集下書き、タブ・ツリー・メニュー                        |
 | `tests/gallery.test.js`                       | 追加部品、図表・文書・メディア契約、ダイアログなど                                      |
 | `tests/layouts.test.js`                       | Grid span、幅に応じた配置、Border/Fit、Card状態・可視性・WebMCP                         |
+| `tests/kanban.test.js`                        | 列移動・順序・空列、Rhai拒否と状態保持、幅・無効・modal、WebMCP、ポインター中止         |
 | `tests/widget-contract.test.js`               | 物理/意味的操作、readOnly・modalガード、カタログとパッケージの整合                      |
 | `tests/webmcp.test.js`                        | ツール経由の実WASM操作、stale/token、可視性、登録・中断処理                             |
 | `tests/resource-client.test.js`               | HTTP/CORS設定、JWT切替・送信先、トークン更新、中断・失敗・認証付きWASM起動              |

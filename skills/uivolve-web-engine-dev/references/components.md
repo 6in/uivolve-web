@@ -8,5 +8,6 @@
 - src/widget-contract.jsで、表示部品、物理操作部品、Card等の意味的操作を区別する。WebMCPの可視key/actionsとWASMの検証を揃える。
 - IME変換中の入力要素と文字列を保持する。ネイティブメディアやリスナーは非表示・reset/disposeで終了する。Canvas上の要素とモーダルの重なりを確認する。
 - ダイアログの変更は[独自ダイアログ契約](../../../docs/dialogs.md)に従う。WASMのFIFO・下書き・回答・Scene構成を維持し、DOM/Canvasそれぞれの領域内へ描画する。
+- カード移動の変更は[KANBAN契約](../../../docs/kanban.md)に従う。engine/src/kanban.rsがstate更新・検証・配置、src/kanban-interaction.jsが共有のポインター処理と挿入位置判定。プレビューでstateを変更せず、drop時のmoveを通常の確定経路へ送る。
 - 再利用する計算は[ネイティブ拡張](../../../docs/native-extensions.md)として登録する。型変換、処理・容量上限、エラー時の巻き戻しを揃える。ブラウザAPIを同期Rust関数として偽装しない。
 - 設定、正常操作、拒否、handler失敗、可視性、狭い幅、IME、テーマを変更に応じて確認する。移植元の未対応機能を実装済みと記述しない。

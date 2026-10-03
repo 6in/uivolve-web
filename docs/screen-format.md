@@ -46,6 +46,8 @@ Grid/Card/Border/Fitと共通gap/paddingは[レイアウト形式](layouts.md)�
 
 Gridの拡張、tabpanel、treepanel/tree、menu、menuseparatorの設定と操作は[Grid・ナビゲーション形式](grid-navigation.md)を参照。実行例は`public/screens/grid-lab.*`。
 
+KANBANのカード移動と列内の並べ替えは[ドラッグ＆ドロップ契約](kanban.md)を参照。`xtype: kanban`に`itemId / bind / lanes / handler`を指定する。実行例は`public/screens/kanban.yaml`とRhai。
+
 toolbar、datepicker、messagebox、toast、エディター、文書、図表、会話・ログ、メディア、accordionレイアウトは[追加コンポーネント形式](uivolve-gallery.md)を参照。実行例は`public/screens/uivolve-gallery.*`。これらは元の部品の基本機能の対応であり、ライブラリ全機能の互換ではない。
 
 | xtype            | 設定                                                      | 意味                                                     |

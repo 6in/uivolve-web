@@ -11,6 +11,7 @@ export const fieldKinds = Object.freeze([
   "slider",
 ]);
 export const buttonKinds = Object.freeze([
+  "kanban-card",
   "button",
   "extra-button",
   "row",

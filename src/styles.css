@@ -422,6 +422,90 @@ h2 {
   overflow: hidden;
   background: var(--ui-background, white);
 }
+.ui-kanban-lane {
+  border: 1px solid var(--ui-border);
+  border-radius: 8px;
+  background: var(--ui-subtle);
+}
+.ui-kanban-lane > strong {
+  position: absolute;
+  top: 13px;
+  left: 11px;
+  right: 36px;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ui-kanban-lane > span {
+  position: absolute;
+  top: 14px;
+  right: 11px;
+  font-size: 11px;
+  color: var(--ui-muted);
+}
+.ui-kanban-card,
+.kanban-drag-ghost {
+  border: 1px solid var(--ui-border);
+  border-radius: 7px;
+  background: var(--ui-background);
+  color: var(--ui-text);
+  text-align: left;
+  padding: 0 10px;
+  cursor: grab;
+  user-select: none;
+  touch-action: pan-y;
+}
+.ui-kanban-card > strong,
+.kanban-drag-ghost > strong {
+  display: block;
+  margin-top: 14px;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ui-kanban-card > span,
+.kanban-drag-ghost > span {
+  display: block;
+  margin-top: 13px;
+  color: var(--ui-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ui-kanban-card::after {
+  content: attr(data-card-id);
+  display: block;
+  margin-top: 5px;
+  font-size: 9px;
+  color: var(--ui-muted);
+}
+.ui-kanban-card:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.kanban-drag-source {
+  opacity: 0.35;
+}
+.kanban-drop-target {
+  border-color: var(--ui-focus);
+}
+.kanban-drag-ghost {
+  position: absolute;
+  z-index: 10000;
+  opacity: 0.9;
+  border-color: var(--ui-focus);
+  box-shadow: 0 8px 14px var(--ui-shadow);
+  pointer-events: none;
+}
+.kanban-drop-marker {
+  position: absolute;
+  z-index: 9999;
+  background: var(--ui-focus);
+  pointer-events: none;
+}
 .canvas-stage canvas {
   display: block;
   outline-offset: -3px;

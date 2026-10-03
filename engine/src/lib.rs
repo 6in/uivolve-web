@@ -17,6 +17,7 @@ mod files;
 pub use files::FileBytes;
 mod grid;
 mod http;
+mod kanban;
 mod layouts;
 mod metadata;
 mod navigation;
@@ -97,6 +98,8 @@ pub struct Node {
     pub items_bind: String,
     #[serde(default)]
     pub columns: extras::Columns,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lanes: Vec<kanban::Lane>,
     #[serde(default)]
     pub field_label: String,
     #[serde(default)]
@@ -614,7 +617,9 @@ impl Runtime {
             return Ok(());
         }
         navigation::close_other_menus(&self.ui, &mut state, &path);
-        if extras::event_component(node) {
+        if node.xtype == "kanban" {
+            kanban::event(node, &mut state, &mut payload)?;
+        } else if extras::event_component(node) {
             extras::event(node, &path, &mut state, &mut payload)?;
         } else if grid::advanced(node) {
             grid::event(node, &mut state, &mut payload)?;
@@ -664,7 +669,7 @@ impl Runtime {
         }
         let mut next = rhai::serde::to_dynamic(state).map_err(|e| e.to_string())?;
         if !node.handler.is_empty() {
-            let event = rhai::serde::to_dynamic(json!({ "target": target, "action": action, "value": event_value.unwrap_or_else(|| payload.get("value").cloned().unwrap_or(Value::Null)), "id": payload.get("id").cloned().unwrap_or(Value::Null), "column": payload.get("column").cloned().unwrap_or(Value::Null), "oldValue": payload.get("oldValue").cloned().unwrap_or(Value::Null) }))
+            let event = rhai::serde::to_dynamic(json!({ "target": target, "action": action, "value": event_value.unwrap_or_else(|| payload.get("value").cloned().unwrap_or(Value::Null)), "id": payload.get("id").cloned().unwrap_or(Value::Null), "column": payload.get("column").cloned().unwrap_or(Value::Null), "oldValue": payload.get("oldValue").cloned().unwrap_or(Value::Null), "beforeId": payload.get("beforeId").cloned().unwrap_or(Value::Null) }))
                 .map_err(|e| e.to_string())?;
             next = self
                 .engine
@@ -1044,12 +1049,14 @@ fn initialize_ui(ui: &Node, state: &mut Value) {
     navigation::initialize(ui, state);
     extras::initialize(ui, state);
     layouts::initialize(ui, state);
+    kanban::initialize(ui, state);
 }
 
 fn validate_ui_state(ui: &Node, state: &Value) -> Result<(), String> {
     grid::validate_state(ui, state)?;
     navigation::validate_state(ui, state)?;
     extras::validate_state(ui, state)?;
+    kanban::validate_state(ui, state)?;
     layouts::validate_state(ui, state)
 }
 
@@ -1095,6 +1102,7 @@ fn validate(
         "fieldset",
         "button",
         "grid",
+        "kanban",
         "tabpanel",
         "treepanel",
         "menu",
@@ -1165,6 +1173,7 @@ fn validate(
     }
     fields::validate(node)?;
     grid::validate(node)?;
+    kanban::validate(node)?;
     navigation::validate(node)?;
     extras::validate(node)?;
     layouts::validate(node)?;
@@ -1263,6 +1272,9 @@ fn content_height(node: &Node, state: &Value, width: f64) -> f64 {
 }
 
 fn measure(node: &Node, state: &Value, width: f64) -> f64 {
+    if node.xtype == "kanban" {
+        return kanban::height(node, state, width);
+    }
     if extras::component(node) {
         return extras::height(node, state, width);
     }
@@ -1353,6 +1365,10 @@ fn arrange_sized(
     allocated_height: Option<f64>,
     widgets: &mut Vec<Widget>,
 ) {
+    if node.xtype == "kanban" {
+        kanban::arrange(node, state, x, y, width, key, widgets);
+        return;
+    }
     if extras::component(node) {
         extras::arrange(node, state, x, y, width, key, widgets);
         return;

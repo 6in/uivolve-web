@@ -1,0 +1,82 @@
+version: 1
+id: kanban
+title: KANBAN・ドラッグ＆ドロップ
+script: kanban.rhai
+webmcp:
+  label: タスクのKANBANボード
+  description: カードを列間で移動し、同じ列の中でも並べ替えられます。
+  tags:
+    - kanban
+    - drag-and-drop
+state:
+  cards: []
+  moves: 0
+  notice: カードをつかんで別の列へ。上下の並べ替えもできます。
+  reviewRequired: false
+stateSchema:
+  type: object
+  properties:
+    cards:
+      type: array
+      maxItems: 100
+      items:
+        type: object
+        required:
+          - id
+          - title
+          - lane
+          - description
+        properties:
+          id:
+            type: string
+          title:
+            type: string
+          lane:
+            type: string
+            enum:
+              - todo
+              - doing
+              - done
+          description:
+            type: string
+    moves:
+      type: integer
+      minimum: 0
+    notice:
+      type: string
+    reviewRequired:
+      type: boolean
+ui:
+  xtype: container
+  layout: vbox
+  items:
+    - xtype: label
+      text: 同じボードをDOMとCanvasで操作できます。
+    - xtype: kanban
+      itemId: taskBoard
+      bind: cards
+      handler: cardMoved
+      lanes:
+        - id: todo
+          title: 未着手
+        - id: doing
+          title: 進行中
+        - id: done
+          title: 完了
+      webmcp:
+        label: タスクボード
+        description: moveでカードを移動。valueは移動先の列id、beforeIdは挿入先のカードid。省略またはnullなら末尾。
+    - xtype: label
+      itemId: kanbanNotice
+      bind: notice
+    - xtype: checkbox
+      itemId: reviewRequired
+      bind: reviewRequired
+      boxLabel: 完了への移動をRhaiで拒否する（元の位置を保持）
+    - xtype: button
+      itemId: resetBoard
+      text: ボードを初期状態に戻す
+      handler: resetBoard
+    - xtype: label
+      text: Escapeでドラッグを中止。カードにフォーカスし、Alt＋左右で列移動、Alt＋上下で並べ替え。
+      variant: muted

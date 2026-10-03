@@ -9,6 +9,7 @@
 | Grid/Card/Border/Fit              | [レイアウト](../../../docs/layouts.md)、[例](../../../public/screens/layout-lab.json)                                                                          |
 | Data Grid・タブ・ツリー・メニュー | [操作契約](../../../docs/grid-navigation.md)、[例](../../../public/screens/grid-lab.json)                                                                      |
 | 動的タブ                          | [チュートリアル](../../../docs/tutorial-dynamic-tabs.md)、[Rhai](../../../public/screens/dynamic-tabs.rhai)                                                    |
+| KANBAN・カード移動                | [操作契約](../../../docs/kanban.md)、[定義](../../../public/screens/kanban.yaml)、[Rhai](../../../public/screens/kanban.rhai)                                  |
 | パネル・window                    | [画面契約](../../../docs/screen-format.md)、[定義](../../../public/screens/components.json)、[Rhai](../../../public/screens/components.rhai)                   |
 | 図表・エディター・メディア等      | [ギャラリー契約](../../../docs/uivolve-gallery.md)、[定義](../../../public/screens/uivolve-gallery.json)、[Rhai](../../../public/screens/uivolve-gallery.rhai) |
 | 配色                              | [テーマ契約](../../../docs/theme-format.md)、[標準テーマ](../../../public/themes/light.json)                                                                   |
@@ -16,6 +17,7 @@
 - layoutのgridは配置、xtypeのgridは一覧。共通gap/paddingは0..64。高さは最小高で、内容に応じて広がる。rowSpan・splitter・汎用内部スクロールを設定で追加しない。
 - CardはactiveBindの整数indexで切り替え、操作ボタンはCardの外へ置く。Borderは一意のregionと必須center、Fitは子1つ。
 - Data Gridは安定した行idとpageSizeを使う。編集はeditingBindの下書きからcommitEdit/cancelEditへ進める。handlerはactionで分岐し、commitEditのvalue/oldValue/column/idを確認する。handler失敗時は元データを保つ。
+- kanbanはトップレベルbindのカード配列とlanesで構成する。列内の順序は配列順。moveのvalueは移動先の列id、beforeIdは挿入先のカードid（nullで末尾）。任意のhandlerは組み込み移動後のstateを受け取り、throwで移動を拒否できる。別ボード間・ファイルドロップ・自動スクロールを対応済みとしない。
 - tabpanelのitemsBindでstate内の部品配列を使える。動的itemIdと入力キーは配列位置に依存させず一意にする。制限と削除時のactiveBindの扱いを契約で確認する。
 - tabpanelのactiveBind、treeのexpandedBind/selectedBind、menuのopenBindを共通stateで管理する。隠れたタブ・閉じたツリーの操作、固定列・仮想スクロール・サブメニュー・ツリーGridを未対応のまま生成しない。
 - panel.collapsedBindとwindow.visibleBindはトップレベルbool。開閉は組み込み状態更新後にhandlerが呼ばれる。×/Escapeと内容内のキャンセル処理を揃え、親windowを閉じるなら必要な子の状態も戻す。

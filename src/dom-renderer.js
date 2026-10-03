@@ -3,6 +3,7 @@ import { createControl, syncControl } from "./field-control.js";
 import { isButton, isField, isBox } from "./widget-contract.js";
 import { renderSvg, syncMedia, mediaKinds, disposeMedia } from "./surfaces.js";
 import { resolveDialogIcon, createDialogIcon } from "./dialog-icons.js";
+import { KanbanDrag, keyboardMove } from "./kanban-interaction.js";
 
 function position(element, widget, origin = { x: 0, y: 0 }) {
   Object.assign(element.style, {
@@ -21,6 +22,11 @@ export class DomRenderer {
     this.modal = null;
     this.returnFocus = new Map();
     this.events = new AbortController();
+    this.kanban = new KanbanDrag(stage, {
+      dispatch,
+      focus: (widget) => this.nodes.get(widget.key)?.root.focus({ preventScroll: true }),
+      change: (drag) => this.paintDrag(drag),
+    });
     stage.addEventListener(
       "pointerdown",
       (event) => {
@@ -33,7 +39,7 @@ export class DomRenderer {
     stage.addEventListener(
       "keydown",
       (event) => {
-        if (event.isComposing || event.keyCode === 229) return;
+        if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
         const key = event.target.closest(".ui-widget")?.dataset.key;
         if (this.nodes.get(key)?.control?.composing) return;
         if (event.key === "Escape" && this.popup) {
@@ -71,6 +77,7 @@ export class DomRenderer {
     if (isButton(widget)) {
       root.type = "button";
       root.addEventListener("click", (event) => {
+        if (record.widget.kind === "kanban-card") return;
         this.dispatch(record.widget.target, {
           ...record.widget.payload,
           additive: event.ctrlKey || event.metaKey,
@@ -92,6 +99,17 @@ export class DomRenderer {
       }
       root.addEventListener("keydown", (event) => {
         const w = record.widget;
+        if (
+          w.kind === "kanban-card" &&
+          event.altKey &&
+          !event.isComposing &&
+          event.key.startsWith("Arrow")
+        ) {
+          event.preventDefault();
+          const payload = keyboardMove(this.scene, w, event.key);
+          if (payload) this.dispatch(w.target, payload);
+          return;
+        }
         if (
           w.kind === "grid-cell" &&
           ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)
@@ -138,7 +156,11 @@ export class DomRenderer {
         }
       });
     }
-    if (widget.kind === "window" || widget.kind === "tree-shell") {
+    if (widget.kind === "kanban-lane" || widget.kind === "kanban-card") {
+      record.title = document.createElement("strong");
+      record.detail = document.createElement("span");
+      root.append(record.title, record.detail);
+    } else if (widget.kind === "window" || widget.kind === "tree-shell") {
       record.title = document.createElement("span");
       record.title.className = "window-title";
       if (widget.kind === "window") root.setAttribute("role", "dialog");
@@ -203,6 +225,7 @@ export class DomRenderer {
   }
 
   render(scene) {
+    this.kanban.setScene(scene);
     this.scene = scene;
     applyTheme(this.stage, scene.theme);
     const active = document.activeElement;
@@ -303,7 +326,19 @@ export class DomRenderer {
         if (widget.config.branch)
           root.setAttribute("aria-expanded", String(widget.config.expanded));
       }
-      if (widget.kind === "window" || widget.kind === "tree-shell") {
+      if (widget.kind === "kanban-lane" || widget.kind === "kanban-card") {
+        record.title.textContent = widget.text;
+        record.detail.textContent =
+          widget.kind === "kanban-lane" ? String(widget.config.count) : widget.value;
+        if (widget.kind === "kanban-card") root.dataset.cardId = widget.payload.id;
+        root.setAttribute(
+          "aria-label",
+          widget.kind === "kanban-card"
+            ? `${widget.text}（${widget.config.laneTitle}）。Alt＋方向キーで移動`
+            : widget.text,
+        );
+        if (widget.kind === "kanban-lane") root.setAttribute("role", "group");
+      } else if (widget.kind === "window" || widget.kind === "tree-shell") {
         record.title.textContent = widget.text;
         root.setAttribute("aria-label", widget.text);
         record.title.style.paddingLeft =
@@ -375,6 +410,15 @@ export class DomRenderer {
         root.setAttribute("aria-expanded", String(!widget.selected));
       if (widget.kind === "window-close") root.setAttribute("aria-label", "ウィンドウを閉じる");
     }
+    // Keep the DOM reading/Tab order aligned with the visual card order too.
+    const previousCards = new Map();
+    for (const widget of scene.widgets.filter((w) => w.kind === "kanban-card")) {
+      const parent = this.nodes.get(widget.config.parentKey);
+      const root = this.nodes.get(widget.key).root;
+      const previous = previousCards.get(widget.config.parentKey) || parent.detail;
+      if (previous.nextElementSibling !== root) previous.after(root);
+      previousCards.set(widget.config.parentKey, root);
+    }
     for (const [key, record] of this.nodes) {
       if (!keys.has(key)) {
         if (record.media) disposeMedia(record);
@@ -382,13 +426,13 @@ export class DomRenderer {
         this.nodes.delete(key);
       }
     }
-    if (ownsFocus && !active.isConnected) {
+    if (ownsFocus && (!active.isConnected || !this.stage.contains(document.activeElement))) {
       const record =
         this.nodes.get(focusedKey) ||
         [...this.nodes.values()].find(
           (r) => r.widget.target === focusedTarget && isButton(r.widget) && !r.widget.disabled,
         );
-      (record?.input || record?.root)?.focus();
+      (record?.input || record?.root)?.focus({ preventScroll: true });
     }
     if (ownsFocus && oldPopup?.target !== scene.popup?.target) {
       if (scene.popup) this.stage.querySelector(".ui-menu-item:not(:disabled)")?.focus();
@@ -423,6 +467,7 @@ export class DomRenderer {
   }
 
   reset() {
+    this.kanban.setScene(null);
     for (const node of this.nodes.values()) {
       if (node.media) disposeMedia(node);
       else node.root.remove();
@@ -434,6 +479,41 @@ export class DomRenderer {
 
   dispose() {
     this.reset();
+    this.kanban.dispose();
     this.events.abort();
+  }
+
+  paintDrag(drag) {
+    this.dragGhost?.remove();
+    this.dragMarker?.remove();
+    for (const { root } of this.nodes.values()) {
+      root.classList.remove("kanban-drag-source", "kanban-drop-target");
+    }
+    if (!drag?.active) return;
+    this.nodes.get(drag.card.key)?.root.classList.add("kanban-drag-source");
+    const ghost = document.createElement("div");
+    ghost.className = "kanban-drag-ghost";
+    ghost.setAttribute("aria-hidden", "true");
+    const title = document.createElement("strong");
+    const detail = document.createElement("span");
+    title.textContent = drag.card.text;
+    detail.textContent = drag.card.value;
+    ghost.append(title, detail);
+    position(ghost, { ...drag.card, x: drag.x, y: drag.y });
+    this.stage.append(ghost);
+    this.dragGhost = ghost;
+    if (drag.drop) {
+      this.nodes.get(drag.drop.lane.key)?.root.classList.add("kanban-drop-target");
+      const marker = document.createElement("div");
+      marker.className = "kanban-drop-marker";
+      position(marker, {
+        x: drag.drop.lane.x + 10,
+        y: drag.drop.lineY,
+        width: drag.drop.lane.width - 20,
+        height: 3,
+      });
+      this.stage.append(marker);
+      this.dragMarker = marker;
+    }
   }
 }

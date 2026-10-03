@@ -31,6 +31,8 @@ APIがないブラウザには登録しない。グローバルAPIの偽装やpo
 3. 部品の`key`と必要な`payload`で`ui_dispatch`を実行する。payloadは部品の既定payloadへマージする。
 4. 成功結果のrevisionを使う。状態が変わったら画面を再参照し、表示中の部品を確認する。
 
+[KANBAN](kanban.md)のカードは`actions: ["move"]`。表示中のカードkeyへ`payload: {value: "doing", beforeId: "task-3"}`を送ると指定列のカード直前へ移動する。beforeIdは文字列またはnullで、nullなら末尾。人のドラッグと同じWASM検証・Rhai handlerを通す。
+
 Gridの例（tokenとrevisionは毎回最新値に置き換える）:
 
 ```json
