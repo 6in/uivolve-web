@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, expect, it } from "vite-plus/test";
+import { beforeAll, beforeEach, expect, it, vi } from "vite-plus/test";
 import { readFile } from "node:fs/promises";
 import { WasmEngine } from "../src/engine.js";
 
@@ -79,4 +79,68 @@ it("keeps independent WASM instances and rejects invalid replacement state/theme
   const result = engine.dispatch("add");
   engine.layout(400);
   expect(result.state.count).toBe(2);
+});
+
+it("creates a refreshed candidate with the current theme and option-aware dialog functions", async () => {
+  engine.load(screen, script);
+  engine.dispatch("add");
+  engine.theme({ version: 1, mode: "dark", colors: { primary: "#123456" } });
+  const candidate = await WasmEngine.create("https://example.com/engine.wasm", {
+    resources: { fetch: async () => new Response(bytes) },
+    theme: engine.theme(),
+  });
+  expect(candidate.theme()).toEqual(engine.theme());
+  expect(() => candidate.load(screen, 'fn init(s){throw "failed";s} fn add(s,e){s}')).toThrow();
+  expect(engine.dispatch("add").state.count).toBe(2);
+  candidate.load(
+    screen,
+    'fn init(s){s} fn add(s,e){confirm("確認","done",#{icon:"warning"});s} fn done(s,r){s.count=if r.data {10}else{20};s}',
+  );
+  const effect = candidate.dispatch("add").effects[0];
+  expect(effect).toMatchObject({ operation: "confirm", icon: "warning" });
+  expect(candidate.layout(500).dialog.operation).toBe("confirm");
+  expect(candidate.dispatch(":dialog:" + effect.id + ":ok").state.count).toBe(10);
+  expect(engine.dispatch("add").state.count).toBe(3);
+});
+
+it("revalidates WASM when loading without ResourceClient", async () => {
+  const fetcher = vi.fn(async () => new Response(bytes));
+  vi.stubGlobal("fetch", fetcher);
+  try {
+    const candidate = await WasmEngine.create("https://example.com/engine.wasm");
+    expect(fetcher).toHaveBeenCalledWith("https://example.com/engine.wasm", {
+      cache: "no-cache",
+      signal: undefined,
+    });
+    expect(candidate.bytes).toBe(bytes.length);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+it("rejects failed or cancelled refreshes without changing the current runtime", async () => {
+  engine.load(screen, script);
+  const before = engine.layout(500);
+  await expect(
+    WasmEngine.create("https://example.com/engine.wasm", {
+      resources: { fetch: async () => new Response("failed", { status: 500 }) },
+    }),
+  ).rejects.toThrow(/HTTP 500/);
+  const controller = new AbortController();
+  await expect(
+    WasmEngine.create("https://example.com/engine.wasm", {
+      signal: controller.signal,
+      resources: {
+        fetch: async () => ({
+          ok: true,
+          arrayBuffer: async () => {
+            controller.abort();
+            return bytes;
+          },
+        }),
+      },
+    }),
+  ).rejects.toMatchObject({ name: "AbortError" });
+  expect(engine.layout(500)).toEqual(before);
+  expect(engine.dispatch("add").state.count).toBe(1);
 });

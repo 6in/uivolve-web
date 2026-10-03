@@ -7,14 +7,19 @@ export class WasmEngine {
     this.decoder = new TextDecoder();
   }
 
-  static async create(url, { resources, signal } = {}) {
+  static async create(url, { resources, signal, theme } = {}) {
+    signal?.throwIfAborted();
     const response = resources
       ? await resources.fetch(url, { signal })
-      : await fetch(url, { signal });
+      : await fetch(url, { signal, cache: "no-cache" });
     if (!response.ok) throw new Error(`WASM取得失敗: HTTP ${response.status}`);
     const bytes = await response.arrayBuffer();
+    signal?.throwIfAborted();
     const { instance } = await WebAssembly.instantiate(bytes, {});
-    return new WasmEngine(instance.exports, bytes.byteLength);
+    signal?.throwIfAborted();
+    const engine = new WasmEngine(instance.exports, bytes.byteLength);
+    if (theme !== undefined) engine.theme(theme);
+    return engine;
   }
 
   call(request) {

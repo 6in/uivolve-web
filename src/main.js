@@ -234,6 +234,7 @@ function compile(
   format = packageFormat(source),
   rawSource,
   descriptors = currentDescriptors,
+  targetEngine = engine,
 ) {
   screen = structuredClone(screen);
   const now = new Date();
@@ -256,9 +257,11 @@ function compile(
   };
   calendarDefaults(screen.ui);
   const start = performance.now();
-  const result = engine.load(screen, script, descriptors);
+  const result = targetEngine.load(screen, script, descriptors);
   const duration = performance.now() - start;
   // Only replace the active screen after the candidate compiles and init succeeds.
+  engine = targetEngine;
+  $("wasm-size").textContent = `${Math.round(engine.bytes / 1024)} KiB`;
   dom.reset();
   canvas.reset();
   currentPackage = screen;
@@ -292,6 +295,7 @@ async function load(
     routeId,
     historyMode = "push",
     replacePending = false,
+    refreshEngine = false,
   } = {},
 ) {
   if ((fetching && !replacePending) || benchmarkRunning || themeFetching) {
@@ -317,9 +321,17 @@ async function load(
       signal: controller.signal,
     });
     const { screen, script, format, source, descriptors } = candidate;
+    // Explicit refresh fetches a new engine too; navigation reuses the active instance.
+    const targetEngine = refreshEngine
+      ? await WasmEngine.create(new URL("engine.wasm", base), {
+          resources,
+          signal: controller.signal,
+          theme: engine.theme(),
+        })
+      : engine;
     controller.signal.throwIfAborted();
     beforeCommit?.();
-    compile(screen, script, url, format, source, descriptors);
+    compile(screen, script, url, format, source, descriptors, targetEngine);
     $("cache-message").textContent =
       candidate.status === "cache"
         ? `保存版から表示しています（${candidate.fallbackReason}）。`
@@ -522,7 +534,7 @@ $("cache-clear").addEventListener("click", async () => {
   }
 });
 $("reload").addEventListener("click", () =>
-  load(packageUrl || new URL("screens/orders.json", base)),
+  load(packageUrl || new URL("screens/orders.json", base), { refreshEngine: true }),
 );
 $("source-toggle").addEventListener("click", () => {
   const open = $("source-panel").hidden;
