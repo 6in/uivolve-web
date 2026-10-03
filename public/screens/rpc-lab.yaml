@@ -1,0 +1,60 @@
+version: 1
+id: rpc-lab
+title: Protobuf・Unary RPC
+script: rpc-lab.rhai
+rpc:
+  connectEcho:
+    url: http://127.0.0.1:4180/uivolve.demo.EchoService/Echo
+    descriptor: rpc-demo.pb
+    service: uivolve.demo.EchoService
+    method: Echo
+    protocol: connect
+    handler: echoDone
+    idempotent: true
+  grpcEcho:
+    url: http://127.0.0.1:4180/uivolve.demo.EchoService/Echo
+    descriptor: rpc-demo.pb
+    service: uivolve.demo.EchoService
+    method: Echo
+    protocol: grpc-web
+    handler: echoDone
+    idempotent: true
+state:
+  name: 太郎
+  message: ボタンを押すとProtobufでサーバーと通信します。
+  details: ""
+  loading: false
+ui:
+  xtype: container
+  layout: vbox
+  items:
+    - xtype: label
+      text: 型付きのバイナリで通信
+      variant: heading
+    - xtype: textfield
+      itemId: rpcName
+      fieldLabel: 名前
+      bind: name
+      disabledBind: loading
+    - xtype: container
+      layout: hbox
+      items:
+        - xtype: button
+          itemId: connect
+          text: Connectで送信
+          handler: connect
+          disabledBind: loading
+        - xtype: button
+          itemId: grpc
+          text: gRPC-Webで送信
+          handler: grpc
+          disabledBind: loading
+    - xtype: label
+      itemId: rpcMessage
+      bind: message
+    - xtype: label
+      itemId: rpcDetails
+      bind: details
+    - xtype: label
+      text: デモ用RPCサーバーを起動してください。名前をerrorにするとエラー応答を確認できます。
+      variant: muted

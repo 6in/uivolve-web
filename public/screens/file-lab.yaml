@@ -1,0 +1,86 @@
+version: 1
+id: file-lab
+title: OPFS・ファイル読み書き
+script: file-lab.rhai
+files:
+  workspace:
+    backend: opfs
+    access: readwrite
+    handler: fileDone
+state:
+  source: |
+    version: 1
+    title: こんにちは
+  content: まだ読み込んでいません。
+  notice: はじめにディレクトリを作成してください。
+  loading: false
+ui:
+  xtype: container
+  layout: vbox
+  items:
+    - xtype: label
+      text: OPFSをファイルシステムとして使う
+      variant: heading
+    - xtype: textarea
+      itemId: source
+      fieldLabel: 保存するテキスト
+      bind: source
+      disabledBind: loading
+    - xtype: container
+      layout: hbox
+      items:
+        - xtype: button
+          itemId: mkdir
+          text: ディレクトリ作成
+          handler: mkdir
+          disabledBind: loading
+        - xtype: button
+          itemId: save
+          text: YAMLを保存
+          handler: save
+          disabledBind: loading
+        - xtype: button
+          itemId: read
+          text: YAMLを読む
+          handler: read
+          disabledBind: loading
+    - xtype: container
+      layout: hbox
+      items:
+        - xtype: button
+          itemId: list
+          text: 一覧
+          handler: list
+          disabledBind: loading
+        - xtype: button
+          itemId: stat
+          text: ファイル情報
+          handler: stat
+          disabledBind: loading
+        - xtype: button
+          itemId: remove
+          text: YAMLを削除
+          handler: remove
+          disabledBind: loading
+    - xtype: container
+      layout: hbox
+      items:
+        - xtype: button
+          itemId: binarySave
+          text: バイナリを保存
+          handler: binarySave
+          disabledBind: loading
+        - xtype: button
+          itemId: binaryRead
+          text: バイナリを読む
+          handler: binaryRead
+          disabledBind: loading
+    - xtype: label
+      itemId: result
+      bind: content
+    - xtype: label
+      itemId: notice
+      bind: notice
+    - xtype: label
+      text: 保存先はこのページのworkspace領域。再読み込み後も利用できます。
+      variant: muted

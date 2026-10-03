@@ -1,5 +1,7 @@
 # 保存・YAML・URL・型情報
 
+OPFSのテキスト・バイナリ・ディレクトリ操作、配信ソースのキャッシュ、Unary RPCは[追加機能の契約](files-cache-rpc.md)を参照。この文書のstorage APIはJSONレコード保存を扱う。
+
 実行例は[storage-lab.yaml](../public/screens/storage-lab.yaml)と[storage-lab.rhai](../public/screens/storage-lab.rhai)。プレビューの`/pages/storage-lab`で「保存・型・YAML」を開く。名前・年齢を入力し、IndexedDBまたはOPFSを選んで保存する。ページを再読み込みし、同じ方式を選んで復元すると値が戻る。削除後の復元は「保存データはまだありません」となる。
 
 ## 画面定義の形式

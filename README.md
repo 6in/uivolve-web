@@ -20,7 +20,7 @@ bun run dev
 
 開発サーバー: `http://127.0.0.1:4173/`。起動時にRustをWASMへビルドする。
 
-画面を直接開くには`/pages/hello-world`などを指定する。対応IDは画面選択欄にある12画面。旧`?screen=hello-world`も同じ画面を読み込む。プレビュー例: `http://127.0.0.1:4174/pages/hello-world`。戻る・進むにも対応する。
+画面を直接開くには`/pages/hello-world`などを指定する。対応IDは画面選択欄にある14画面。旧`?screen=hello-world`も同じ画面を読み込む。プレビュー例: `http://127.0.0.1:4174/pages/hello-world`。戻る・進むにも対応する。
 
 ```sh
 bun run build       # WASM + Vite+本番ビルド → dist/
@@ -36,6 +36,9 @@ Rustを変更したら`bun run build:wasm`を実行する。フロントエン�
 配布物は`dist/`一式。静的HTTPサーバーで配信し、配信先でBunやRustを実行する必要はない。取得URL・プレビュー更新・エラー確認は[運用手順](docs/operations.md)を参照する。
 
 ## 試せること
+
+- 「OPFS・ファイル操作」で、日本語のテキスト・バイナリの読み書き、フォルダー作成、一覧、存在・サイズ確認、削除を試せる。ツールバーの「通信優先＋保存版」で同じ版のYAML/Rhai/Descriptorをキャッシュし、通信障害時に復元する。[ファイル・キャッシュ契約](docs/files-cache-rpc.md)を参照。
+- 「Protobuf・Unary RPC」で、ConnectとgRPC-Webのバイナリ通信を比較する。別ターミナルで`bun run demo:rpc`を起動する。ダウンロードしたDescriptorをWASMで解釈し、64bit整数・bytesも扱う。[RPCの使い方](docs/files-cache-rpc.md)を参照。
 
 - 「保存・型・YAML」で、名前と年齢をIndexedDB / OPFSへ保存・復元・削除する。YAML画面を同じWASMで処理し、DSLのstateSchemaによる型・範囲チェックとWebMCP向け説明を試せる。[使い方と契約](docs/platform-features.md)、[対応計画と検証結果](docs/platform-features-plan.md)を参照。
 
@@ -94,6 +97,9 @@ Rust / WASM エンジン
 - `public/screens/`: エンジンとは別に配信する12画面。
 - `engine/src/state_schema.rs` / `metadata.rs`: DSLの型検証とWebMCPメタデータ。
 - `engine/src/storage.rs` / `src/storage-effects.js` / `src/storage-client.js`: 保存依頼・完了とIndexedDB/OPFSアダプター。
+- `engine/src/files.rs` / `src/file-client.js` / `src/opfs.js`: 名前付きOPFSファイル領域、FileBytes、非同期ファイル操作。
+- `src/application-loader.js` / `scripts/publish-packages.mjs`: 画面ソース一式の検証、配信用マニフェスト、OPFSキャッシュ。
+- `engine/src/rpc.rs` / `buffers.rs` / `src/rpc-client.js`: 動的Protobufコーデック、バッファABI、Unary RPC。
 - `src/package-format.js` / `src/page-router.js`: JSON/YAML変換と同梱画面のルート解決。
 - `engine/src/dynamic_ui.rs`: tabpanelのitemsBind展開、動的定義の上限確認、新しい部品の初期値補完。
 - `engine/src/layouts.rs` / `docs/layouts.md`: Grid/Card/Border/Fitと共通余白の計測・配置・契約。
@@ -113,6 +119,6 @@ DOM版はネイティブ入力・ボタンを使用する。Canvas版はキー�
 
 このDSLはuivolveの宣言的な部品・配置という考えを踏まえた小さな試験用フォーマット。uivolve / ExtJSとの完全互換はない。
 
-スクリプトは同期実行。宣言したHTTP GETの依頼とJSONの完了handlerを提供し、非同期取得はホストが担当する。POST、`async/await`、タイマー、モジュールimport、時刻APIは未実装。操作数上限などは応答性のための制限であり、第三者コードを安全に実行するための隔離環境を保証しない。
+スクリプトは同期実行。宣言したHTTP GETとUnary RPC、保存・ファイル操作の依頼と完了handlerを提供し、非同期I/Oはホストが担当する。汎用POST、Streaming、`async/await`、タイマー、モジュールimport、時刻APIは未実装。配信キャッシュは公開ソース用で、完全なオフライン起動は提供しない。操作数上限などは応答性のための制限であり、第三者コードを安全に実行するための隔離環境を保証しない。
 
 次の比較では、HTTP取得の拡張、大量データ・仮想スクロール、IMEの実機検証、アクセシビリティ、GPU描画を順に検証できる。

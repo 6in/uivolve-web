@@ -36,8 +36,18 @@ export class WasmEngine {
     }
   }
 
-  load(screen, script) {
-    return this.call({ op: "load", package: screen, script });
+  load(screen, script, descriptors = {}) {
+    const ids = Object.create(null);
+    try {
+      for (const key of new Set(Object.values(screen.rpc ?? {}).map((r) => r.descriptor))) {
+        if (!(descriptors[key] instanceof Uint8Array))
+          throw new Error(`Descriptorがありません: ${key}`);
+        ids[key] = this.storeBuffer(descriptors[key]);
+      }
+      return this.call({ op: "load", package: screen, script, descriptors: ids });
+    } finally {
+      for (const id of Object.values(ids)) this.releaseBuffer(id);
+    }
   }
   dispatch(target, payload = {}) {
     return this.call({ op: "event", target, payload });
@@ -47,6 +57,42 @@ export class WasmEngine {
   }
   completeStorage(id, response) {
     return this.call({ op: "storage_result", id, ...response });
+  }
+  storeBuffer(bytes) {
+    if (!(bytes instanceof Uint8Array) || bytes.length > 1_000_000)
+      throw new Error("バイナリは1 MB以内のUint8Arrayで指定してください");
+    const pointer = this.exports.input_alloc(bytes.length);
+    try {
+      new Uint8Array(this.exports.memory.buffer, pointer, bytes.length).set(bytes);
+      const id = this.exports.buffer_store(pointer, bytes.length);
+      if (!id) throw new Error("バイナリバッファの容量を超えています");
+      return id;
+    } finally {
+      this.exports.input_free(pointer, bytes.length);
+    }
+  }
+  readBuffer(id) {
+    const pointer = this.exports.buffer_ptr(id);
+    if (!pointer) throw new Error("無効なバイナリバッファです");
+    return new Uint8Array(this.exports.memory.buffer, pointer, this.exports.buffer_len(id)).slice();
+  }
+  releaseBuffer(id) {
+    this.exports.buffer_free(id);
+  }
+  completeFile(id, response) {
+    return this.completeBinary("file_result", id, response);
+  }
+  completeRpc(id, response) {
+    return this.completeBinary("rpc_result", id, response);
+  }
+  completeBinary(op, id, response) {
+    const buffer =
+      response.data instanceof Uint8Array ? this.storeBuffer(response.data) : undefined;
+    try {
+      return this.call({ op, id, ...response, ...(buffer ? { data: null, buffer } : {}) });
+    } finally {
+      if (buffer) this.releaseBuffer(buffer);
+    }
   }
   layout(width) {
     return this.call({ op: "layout", width });

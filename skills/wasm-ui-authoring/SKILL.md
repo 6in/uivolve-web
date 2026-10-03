@@ -10,6 +10,7 @@ description: uivolve-webの画面JSON/YAMLとRhaiハンドラを作成・修正�
 - まず[画面形式](../../docs/screen-format.md)を読み、必要な部品とイベント契約を確認する。
 - YAML・stateの型・保存・WebMCP説明は[ブラウザ機能の契約](../../docs/platform-features.md)と[保存YAML](../../public/screens/storage-lab.yaml)、[処理](../../public/screens/storage-lab.rhai)を参照。YAMLはJSON互換値だけを使い、型名のnullは引用する。stateSchemaは各ノードのtypeが必須の限定語彙で、Rhaiの静的型宣言を捏造しない。requiredは元の初期stateにも置き、additionalProperties=falseではUI補助キーも宣言する。入力途中に空欄を許すならminLengthの保存検証をRhaiへ置く。
 - 保存は宣言したstorage名にstorage_read / storage_write / storage_removeを発行し、完了handlerで最新stateへ反映する。同期で保存値が返ると仮定しない。response.ok/data/error/request/operationを使い、読み込みデータの形と型を確認する。OPFS非対応や容量不足を通常の失敗として扱い、JWTを保存例へ混ぜない。
+- ファイルとRPCには[契約](../../docs/files-cache-rpc.md)、[ファイルYAML](../../public/screens/file-lab.yaml)・[Rhai](../../public/screens/file-lab.rhai)、[RPC YAML](../../public/screens/rpc-lab.yaml)・[Rhai](../../public/screens/rpc-lab.rhai)を使う。filesの名前付き領域へfile_read/write_text、file_read/write_bytes、file_mkdir/list/stat/removeを依頼する。同じ領域の依頼を同時に出さず、mkdir完了後に書く。read_bytesのFileBytesは不変のローカル値で、JSON stateへ置かない。rpc_callは宣言したUnaryメソッドと配信Descriptorを使い、64bit整数は十進文字列、bytesはProtoJSONのBase64。idempotent=trueはサーバーの冪等性が保証される場合だけ。配信キャッシュはホストのnetwork-first設定で、ページ側APIや完全オフライン機能を捏造しない。
 - 配置は[共通レイアウト契約](../../docs/layouts.md)と[実行例](../../public/screens/layout-lab.json)を参照する。layoutのgridは画面配置で、xtypeのgridは一覧表示。Gridは最大列数とcolSpan、CardはactiveBindの整数index、Borderは一意のregionと必須center、Fitは1つの子を使う。共通gap/paddingは0..64。高さは最小高で、内容が多ければ広がる。rowSpan、splitter、内部スクロール等の未対応機能を捏造しない。Cardの操作ボタンはCardの外側へ置く。
 - 配色は[テーマ形式](../../docs/theme-format.md)に従う別JSONとして作成する。画面JSONへ未対応のtheme/style属性を追加しない。テーマは色だけを指定し、modeごとの既定値で不足を補完する。
 - 一覧・編集は[受注JSON](../../public/screens/orders.json)と[処理](../../public/screens/orders.rhai)、追加・状態変更は[タスクJSON](../../public/screens/tasks.json)と[処理](../../public/screens/tasks.rhai)を参考にする。
@@ -25,7 +26,7 @@ description: uivolve-webの画面JSON/YAMLとRhaiハンドラを作成・修正�
 - パネルのtoggleとwindowのcloseも状態を変更してからhandlerを呼ぶ。背後や隠れた部品へのイベントは受け付けない。× / Escapeと内容内のキャンセルボタンの処理を揃え、親windowを閉じる際は必要に応じて子windowの表示状態も戻す。
 - Rhaiのtrim()は文字列をその場で変更する。戻り値を代入・比較しない。コピーへtrim()を呼んでから空文字列か検査する。
 - レイアウトは共通レイアウト契約に従う。HTML編集はhtmleditorのソース文字列、図形座標はdraw.spritesの指定範囲で扱う。CSS・DOM参照・描画アダプターのAPIを画面処理へ混ぜない。動画/iframeの再生状態はネイティブ要素が管理し、共通WASM状態との同期を前提にしない。
-- 計算・検証・一覧の絞り込みはRhaiに置く。JSON取得にはトップレベルのrequestsとRhaiのhttp_get(name)、完了handlerを使う。[HTTPグリッドのチュートリアル](../../docs/tutorial-http-grid.md)を参照。POST、async/await、タイマー等の未実装APIを捏造しない。
+- 計算・検証・一覧の絞り込みはRhaiに置く。JSON取得にはトップレベルのrequestsとRhaiのhttp_get(name)、完了handlerを使う。[HTTPグリッドのチュートリアル](../../docs/tutorial-http-grid.md)を参照。宣言RPC以外の汎用POST、async/await、タイマー等の未実装APIを捏造しない。
 - 正規表現にはregex_is_match / regex_find_all / regex_captures / regex_replace_all、整数配列の一括集計にはsum_intsを使える。[Rust拡張ガイド](../../docs/native-extensions.md)で構文・型・サイズ上限・例外を確認する。未登録のRust関数をページ側で捏造しない。新しいネイティブ関数にはRustでの登録とエンジンの再ビルドが必要。
 - 変更したJSONとRhaiをWASMエンジンの`load`へ通し、主要イベントを確認する。ブラウザの定義エディタからも検証できる。両バックエンドで同じ状態が見えることを確認する。
 

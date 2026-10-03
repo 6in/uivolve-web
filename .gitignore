@@ -4,3 +4,6 @@ public/engine.wasm
 public/THIRD_PARTY_NOTICES.txt
 node_modules/
 test-results/
+public/screens/*.manifest.json
+public/screens/packages/
+public/screens/rpc-demo.pb

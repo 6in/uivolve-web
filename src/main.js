@@ -8,12 +8,17 @@ import { createUiTools, registerUiTools } from "./webmcp.js";
 import { ResourceClient } from "./resource-client.js";
 import { HttpEffects } from "./http-effects.js";
 import { StorageEffects } from "./storage-effects.js";
+import { FileClient } from "./file-client.js";
+import { ApplicationLoader } from "./application-loader.js";
+import { RpcClient } from "./rpc-client.js";
 import { packageFormat, parsePackage, stringifyPackage } from "./package-format.js";
 import { readPageRoute, pageUrl } from "./page-router.js";
 
 const $ = (id) => document.getElementById(id);
 const base = new URL(import.meta.env.BASE_URL, window.location.href);
 const resources = new ResourceClient({ baseUrl: base });
+const applicationLoader = new ApplicationLoader({ resources });
+let currentDescriptors = {};
 const bundledScreens = SCREEN_CATALOG.map((screen) => screen.id);
 const controls = [
   "screen-select",
@@ -35,6 +40,8 @@ const controls = [
   "auth-refresh-format",
   "auth-refresh-client",
   "auth-expires-in",
+  "cache-mode",
+  "cache-clear",
 ];
 let engine;
 let packageUrl;
@@ -71,10 +78,26 @@ const storageEffects = new StorageEffects({
   runNext: runEffects,
   onError: (exception) => error(exception.message),
 });
+const fileEffects = new StorageEffects({
+  label: "ファイル操作",
+  client: new FileClient({ engine: { readBuffer: (id) => engine.readBuffer(id) } }),
+  complete: (id, response) => completeEffect("completeFile", id, response),
+  runNext: runEffects,
+  onError: (exception) => error(exception.message),
+});
+const rpcEffects = new StorageEffects({
+  label: "RPC",
+  client: new RpcClient({ resources, engine: { readBuffer: (id) => engine.readBuffer(id) } }),
+  complete: (id, response) => completeEffect("completeRpc", id, response),
+  runNext: runEffects,
+  onError: (exception) => error(exception.message),
+});
 function runEffects(effects = []) {
   return Promise.all([
-    httpEffects.run(effects.filter((effect) => effect.kind !== "storage")),
+    httpEffects.run(effects.filter((effect) => !effect.kind || effect.kind === "http")),
     storageEffects.run(effects.filter((effect) => effect.kind === "storage")),
+    fileEffects.run(effects.filter((effect) => effect.kind === "file")),
+    rpcEffects.run(effects.filter((effect) => effect.kind === "rpc")),
   ]);
 }
 function writeRoute(id, mode = "push") {
@@ -124,6 +147,7 @@ function enableControls() {
   ])
     $(id).disabled ||= !refresh;
   $("auth-refresh-client").disabled ||= $("auth-refresh-format").value !== "oauth";
+  $("cache-mode").disabled ||= resources.getAuthentication().mode !== "none";
   if (pendingRoute && engine && !fetching && !benchmarkRunning && !themeFetching) {
     const id = pendingRoute;
     pendingRoute = undefined;
@@ -196,7 +220,14 @@ const resize = new ResizeObserver(scheduleRender);
 resize.observe($("dom-stage"));
 resize.observe($("canvas-stage"));
 
-function compile(screen, script, source, format = packageFormat(source), rawSource) {
+function compile(
+  screen,
+  script,
+  source,
+  format = packageFormat(source),
+  rawSource,
+  descriptors = currentDescriptors,
+) {
   screen = structuredClone(screen);
   const now = new Date();
   const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
@@ -218,16 +249,19 @@ function compile(screen, script, source, format = packageFormat(source), rawSour
   };
   calendarDefaults(screen.ui);
   const start = performance.now();
-  const result = engine.load(screen, script);
+  const result = engine.load(screen, script, descriptors);
   const duration = performance.now() - start;
   // Only replace the active screen after the candidate compiles and init succeeds.
   dom.reset();
   canvas.reset();
   currentPackage = screen;
+  currentDescriptors = descriptors;
   screenToken = crypto.randomUUID();
   packageUrl = source;
   httpEffects.reset(source);
   storageEffects.reset(screen.id);
+  fileEffects.reset(screen.id);
+  rpcEffects.reset(source);
   $("source-format").value = format;
   editorFormat = format;
   $("dsl-source").value = rawSource ?? stringifyPackage(screen, format);
@@ -271,17 +305,28 @@ async function load(
   try {
     if (!["http:", "https:"].includes(url.protocol))
       throw new Error("HTTP / HTTPSのURLを指定してください");
-    const source = await resources.text(url, { signal: controller.signal });
-    const format = packageFormat(url);
-    const screen = parsePackage(source, format);
-    if (typeof screen.script !== "string") throw new Error("script URLがありません");
-    const scriptUrl = new URL(screen.script, url);
-    if (!["http:", "https:"].includes(scriptUrl.protocol))
-      throw new Error("scriptにはHTTP / HTTPSのURLが必要です");
-    const script = await resources.text(scriptUrl, { signal: controller.signal });
+    const candidate = await applicationLoader.fetch(url, {
+      mode: $("cache-mode").value,
+      signal: controller.signal,
+    });
+    const { screen, script, format, source, descriptors } = candidate;
     controller.signal.throwIfAborted();
     beforeCommit?.();
-    compile(screen, script, url, format, source);
+    compile(screen, script, url, format, source, descriptors);
+    $("cache-message").textContent =
+      candidate.status === "cache"
+        ? `保存版から表示しています（${candidate.fallbackReason}）。`
+        : "HTTPから表示しています。";
+    try {
+      await applicationLoader.save(candidate, { signal: controller.signal });
+      if (candidate.metadata && candidate.status === "network")
+        $("cache-message").textContent = "HTTPから表示し、配信キャッシュを保存しました。";
+    } catch (e) {
+      controller.signal.throwIfAborted();
+      $("cache-message").textContent =
+        `画面は表示できましたが、キャッシュを保存できませんでした。${e.message}`;
+    }
+    controller.signal.throwIfAborted();
     $("screen-select").value = bundledScreens.includes(screen.id) ? screen.id : "";
     if (routeId) writeRoute(routeId, historyMode);
     return true;
@@ -444,6 +489,8 @@ $("auth-form").addEventListener("submit", (event) => {
       `認証: ${auth.mode === "jwt" ? (auth.refresh ? "JWT（自動更新）" : "JWT") : "なし"}`;
     $("auth-message").textContent = "設定を適用しました。次のHTTP取得から使用します。";
     $("auth-error").hidden = true;
+    if (auth.mode !== "none") $("cache-mode").value = "network-only";
+    enableControls();
   } catch (exception) {
     $("auth-message").textContent = "";
     $("auth-error").textContent = exception.message;
@@ -452,6 +499,20 @@ $("auth-form").addEventListener("submit", (event) => {
 });
 
 $("screen-select").addEventListener("change", () => loadBundled($("screen-select").value));
+$("cache-clear").addEventListener("click", async () => {
+  if (!packageUrl || fetching || benchmarkRunning || themeFetching) return;
+  fetching = true;
+  enableControls();
+  try {
+    await applicationLoader.clear(packageUrl);
+    $("cache-message").textContent = "この画面の配信キャッシュを削除しました。";
+  } catch (e) {
+    $("cache-message").textContent = `削除できませんでした。${e.message}`;
+  } finally {
+    fetching = false;
+    enableControls();
+  }
+});
 $("reload").addEventListener("click", () =>
   load(packageUrl || new URL("screens/orders.json", base)),
 );
@@ -549,6 +610,8 @@ if (import.meta.hot) {
     disposed = true;
     httpEffects.reset();
     storageEffects.reset();
+    fileEffects.reset();
+    rpcEffects.reset();
     loadController?.abort();
     window.removeEventListener("popstate", followHistory);
     resources.setAuthentication({ mode: "none" });

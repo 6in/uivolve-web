@@ -6,18 +6,23 @@ mod abi;
 pub use abi::{input_alloc, input_free, request, response_len};
 mod theme;
 use theme::Theme;
+mod buffers;
 mod dynamic_ui;
 pub mod extensions;
 mod extras;
 mod fields;
 mod figures;
+mod files;
+pub use files::FileBytes;
 mod grid;
 mod http;
 mod layouts;
 mod metadata;
 mod navigation;
+mod rpc;
 mod state_schema;
 mod storage;
+pub use buffers::{buffer_free, buffer_len, buffer_ptr, buffer_store};
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -32,6 +37,10 @@ pub struct Package {
     pub requests: HashMap<String, http::Request>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub storage: HashMap<String, storage::Definition>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub files: HashMap<String, files::Definition>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub rpc: HashMap<String, rpc::Definition>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state_schema: Option<state_schema::Schema>,
     #[serde(default, skip_serializing_if = "metadata::Metadata::is_empty")]
@@ -348,6 +357,8 @@ pub struct Runtime {
     state: Dynamic,
     http: http::Requests,
     storage: storage::Requests,
+    files: files::Requests,
+    rpc: rpc::Requests,
     pub revision: u32,
 }
 
@@ -358,8 +369,16 @@ impl Runtime {
 
     /// Register application-specific native functions before compiling the downloaded script.
     pub fn load_with_extensions(
+        package: Package,
+        script: &str,
+        register: impl FnOnce(&mut Engine),
+    ) -> Result<Self, String> {
+        Self::load_with_descriptors(package, script, HashMap::new(), register)
+    }
+    pub fn load_with_descriptors(
         mut package: Package,
         script: &str,
+        descriptors: HashMap<String, Vec<u8>>,
         register: impl FnOnce(&mut Engine),
     ) -> Result<Self, String> {
         if package.version != 1 {
@@ -393,6 +412,11 @@ impl Runtime {
         http.register(&mut engine);
         let mut storage = storage::Requests::default();
         storage.register(&mut engine);
+        let mut files = files::Requests::default();
+        files.register(&mut engine);
+        let mut rpc = rpc::Requests::default();
+        rpc.initialize(&package.rpc, descriptors)?;
+        rpc.register(&mut engine);
         register(&mut engine);
         engine.set_max_operations(50_000);
         engine.set_max_call_levels(32);
@@ -447,6 +471,31 @@ impl Runtime {
                 ));
             }
         }
+        if package.files.len() > 8 {
+            return Err("At most 8 file volumes".into());
+        }
+        if !package.files.is_empty() && !storage::safe_key(&package.id) {
+            return Err("Files require a safe page id".into());
+        }
+        for (name, definition) in &package.files {
+            if !storage::safe_key(name) {
+                return Err("Invalid file volume name".into());
+            }
+            if !functions.contains(&definition.handler) {
+                return Err(format!(
+                    "File volume {name}: undefined handler {}",
+                    definition.handler
+                ));
+            }
+        }
+        for (name, definition) in &package.rpc {
+            if !functions.contains(&definition.handler) {
+                return Err(format!(
+                    "RPC {name}: undefined handler {}",
+                    definition.handler
+                ));
+            }
+        }
         let state = rhai::serde::to_dynamic(&package.state).map_err(|e| e.to_string())?;
         let state: Dynamic = engine
             .call_fn(&mut Scope::new(), &ast, "init", (state,))
@@ -467,8 +516,15 @@ impl Runtime {
         check_state(&state)?;
         let names = http.prepare(&package.requests)?;
         let intents = storage.prepare(&package.storage)?;
+        let file_intents = files.prepare(&package.files)?;
+        let rpc_intents = rpc.prepare()?;
+        let (file_bytes, file_count) = files::Requests::size(&file_intents);
+        let (rpc_bytes, rpc_count) = rpc::Requests::size(&rpc_intents);
+        buffers::capacity(file_bytes + rpc_bytes, file_count + rpc_count)?;
         http.commit(names, &package.requests);
         storage.commit(intents, &package.storage);
+        files.commit(file_intents);
+        rpc.commit(rpc_intents, &package.rpc);
         Ok(Self {
             package,
             ui,
@@ -478,6 +534,8 @@ impl Runtime {
             state,
             http,
             storage,
+            files,
+            rpc,
             revision: 0,
         })
     }
@@ -485,6 +543,8 @@ impl Runtime {
     pub fn dispatch(&mut self, target: &str, mut payload: Value) -> Result<(), String> {
         self.http.clear();
         self.storage.clear();
+        self.files.clear();
+        self.rpc.clear();
         let mut state = self.state_json()?;
         let mut path = Vec::new();
         if !find_path(&self.ui, target, &mut path) {
@@ -587,6 +647,8 @@ impl Runtime {
         let name = self.http.consume(id)?;
         self.http.clear();
         self.storage.clear();
+        self.files.clear();
+        self.rpc.clear();
         let handler = &self.package.requests[&name].handler;
         let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
         // Use current state, including edits made while the HTTP request was in flight.
@@ -606,6 +668,8 @@ impl Runtime {
         let (name, operation) = self.storage.consume(id)?;
         self.http.clear();
         self.storage.clear();
+        self.files.clear();
+        self.rpc.clear();
         response["operation"] = serde_json::to_value(operation).map_err(|e| e.to_string())?;
         response["request"] = json!(name);
         let handler = &self.package.storage[&name].handler;
@@ -627,6 +691,57 @@ impl Runtime {
         self.commit_state(next)
     }
 
+    pub fn complete_file(
+        &mut self,
+        id: u64,
+        response: Value,
+        buffer: Option<u32>,
+    ) -> Result<(), String> {
+        self.http.clear();
+        self.storage.clear();
+        self.files.clear();
+        self.rpc.clear();
+        let mut response: rhai::Map = rhai::serde::to_dynamic(response)
+            .map_err(|e| e.to_string())?
+            .cast();
+        let name = self.files.consume(id, &mut response, buffer)?;
+        let handler = &self.package.files[&name].handler;
+        let next = self
+            .engine
+            .call_fn(
+                &mut Scope::new(),
+                &self.ast,
+                handler,
+                (self.state.clone(), Dynamic::from_map(response)),
+            )
+            .map_err(|e| format!("{} / file {} / {}: {e}", self.package.script, name, handler))?;
+        self.commit_state(next)
+    }
+
+    pub fn complete_rpc(
+        &mut self,
+        id: u64,
+        mut response: Value,
+        buffer: Option<u32>,
+    ) -> Result<(), String> {
+        self.http.clear();
+        self.storage.clear();
+        self.files.clear();
+        self.rpc.clear();
+        let name = self.rpc.consume(id, &mut response, buffer)?;
+        let handler = &self.package.rpc[&name].handler;
+        let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
+        let next = self
+            .engine
+            .call_fn(
+                &mut Scope::new(),
+                &self.ast,
+                handler,
+                (self.state.clone(), response),
+            )
+            .map_err(|e| format!("{} / RPC {} / {}: {e}", self.package.script, name, handler))?;
+        self.commit_state(next)
+    }
     pub fn take_effects(&mut self) -> Vec<Value> {
         self.http
             .take()
@@ -638,6 +753,8 @@ impl Runtime {
                     .into_iter()
                     .map(|effect| serde_json::to_value(effect).unwrap()),
             )
+            .chain(self.files.take())
+            .chain(self.rpc.take())
             .collect()
     }
 
@@ -665,10 +782,17 @@ impl Runtime {
         check_state(&next)?;
         let names = self.http.prepare(&self.package.requests)?;
         let intents = self.storage.prepare(&self.package.storage)?;
+        let file_intents = self.files.prepare(&self.package.files)?;
+        let rpc_intents = self.rpc.prepare()?;
+        let (file_bytes, file_count) = files::Requests::size(&file_intents);
+        let (rpc_bytes, rpc_count) = rpc::Requests::size(&rpc_intents);
+        buffers::capacity(file_bytes + rpc_bytes, file_count + rpc_count)?;
         self.state = next;
         self.ui = ui;
         self.http.commit(names, &self.package.requests);
         self.storage.commit(intents, &self.package.storage);
+        self.files.commit(file_intents);
+        self.rpc.commit(rpc_intents, &self.package.rpc);
         self.revision += 1;
         Ok(())
     }

@@ -8,6 +8,8 @@ export const SCREEN_CATALOG = Object.freeze(
     { id: "http-grid", title: "HTTP JSON・グリッドへ表示" },
     { id: "native-extensions", title: "Rust拡張・正規表現" },
     { id: "storage-lab", title: "保存・型・YAML", file: "storage-lab.yaml" },
+    { id: "file-lab", title: "OPFS・ファイル読み書き", file: "file-lab.yaml" },
+    { id: "rpc-lab", title: "Protobuf・Unary RPC", file: "rpc-lab.yaml" },
     { id: "components", title: "パネル・ウィンドウ" },
     { id: "uivolve-forms", title: "uivolve フォーム部品" },
     { id: "grid-lab", title: "Grid・タブ・ツリー・メニュー" },

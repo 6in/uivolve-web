@@ -46,6 +46,8 @@
               <option value="http-grid">HTTP JSON・グリッドへ表示</option>
               <option value="native-extensions">Rust拡張・正規表現</option>
               <option value="storage-lab">保存・型・YAML</option>
+              <option value="file-lab">OPFS・ファイル読み書き</option>
+              <option value="rpc-lab">Protobuf・Unary RPC</option>
               <option value="components">パネル・ウィンドウ</option>
               <option value="uivolve-forms">uivolve フォーム部品</option>
               <option value="grid-lab">Grid・タブ・ツリー・メニュー</option>
@@ -94,6 +96,15 @@
           </button>
         </div>
       </section>
+      <div class="cache-controls">
+        <label for="cache-mode">配信キャッシュ</label>
+        <select id="cache-mode" disabled>
+          <option value="network-only">無効</option>
+          <option value="network-first">有効（通信障害時に保存版）</option>
+        </select>
+        <button id="cache-clear" class="subtle-button" disabled>この画面のキャッシュを削除</button>
+        <span id="cache-message" role="status"></span>
+      </div>
       <section id="source-panel" class="source-panel" hidden>
         <header>
           <div>

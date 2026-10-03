@@ -1193,3 +1193,18 @@ dd {
     display: block;
   }
 }
+/* Package delivery controls share the demo toolbar's existing simple styling. */
+.cache-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0;
+  font-size: 13px;
+}
+.cache-controls select {
+  max-width: 100%;
+}
+.cache-controls [role="status"] {
+  color: var(--ui-muted, #607584);
+}

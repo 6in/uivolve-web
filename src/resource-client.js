@@ -71,7 +71,25 @@ export class ResourceClient {
     if (policy !== this.#policy) throw new Error("認証設定が変更されたため取得を中止しました");
   }
 
-  async fetch(value, { signal } = {}) {
+  async fetch(
+    value,
+    {
+      signal,
+      method = "GET",
+      headers,
+      body,
+      retryAuthentication = method === "GET",
+      allowHttpErrors = false,
+    } = {},
+  ) {
+    if (!["GET", "POST"].includes(method) || (method === "GET" && body !== undefined))
+      throw new Error("未対応のHTTPメソッド・bodyです");
+    const extraHeaders = new Headers(headers);
+    if (extraHeaders.has("Authorization"))
+      throw new Error("認証ヘッダーは認証設定から付与してください");
+    if (body !== undefined && (!(body instanceof Uint8Array) || body.length > 1_010_000))
+      throw new Error("HTTP bodyのサイズ・形式が不正です");
+    const options = { method, headers: extraHeaders, body };
     const url = httpUrl(value, this.#base);
     const policy = this.#policy;
     this.#check(policy, signal);
@@ -95,8 +113,8 @@ export class ResourceClient {
       this.#check(policy, signal);
       credential.token = bearerToken(credential.token);
     }
-    let response = await this.#request(url, policy, credential?.token, signal);
-    if (response.status === 401 && policy.session) {
+    let response = await this.#request(url, policy, credential?.token, signal, options);
+    if (response.status === 401 && policy.session && retryAuthentication) {
       await response.body?.cancel().catch(() => {});
       try {
         credential = await policy.session.renew(credential.generation, { signal });
@@ -105,10 +123,10 @@ export class ResourceClient {
         throw new Error("トークンを更新できませんでした。再認証してください");
       }
       this.#check(policy, signal);
-      response = await this.#request(url, policy, credential.token, signal);
+      response = await this.#request(url, policy, credential.token, signal, options);
       if (response.status === 401) policy.session.invalidate();
     }
-    if (!response.ok) {
+    if (!response.ok && !allowHttpErrors) {
       if (response.status === 401)
         throw new Error("HTTP 401: 認証が必要、またはJWTが無効・期限切れです");
       if (response.status === 403)
@@ -132,14 +150,15 @@ export class ResourceClient {
     return this.getAuthentication();
   }
 
-  async #request(url, policy, token, signal) {
-    const headers = new Headers();
+  async #request(url, policy, token, signal, options) {
+    const headers = new Headers(options.headers);
     if (token !== undefined) headers.set("Authorization", `Bearer ${token}`);
     const authenticated = policy.mode === "jwt";
     let response;
     try {
       response = await this.#fetch(url, {
-        method: "GET",
+        method: options.method,
+        ...(options.body !== undefined ? { body: options.body } : {}),
         mode: "cors",
         headers,
         cache: authenticated ? "no-store" : "no-cache",
@@ -149,7 +168,10 @@ export class ResourceClient {
       });
     } catch {
       this.#check(policy, signal);
-      throw new Error("HTTP取得に失敗しました（通信・CORS・リダイレクトを確認してください）");
+      throw Object.assign(
+        new Error("HTTP取得に失敗しました（通信・CORS・リダイレクトを確認してください）"),
+        { code: "NETWORK" },
+      );
     }
     this.#check(policy, signal);
     return response;
@@ -158,9 +180,68 @@ export class ResourceClient {
   async text(url, { signal } = {}) {
     const policy = this.#policy;
     const response = await this.fetch(url, { signal });
-    const text = await response.text();
+    const bytes = await readLimitedBytes(response, { signal });
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     this.#check(policy, signal);
-    if (text.length > 1_000_000) throw new Error("ファイルが1 MBを超えています");
     return text;
+  }
+  async bytes(url, { signal, limit = 1_000_000 } = {}) {
+    const policy = this.#policy;
+    const response = await this.fetch(url, { signal });
+    const data = await readLimitedBytes(response, { signal, limit });
+    this.#check(policy, signal);
+    return data;
+  }
+  async binaryRequest(url, options) {
+    const policy = this.#policy;
+    const response = await this.fetch(url, options);
+    const bytes = await readLimitedBytes(response, { signal: options.signal, limit: 1_010_000 });
+    this.#check(policy, options.signal);
+    return { response, bytes };
+  }
+}
+export async function readLimitedBytes(response, { signal, limit = 1_000_000 } = {}) {
+  signal?.throwIfAborted();
+  if (Number(response.headers.get("Content-Length")) > limit) {
+    await response.body?.cancel().catch(() => {});
+    throw new Error(`応答が${limit / 1_000_000} MBのサイズ上限を超えています`);
+  }
+  if (!response.body) return new Uint8Array();
+  const reader = response.body.getReader();
+  const chunks = [];
+  let size = 0;
+  const abort = () => {
+    void reader.cancel().catch(() => {});
+  };
+  signal?.addEventListener("abort", abort, { once: true });
+  try {
+    while (true) {
+      let chunk;
+      try {
+        chunk = await reader.read();
+      } catch {
+        signal?.throwIfAborted();
+        throw Object.assign(new Error("HTTP応答の受信中に通信が切れました"), { code: "NETWORK" });
+      }
+      const { done, value } = chunk;
+      signal?.throwIfAborted();
+      if (done) break;
+      size += value.length;
+      if (size > limit) throw new Error(`応答が${limit / 1_000_000} MBのサイズ上限を超えています`);
+      chunks.push(value);
+    }
+    const data = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      data.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return data;
+  } catch (e) {
+    await reader.cancel().catch(() => {});
+    throw e;
+  } finally {
+    signal?.removeEventListener("abort", abort);
+    reader.releaseLock();
   }
 }

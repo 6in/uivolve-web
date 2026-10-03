@@ -1,8 +1,15 @@
 import { spawnSync } from "node:child_process";
 import { copyFileSync, mkdirSync, statSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { publishPackage } from "./publish-packages.mjs";
+import { SCREEN_CATALOG, screenFile } from "../src/screen-catalog.js";
+import { descriptorBytes } from "./rpc-schema.mjs";
+import { writeFileSync } from "node:fs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
+writeFileSync(`${root}/public/screens/rpc-demo.pb`, descriptorBytes);
+for (const screen of SCREEN_CATALOG)
+  await publishPackage(`${root}/public/screens/${screenFile(screen.id)}`);
 const result = spawnSync(
   "cargo",
   [

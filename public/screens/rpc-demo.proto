@@ -1,0 +1,16 @@
+syntax = "proto3";
+package uivolve.demo;
+
+message EchoRequest {
+  string name = 1;
+  int64 sequence_id = 2;
+  bytes payload = 3;
+}
+message EchoResponse {
+  string name = 1;
+  int64 sequence_id = 2;
+  bytes payload = 3;
+}
+service EchoService {
+  rpc Echo(EchoRequest) returns (EchoResponse);
+}

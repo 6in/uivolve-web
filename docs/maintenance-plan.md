@@ -48,12 +48,14 @@
 
 ## 保存・通信の追加TODO
 
-2026-10-03に[OPFS・アプリキャッシュ・RPCの検討](opfs-cache-rpc-investigation.md)を追加。実装は未着手。詳細と確認条件は検討書を参照する。
+2026-10-03に[OPFS・アプリキャッシュ・RPCの検討](opfs-cache-rpc-investigation.md)を追加し、基本機能を実装した。[使い方と制限](files-cache-rpc.md)を参照する。
 
-- [ ] OPFSの名前付きファイル領域とテキストの読み書き・ディレクトリ操作を追加する。
-- [ ] 同じ版のYAML/JSONとRhaiを保持するローダーのキャッシュを追加する。
-- [ ] バイナリ用バッファABIとOPFSのbytes読み書きを設計・検証する。
-- [ ] gRPC-Web / ConnectのUnary RPCと、動的DescriptorによるWASMコーデックを試作・比較する。
+- [x] OPFSの名前付きファイル領域とテキストの読み書き・ディレクトリ操作を追加する。
+- [x] 同じ版のYAML/JSONとRhaiを保持するローダーのキャッシュを追加する。公開配信のnetwork-firstを対象とする。
+- [x] バイナリ用バッファABI、FileBytesとOPFSのbytes読み書きを実装・検証する。
+- [x] gRPC-Web / ConnectのUnary RPCと、動的DescriptorによるWASMコーデックを試作・比較する。公式Connectサーバーで両方式の相互運用とサイズ・時間を確認する。
+
+完全なオフライン起動・JWT配信キャッシュ・Worker同期I/O・RPC Streaming・Envoy接続は今回の対象から外した。検討書に理由と実装結果を記録する。
 
 ## 完了条件
 

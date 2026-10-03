@@ -2,7 +2,7 @@
 
 画面パッケージはJSONまたはYAML。UI処理は別URLのRhaiテキスト。`script`は、パッケージURLから解決する相対または絶対HTTP / HTTPS URL。YAMLの対応範囲は[ブラウザ機能の契約](platform-features.md)を参照。
 
-トップレベルには必須の`version / id / title / script / state / ui`と、任意の`requests / storage / stateSchema / webmcp`がある。`stateSchema`はDSLで宣言したstateの型・範囲を確定前に検証する。`storage`はIndexedDB/OPFSの名前付き保存レコード、`webmcp`は画面や部品の説明メタデータ。記法・制限・実行例は[保存・型・メタデータの契約](platform-features.md)にまとめる。
+トップレベルには必須の`version / id / title / script / state / ui`と、任意の`requests / storage / files / rpc / stateSchema / webmcp`がある。`stateSchema`はDSLで宣言したstateの型・範囲を確定前に検証する。`storage`はIndexedDB/OPFSの名前付き保存レコード、`webmcp`は画面や部品の説明メタデータ。記法・制限・実行例は[保存・型・メタデータの契約](platform-features.md)にまとめる。`files`はOPFSのファイル領域、`rpc`はDescriptorを使うUnary呼び出し。[ファイル・キャッシュ・RPCの契約](files-cache-rpc.md)を参照する。
 
 初めて書く場合は、入力・ボタン・結果表示を使う[Hello Worldチュートリアル](tutorial-hello-world.md)を参照。実行例は[hello-world.json](../public/screens/hello-world.json)と[hello-world.rhai](../public/screens/hello-world.rhai)。
 
@@ -122,7 +122,7 @@ WASMはイベント値の型、maxLength、数値の範囲、日付の実在、�
 
 ハンドラは更新された状態を返した後にコミットされる。例外や上限超過では、そのイベントによる状態変更をコミットしない。新しい画面の読み込みは、コンパイルとinitが成功してから現在の画面を置き換える。
 
-Rhaiは同期実行。トップレベルの任意の`requests`にHTTP GETのURLと受け取りhandlerを宣言し、`http_get(name)`で非同期取得をホストへ依頼できる。完了時は`handler(state, response) → state`を実行する。`response`は`ok / data / error`を持つ。JSONは画面URLから解決し、既存ResourceClientのCORS・認証設定を使う。制限・失敗・画面切替の扱いは[HTTPグリッドのチュートリアル](tutorial-http-grid.md)を参照。`async/await`・POST・タイマー・モジュールimport・時刻APIは提供しない。
+Rhaiは同期実行。トップレベルの任意の`requests`にHTTP GETのURLと受け取りhandlerを宣言し、`http_get(name)`で非同期取得をホストへ依頼できる。完了時は`handler(state, response) → state`を実行する。`response`は`ok / data / error`を持つ。JSONは画面URLから解決し、既存ResourceClientのCORS・認証設定を使う。制限・失敗・画面切替の扱いは[HTTPグリッドのチュートリアル](tutorial-http-grid.md)を参照。宣言したUnary RPCは`rpc_call`で呼べる。汎用HTTP POST・`async/await`・タイマー・モジュールimport・時刻APIは提供しない。
 
 ## 診断と制限
 

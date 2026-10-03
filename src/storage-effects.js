@@ -4,12 +4,20 @@ export class StorageEffects {
   #generation = 0;
   #scope;
   #controllers = new Set();
-  constructor({ client = new StorageClient(), complete, onError, runNext, timeout = 15_000 }) {
+  constructor({
+    client = new StorageClient(),
+    complete,
+    onError,
+    runNext,
+    timeout = 15_000,
+    label = "保存操作",
+  }) {
     this.client = client;
     this.complete = complete;
     this.onError = onError;
     this.runNext = runNext || ((effects) => this.run(effects));
     this.timeout = timeout;
+    this.label = label;
   }
   reset(scope) {
     this.#generation++;
@@ -43,8 +51,8 @@ export class StorageEffects {
         ok: false,
         data: null,
         error: controller.signal.aborted
-          ? "保存操作がタイムアウトしました"
-          : String(exception.message || "保存操作に失敗しました").slice(0, 512),
+          ? `${this.label}がタイムアウトしました`
+          : String(exception.message || `${this.label}に失敗しました`).slice(0, 512),
       };
     } finally {
       clearTimeout(timer);

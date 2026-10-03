@@ -23,7 +23,16 @@ fn execute(request: Value) -> Result<Value, String> {
                 .get("script")
                 .and_then(Value::as_str)
                 .ok_or("Missing script")?;
-            let mut runtime = Runtime::load(package, script)?;
+            let mut descriptors = std::collections::HashMap::new();
+            if let Some(value) = request.get("descriptors") {
+                let values = value.as_object().ok_or("Invalid descriptors")?;
+                if values.len()>8 {return Err("At most 8 descriptors".into());}
+                for (name,id) in values {
+                    let id=id.as_u64().filter(|id| *id>0 && *id<=u32::MAX as u64).ok_or("Invalid descriptor buffer")? as u32;
+                    descriptors.insert(name.clone(),crate::buffers::take(id)?);
+                }
+            }
+            let mut runtime = Runtime::load_with_descriptors(package, script, descriptors, |_| {})?;
             let result = result(&mut runtime)?;
             RUNTIME.with(|r| *r.borrow_mut() = Some(runtime));
             Ok(result)
@@ -38,16 +47,22 @@ fn execute(request: Value) -> Result<Value, String> {
             runtime.dispatch(target, request.get("payload").cloned().unwrap_or(json!({})))?;
             result(runtime)
         }),
-        "http_result" | "storage_result" => RUNTIME.with(|r| {
+        "http_result" | "storage_result" | "file_result" | "rpc_result" => RUNTIME.with(|r| {
             let mut slot = r.borrow_mut();
             let runtime = slot.as_mut().ok_or("No screen loaded")?;
-            let channel = if request["op"]=="storage_result" {"Storage"} else {"HTTP"};
+            let channel = match request["op"].as_str() {Some("storage_result")=>"Storage",Some("file_result")=>"File",Some("rpc_result")=>"RPC",_=>"HTTP"};
             let id = request.get("id").and_then(Value::as_u64).ok_or_else(|| format!("Missing {channel} request id"))?;
             let ok = request.get("ok").and_then(Value::as_bool).ok_or_else(|| format!("Missing {channel} result ok"))?;
             let error = request.get("error").and_then(Value::as_str).unwrap_or("");
             if error.len() > 2048 { return Err(format!("{channel} error exceeds 2048 bytes")); }
             let response=json!({"ok":ok,"data":request.get("data").cloned().unwrap_or(Value::Null),"error":error});
-            if request["op"]=="storage_result" {runtime.complete_storage(id,response)?;} else {runtime.complete_http(id,response)?;}
+            if request["op"]=="storage_result" {runtime.complete_storage(id,response)?;}
+            else if request["op"]=="file_result" || request["op"]=="rpc_result" {
+                let buffer = request.get("buffer").map(|v| v.as_u64().filter(|id| *id>0 && *id<=u32::MAX as u64).map(|id| id as u32).ok_or("Invalid buffer id")).transpose()?;
+                if !ok && buffer.is_some() { return Err("Failed completion must not carry a binary buffer".into()); }
+                if request["op"]=="file_result" {runtime.complete_file(id,response,buffer)?;}
+                else {runtime.complete_rpc(id,response,buffer)?;}
+            } else {runtime.complete_http(id,response)?;}
             result(runtime)
         }),
         "layout" => RUNTIME.with(|r| {

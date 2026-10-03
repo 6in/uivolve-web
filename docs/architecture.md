@@ -1,6 +1,6 @@
 # アーキテクチャ
 
-uivolve-webは、HTTPで配信する画面パッケージと、ブラウザ内のUIエンジンを分ける。必要なサーバーは静的ファイルのHTTP配信。現在のデモに業務APIや保存サービスはない。
+uivolve-webは、HTTPで配信する画面パッケージと、ブラウザ内のUIエンジンを分ける。基本デモに必要なサーバーは静的ファイルのHTTP配信。RPCデモは別のローカルサーバーを使う。保存はブラウザ内のIndexedDB/OPFSへ行う。
 
 ```mermaid
 flowchart TD
@@ -35,6 +35,10 @@ flowchart TD
 | `src/resource-client.js`                                                     | 共通HTTP/CORS取得、認証なし・Bearer JWT、送信先・リダイレクト・取得失敗の扱い                         |
 | `engine/src/http.rs` / `src/http-effects.js`                                 | RhaiのGET依頼の確定・追跡、非同期JSON取得・タイムアウト・画面切替時の中止、WASMへの完了通知           |
 | `engine/src/storage.rs` / `src/storage-effects.js` / `src/storage-client.js` | 保存依頼の確定・追跡、IndexedDB/OPFSの非同期処理と完了通知                                            |
+| `engine/src/files.rs` / `src/file-client.js` / `src/opfs.js`                 | ファイル依頼、FileBytes、名前付きOPFS領域と排他制御                                                   |
+| `src/application-loader.js` / `scripts/publish-packages.mjs`                 | ソース一式の取得・検証・保存版復元、配信用マニフェスト生成                                            |
+| `engine/src/rpc.rs` / `src/rpc-client.js`                                    | 配信Descriptorによる動的Protobuf処理、Unary RPCのフレーム・通信・完了                                 |
+| `engine/src/buffers.rs`                                                      | バイナリ用バッファABI、容量・id・寿命管理                                                             |
 | `engine/src/state_schema.rs` / `metadata.rs`                                 | DSLのstate型・制約とWebMCP説明の検証                                                                  |
 | `src/package-format.js` / `src/page-router.js`                               | JSON/YAMLの同一データへの変換、同梱画面のURL解決                                                      |
 | `src/engine.js`                                                              | JSON/UTF-8の入出力。業務処理やスクリプトのevalは行わない                                              |
@@ -69,9 +73,9 @@ DOMはkeyを使って既存要素を更新し、Canvasは面全体を再描画�
 
 ## ABI
 
-公開する関数は`input_alloc(len)`、`input_free(ptr,len)`、`request(ptr,len)`、`response_len()`。JSは入力を確保してUTF-8 JSONを書き込み、requestが返す応答のポインターと長さを読む。入力はfinallyで解放する。応答はエンジン所有で、次のrequestまで有効。次の呼び出しより前にJSONへ読み取る。メモリが拡張され得るため、呼び出し後はその時点の`memory.buffer`を使う。
+制御用の公開関数は`input_alloc(len)`、`input_free(ptr,len)`、`request(ptr,len)`、`response_len()`。JSは入力を確保してUTF-8 JSONを書き込み、requestが返す応答のポインターと長さを読む。入力はfinallyで解放する。応答はエンジン所有で、次のrequestまで有効。次の呼び出しより前にJSONへ読み取る。メモリが拡張され得るため、呼び出し後はその時点の`memory.buffer`を使う。バイナリには`buffer_store / buffer_ptr / buffer_len / buffer_free`を追加した。[所有権・上限の契約](files-cache-rpc.md)に従う。
 
-操作は`load / event / http_result / storage_result / layout / theme`。成功は`{ "ok": true, "data": ... }`、失敗は`{ "ok": false, "error": "..." }`。入力の上限は2,000,000バイト。現在のWASMはブラウザのimportを要求しない。HTTP取得・保存・描画APIはホストが担当する。各操作の詳細は[画面形式](screen-format.md)、[HTTP取得](tutorial-http-grid.md)、[保存・型](platform-features.md)、[レイアウト](layouts.md)、[テーマ](theme-format.md)を参照する。
+操作は`load / event / http_result / storage_result / file_result / rpc_result / layout / theme`。成功は`{ "ok": true, "data": ... }`、失敗は`{ "ok": false, "error": "..." }`。入力の上限は2,000,000バイト。現在のWASMはブラウザのimportを要求しない。HTTP取得・保存・描画APIはホストが担当する。各操作の詳細は[画面形式](screen-format.md)、[HTTP取得](tutorial-http-grid.md)、[保存・型](platform-features.md)、[ファイル・RPC](files-cache-rpc.md)、[レイアウト](layouts.md)、[テーマ](theme-format.md)を参照する。
 
 Rhaiの`http_get(name)`は要求を一時キューへ置く。stateとUIの検証後に要求を確定し、結果へ`effects`を添える。ホストは画面JSONを基準にURLを解決し、ResourceClientでJSONを取得してid付きの`http_result`を送る。Runtimeは進行中のidだけを受け入れ、最新stateと応答を受け取りhandlerへ渡す。通常のイベントと同じ確定処理を通し、完了でもrevisionが進む。画面置換の成功時にホストが進行中の取得を中止し、世代番号でも遅延応答を破棄する。
 
@@ -85,4 +89,4 @@ HTTP認証はホストのResourceClientへ置く。画面・Rhai・テーマは�
 
 WebMCPも人の入力と同じWASMイベントを実行する。ツールの登録機構とUI処理は独立し、WebMCP未対応でも通常UIは動く。ツールの変更要求はscreen token・revision・可視性を検査するが、クライアント内のUI検証はサーバーの認可を代替しない。
 
-Rhaiは同期実行で、操作数などの制限を持つ。非同期HTTP GETとブラウザ保存は依頼・完了handlerの契約で扱う。保存依頼もstate/UI検証後に確定し、kind=storageのeffectsをホストへ渡す。HTTPと保存の両方の準備が通ってから状態と依頼を確定する。完了handlerもstateSchemaの検証を通る。POST・タイマー・GPU描画・サーバー同期は未対応。現段階の制限は[README](../README.md)と部品別の契約に記載する。
+Rhaiは同期実行で、操作数などの制限を持つ。非同期HTTP GET・Unary RPC・ブラウザ保存・ファイル操作は依頼・完了handlerの契約で扱う。HTTP・JSON保存・ファイル・RPCすべての準備とバッファ容量の確認が通ってからstateとeffectsを確定する。HTTPは従来のkind省略、追加操作はkind=storage/file/rpcでホストへ振り分ける。完了handlerもstateSchemaの検証を通る。汎用POST・タイマー・GPU描画・サーバー同期は未対応。現段階の制限は[README](../README.md)と部品別の契約に記載する。
