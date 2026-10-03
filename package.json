@@ -5,6 +5,9 @@
   "scripts": {
     "build:wasm": "bun scripts/build.mjs",
     "build": "bun run build:wasm && vp build",
+    "build:runtime": "bun run build:wasm && bun scripts/build-runtime.mjs",
+    "build:minimal": "bun run build:wasm && bun scripts/build-runtime.mjs --minimal",
+    "preview:minimal": "bun scripts/serve-minimal.mjs",
     "dev": "bun run build:wasm && vp dev",
     "preview": "vp preview",
     "demo:rpc": "bun scripts/rpc-server.mjs",

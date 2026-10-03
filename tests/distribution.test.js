@@ -9,6 +9,7 @@ import { preparePages } from "../scripts/prepare-pages.mjs";
 import { SCREEN_CATALOG } from "../src/screen-catalog.js";
 import { readPageRoute } from "../src/page-router.js";
 import { skillNames } from "../scripts/bundle-skills.mjs";
+import { buildMinimal } from "../scripts/build-runtime.mjs";
 
 const temporary = [];
 async function workspace() {
@@ -99,3 +100,68 @@ it("publishes the released catalog unchanged and rejects a wrong catalog", async
   await writeFile(catalogPath, JSON.stringify({ name: "wrong", plugins: [] }));
   await expect(preparePages(output, catalogPath)).rejects.toThrow(/Invalid/);
 });
+
+it("builds a standalone static app with real deep entries and no demo or build dependencies", async () => {
+  const output = await workspace();
+  await buildMinimal(output);
+  async function files(dir, prefix = "") {
+    const entries = await readdir(dir, { withFileTypes: true });
+    return (
+      await Promise.all(
+        entries.map((entry) =>
+          entry.isDirectory()
+            ? files(join(dir, entry.name), prefix + entry.name + "/")
+            : [prefix + entry.name],
+        ),
+      )
+    ).flat();
+  }
+  expect((await files(output)).sort()).toEqual(
+    [
+      "app.json",
+      "boot.js",
+      "index.html",
+      "pages/home.rhai",
+      "pages/home.yaml",
+      "pages/home/index.html",
+      "runtime/THIRD_PARTY_NOTICES.txt",
+      "runtime/engine.wasm",
+      "runtime/index.css",
+      "runtime/index.js",
+    ].sort(),
+  );
+  const entry = await readFile(join(output, "pages/home/index.html"), "utf8");
+  expect(entry).toContain('src="../../boot.js"');
+  expect(entry).toContain('href="../../runtime/index.css"');
+  const bootstrap = await readFile(join(output, "boot.js"), "utf8");
+  expect(bootstrap).toContain('"./runtime/index.js"');
+  expect(bootstrap).not.toContain("../../src/");
+  const runtime = await readFile(join(output, "runtime/index.js"), "utf8");
+  expect(runtime).not.toMatch(/SCREEN_CATALOG|screen-select|benchmark|import\.meta\.env/);
+  const css = await readFile(join(output, "runtime/index.css"), "utf8");
+  expect(css).toContain(".uivolve-runtime");
+  expect(css).not.toMatch(/:root|\.topbar|\.comparison|\.source-panel/);
+  // Exercise the Bun file server itself: directory route, assets and missing files.
+  const handlerModule = new URL("../scripts/serve-minimal.mjs", import.meta.url).href;
+  const probe = `import { createStaticHandler } from ${JSON.stringify(handlerModule)};
+    const handle = createStaticHandler(${JSON.stringify(output)});
+    const result = [];
+    for (const path of ["/", "/pages/home", "/pages/home/", "/runtime/engine.wasm", "/pages/missing.yaml", "/runtime/missing.js"]) {
+      const response = await handle(new Request("http://localhost" + path));
+      result.push([response.status, response.headers.get("content-type")]);
+    }
+    const head = await handle(new Request("http://localhost/runtime/engine.wasm", { method: "HEAD" }));
+    result.push([head.status, (await head.arrayBuffer()).byteLength]);
+    console.log(JSON.stringify(result));`;
+  const response = spawnSync("bun", ["-e", probe], { encoding: "utf8" });
+  expect(response.status, response.stderr).toBe(0);
+  expect(JSON.parse(response.stdout)).toEqual([
+    [200, "text/html;charset=utf-8"],
+    [308, null],
+    [200, "text/html;charset=utf-8"],
+    [200, "application/wasm"],
+    [404, null],
+    [404, null],
+    [200, 0],
+  ]);
+}, 30_000);

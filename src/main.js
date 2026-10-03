@@ -1,26 +1,16 @@
 import "./styles.css";
-import { WasmEngine } from "./engine.js";
-import { DomRenderer } from "./dom-renderer.js";
-import { CanvasRenderer } from "./canvas-renderer.js";
+import { UiRuntime } from "./runtime.js";
 import { applyTheme } from "./theme.js";
 import { SCREEN_CATALOG, screenFile } from "./screen-catalog.js";
 import { createUiTools, registerUiTools } from "./webmcp.js";
 import { ResourceClient } from "./resource-client.js";
-import { HttpEffects } from "./http-effects.js";
-import { StorageEffects } from "./storage-effects.js";
-import { FileClient } from "./file-client.js";
-import { ApplicationLoader } from "./application-loader.js";
-import { RpcClient } from "./rpc-client.js";
 import { packageFormat, parsePackage, stringifyPackage } from "./package-format.js";
 import { readPageRoute, pageUrl } from "./page-router.js";
 import { createScreenPicker } from "./screen-picker.js";
-import { PageEffects } from "./page-effects.js";
 
 const $ = (id) => document.getElementById(id);
 const base = new URL(import.meta.env.BASE_URL, window.location.href);
 const resources = new ResourceClient({ baseUrl: base });
-const applicationLoader = new ApplicationLoader({ resources });
-let currentDescriptors = {};
 const bundledScreens = SCREEN_CATALOG.map((screen) => screen.id);
 const controls = [
   "screen-select",
@@ -48,19 +38,13 @@ const controls = [
 let engine;
 let packageUrl;
 let currentPackage;
-let currentState;
-let screenToken;
 let webmcpRegistration;
 let disposed = false;
-let revision = 0;
 let fetching = false;
 let benchmarkRunning = false;
-let frame = 0;
 let scenes;
 let themeFetching = false;
 let themeChoice = "light";
-let loadSequence = 0;
-let loadController;
 let pendingRoute;
 const screenPicker = createScreenPicker({
   list: $("sample-list"),
@@ -76,51 +60,6 @@ function syncScreenPicker() {
   });
 }
 syncScreenPicker();
-function completeEffect(method, id, response) {
-  const result = engine[method](id, response);
-  updateState(result);
-  error("");
-  render();
-  return result;
-}
-const httpEffects = new HttpEffects({
-  resources,
-  complete: (id, response) => completeEffect("completeHttp", id, response),
-  runNext: runEffects,
-  onError: (exception) => error(exception.message),
-});
-const storageEffects = new StorageEffects({
-  complete: (id, response) => completeEffect("completeStorage", id, response),
-  runNext: runEffects,
-  onError: (exception) => error(exception.message),
-});
-const fileEffects = new StorageEffects({
-  label: "ファイル操作",
-  client: new FileClient({ engine: { readBuffer: (id) => engine.readBuffer(id) } }),
-  complete: (id, response) => completeEffect("completeFile", id, response),
-  runNext: runEffects,
-  onError: (exception) => error(exception.message),
-});
-const rpcEffects = new StorageEffects({
-  label: "RPC",
-  client: new RpcClient({ resources, engine: { readBuffer: (id) => engine.readBuffer(id) } }),
-  complete: (id, response) => completeEffect("completeRpc", id, response),
-  runNext: runEffects,
-  onError: (exception) => error(exception.message),
-});
-const pageEffects = new PageEffects({
-  load: (url) => load(url, { throwOnError: true, routeFromPackage: true }),
-  onError: (exception) => error(`画面を切り替えられませんでした。${exception.message}`),
-});
-function runEffects(effects = []) {
-  return Promise.all([
-    httpEffects.run(effects.filter((effect) => !effect.kind || effect.kind === "http")),
-    storageEffects.run(effects.filter((effect) => effect.kind === "storage")),
-    fileEffects.run(effects.filter((effect) => effect.kind === "file")),
-    rpcEffects.run(effects.filter((effect) => effect.kind === "rpc")),
-    pageEffects.run(effects.filter((effect) => effect.kind === "navigate")),
-  ]);
-}
 function writeRoute(id, mode = "push") {
   const url = pageUrl(id, base, window.location.href);
   if (url.href !== window.location.href)
@@ -177,240 +116,98 @@ function enableControls() {
   }
 }
 function updateState(result) {
-  currentState = result.state;
-  revision = result.revision;
-  $("revision").textContent = String(revision).padStart(3, "0");
+  $("revision").textContent = String(result.revision).padStart(3, "0");
   $("state-view").textContent = JSON.stringify(result.state, null, 2);
 }
 
-function performEvent(target, payload) {
-  if (!currentPackage || fetching || benchmarkRunning)
-    throw new Error("画面の準備ができていません");
-  let result;
-  try {
-    result = engine.dispatch(target, payload);
-  } catch (exception) {
-    // A failed completion consumes its dialog; redraw the next engine-owned modal.
-    render();
-    throw exception;
-  }
-  updateState(result);
-  error("");
-  render();
-  void runEffects(result.effects);
-  return result;
-}
-
-function dispatch(target, payload) {
-  try {
-    performEvent(target, payload);
-    return true;
-  } catch (exception) {
-    error(exception.message);
-    return false;
-  }
-}
-
-const dom = new DomRenderer($("dom-stage"), dispatch);
-const canvas = new CanvasRenderer($("canvas-stage"), $("canvas"), dispatch);
-document.addEventListener("pointerdown", (event) => {
-  if (scenes?.[0].popup && !event.target.closest(".stage"))
-    dispatch(scenes[0].popup.target, { action: "close" });
+const runtime = new UiRuntime({
+  baseUrl: base,
+  wasmUrl: new URL("engine.wasm", base),
+  resources,
+  surfaces: [
+    { element: $("dom-stage"), renderer: "dom" },
+    { element: $("canvas-stage"), canvas: $("canvas"), renderer: "canvas" },
+  ],
+  isBusy: () => benchmarkRunning || themeFetching,
+  navigate: (url) => load(url, { throwOnError: true, routeFromPackage: true }),
+  onError: (exception) => error(exception?.message ?? ""),
+  onState: updateState,
+  onBusy: (busy) => {
+    fetching = busy;
+    $("loading").hidden = !busy;
+    $("loading").textContent = "画面定義とスクリプトをHTTPから読み込んでいます…";
+    enableControls();
+  },
+  onRender: ({ scenes: rendered, durations }) => {
+    scenes = rendered;
+    applyTheme(document.documentElement, rendered[0].theme);
+    $("dom-timing").textContent = `${durations[0].toFixed(2)} ms`;
+    $("canvas-timing").textContent = `${durations[1].toFixed(2)} ms`;
+  },
+  onLoad: ({ screen, script, source, format, rawSource, duration }) => {
+    engine = runtime.engine;
+    currentPackage = screen;
+    packageUrl = source;
+    syncScreenPicker();
+    $("wasm-size").textContent = `${Math.round(engine.bytes / 1024)} KiB`;
+    $("source-format").value = format;
+    editorFormat = format;
+    $("dsl-source").value = rawSource ?? stringifyPackage(screen, format);
+    $("script-source").value = script;
+    $("screen-url").value = source.href;
+    $("package-url").textContent = source.pathname;
+    $("script-url").textContent = new URL(screen.script, source).pathname;
+    $("compile-time").textContent = `${duration.toFixed(1)} ms`;
+  },
+  onCache: ({ status, fallbackReason, error: failure }) => {
+    $("cache-message").textContent =
+      status === "cache"
+        ? `保存版から表示しています（${fallbackReason}）。`
+        : status === "saved"
+          ? "HTTPから表示し、配信キャッシュを保存しました。"
+          : status === "save-error"
+            ? `画面は表示できましたが、キャッシュを保存できませんでした。${failure.message}`
+            : "HTTPから表示しています。";
+  },
 });
-
-function render() {
-  if (!currentPackage) return;
-  // Identical viewport sizes are not assumed: Rust lays out the same tree for each area.
-  const domWidth = Math.max(240, $("dom-stage").clientWidth);
-  const canvasWidth = Math.max(240, $("canvas-stage").clientWidth);
-  scenes = [engine.layout(domWidth), engine.layout(canvasWidth)];
-  for (const scene of scenes) scene.assetBase = packageUrl.href;
-  applyTheme(document.documentElement, scenes[0].theme);
-  const start = performance.now();
-  dom.render(scenes[0]);
-  const middle = performance.now();
-  canvas.render(scenes[1]);
-  const end = performance.now();
-  $("dom-timing").textContent = `${(middle - start).toFixed(2)} ms`;
-  $("canvas-timing").textContent = `${(end - middle).toFixed(2)} ms`;
+const dom = runtime.surfaces[0].adapter;
+const canvas = runtime.surfaces[1].adapter;
+const render = () => runtime.render();
+const performEvent = (target, payload) => runtime.dispatch(target, payload);
+const snapshot = () => runtime.snapshot();
+function compile(screen, script, source, format = packageFormat(source), rawSource) {
+  return runtime.compile(screen, script, source, { format, rawSource });
 }
-
-function scheduleRender() {
-  cancelAnimationFrame(frame);
-  frame = requestAnimationFrame(() => {
-    try {
-      render();
-    } catch (exception) {
-      error(exception.message);
-    }
-  });
-}
-const resize = new ResizeObserver(scheduleRender);
-resize.observe($("dom-stage"));
-resize.observe($("canvas-stage"));
-
-function compile(
-  screen,
-  script,
-  source,
-  format = packageFormat(source),
-  rawSource,
-  descriptors = currentDescriptors,
-  targetEngine = engine,
-) {
-  screen = structuredClone(screen);
-  const now = new Date();
-  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-  const calendarDefaults = (node) => {
-    if (node.xtype === "datepicker" && !node.today) node.today = today;
-    if (["image", "imagecomponent", "video", "iframe", "uxiframe"].includes(node.xtype)) {
-      for (const key of ["src", "url", "poster", "posterUrl"]) {
-        if (typeof node[key] === "string" && node[key]) {
-          const url = new URL(node[key], source);
-          if (!["http:", "https:"].includes(url.protocol))
-            throw new Error("メディアにはHTTP / HTTPSのURLが必要です");
-        }
-      }
-    }
-    for (const config of [node.items, node.tbar, node.bbar, node.buttons, node.menu]) {
-      for (const child of Array.isArray(config) ? config : [config])
-        if (child && typeof child === "object") calendarDefaults(child);
-    }
-  };
-  calendarDefaults(screen.ui);
-  const start = performance.now();
-  const result = targetEngine.load(screen, script, descriptors);
-  const duration = performance.now() - start;
-  // Only replace the active screen after the candidate compiles and init succeeds.
-  engine = targetEngine;
-  $("wasm-size").textContent = `${Math.round(engine.bytes / 1024)} KiB`;
-  dom.reset();
-  canvas.reset();
-  currentPackage = screen;
-  syncScreenPicker();
-  currentDescriptors = descriptors;
-  screenToken = crypto.randomUUID();
-  packageUrl = source;
-  httpEffects.reset(source);
-  storageEffects.reset(screen.id);
-  fileEffects.reset(screen.id);
-  rpcEffects.reset(source);
-  pageEffects.reset(source);
-  $("source-format").value = format;
-  editorFormat = format;
-  $("dsl-source").value = rawSource ?? stringifyPackage(screen, format);
-  $("script-source").value = script;
-  $("screen-url").value = source.href;
-  $("package-url").textContent = source.pathname;
-  $("script-url").textContent = new URL(screen.script, source).pathname;
-  $("compile-time").textContent = `${duration.toFixed(1)} ms`;
-  updateState(result);
-  render();
-  error("");
-  void runEffects(result.effects);
-}
-
-async function load(
-  url,
-  {
-    signal,
-    beforeCommit,
+async function load(url, options = {}) {
+  const {
     throwOnError = false,
-    routeId,
+    routeId: requestedId,
     routeFromPackage = false,
     historyMode = "push",
-    replacePending = false,
-    refreshEngine = false,
-  } = {},
-) {
-  if ((fetching && !replacePending) || benchmarkRunning || themeFetching) {
+  } = options;
+  if ((fetching && !options.replacePending) || benchmarkRunning || themeFetching) {
     if (throwOnError) throw new Error("画面の読み込み中です");
     return;
   }
-  signal?.throwIfAborted();
-  loadController?.abort();
-  const controller = new AbortController();
-  loadController = controller;
-  const externalAbort = () => controller.abort(signal.reason);
-  signal?.addEventListener("abort", externalAbort, { once: true });
-  const sequence = ++loadSequence;
-  fetching = true;
-  enableControls();
-  $("loading").hidden = false;
-  $("loading").textContent = "画面定義とスクリプトをHTTPから読み込んでいます…";
+  runtime.cacheMode = $("cache-mode").value;
   try {
-    if (!["http:", "https:"].includes(url.protocol))
-      throw new Error("HTTP / HTTPSのURLを指定してください");
-    const candidate = await applicationLoader.fetch(url, {
-      mode: $("cache-mode").value,
-      signal: controller.signal,
-    });
-    const { screen, script, format, source, descriptors } = candidate;
-    // Explicit refresh fetches a new engine too; navigation reuses the active instance.
-    const targetEngine = refreshEngine
-      ? await WasmEngine.create(new URL("engine.wasm", base), {
-          resources,
-          signal: controller.signal,
-          theme: engine.theme(),
-        })
-      : engine;
-    controller.signal.throwIfAborted();
-    beforeCommit?.();
-    compile(screen, script, url, format, source, descriptors, targetEngine);
-    $("cache-message").textContent =
-      candidate.status === "cache"
-        ? `保存版から表示しています（${candidate.fallbackReason}）。`
-        : "HTTPから表示しています。";
-    try {
-      await applicationLoader.save(candidate, { signal: controller.signal });
-      if (candidate.metadata && candidate.status === "network")
-        $("cache-message").textContent = "HTTPから表示し、配信キャッシュを保存しました。";
-    } catch (e) {
-      controller.signal.throwIfAborted();
-      $("cache-message").textContent =
-        `画面は表示できましたが、キャッシュを保存できませんでした。${e.message}`;
-    }
-    controller.signal.throwIfAborted();
+    const candidate = await runtime.load(url, options);
+    let routeId = requestedId;
     if (
       routeFromPackage &&
-      bundledScreens.includes(screen.id) &&
-      url.href === new URL(`screens/${screenFile(screen.id)}`, base).href
+      bundledScreens.includes(candidate.screen.id) &&
+      url.href === new URL(`screens/${screenFile(candidate.screen.id)}`, base).href
     )
-      routeId = screen.id;
+      routeId = candidate.screen.id;
     if (routeId) writeRoute(routeId, historyMode);
     return true;
   } catch (exception) {
-    if (!controller.signal.aborted) {
+    if (exception.name !== "AbortError") {
       error(`画面を読み込めませんでした。${exception.message}`);
-      if (routeId && historyMode === "replace") restoreRoute();
+      if (requestedId && historyMode === "replace") restoreRoute();
     }
     if (throwOnError) throw exception;
-  } finally {
-    signal?.removeEventListener("abort", externalAbort);
-    if (sequence === loadSequence) {
-      fetching = false;
-      $("loading").hidden = true;
-      enableControls();
-    }
   }
-}
-
-function snapshot() {
-  return {
-    screen: currentPackage
-      ? {
-          id: currentPackage.id,
-          title: currentPackage.title,
-          token: screenToken,
-          ...(scenes?.[0].webmcp ? { webmcp: scenes[0].webmcp } : {}),
-        }
-      : null,
-    revision,
-    state: currentState,
-    scene: scenes?.[0],
-    busy: fetching || benchmarkRunning || themeFetching,
-    dialog: scenes?.[0].dialog ?? null,
-  };
 }
 
 async function connectWebMCP() {
@@ -444,7 +241,7 @@ function themeError(message) {
 }
 
 function setTheme(definition, choice, url) {
-  const resolved = engine.theme(definition);
+  const resolved = runtime.theme(definition);
   applyTheme(document.documentElement, resolved);
   $("theme-source").value = JSON.stringify(resolved, null, 2);
   $("theme-url").value = url?.href || "";
@@ -551,7 +348,7 @@ $("cache-clear").addEventListener("click", async () => {
   fetching = true;
   enableControls();
   try {
-    await applicationLoader.clear(packageUrl);
+    await runtime.applicationLoader.clear(packageUrl);
     $("cache-message").textContent = "この画面の配信キャッシュを削除しました。";
   } catch (e) {
     $("cache-message").textContent = `削除できませんでした。${e.message}`;
@@ -628,7 +425,8 @@ $("benchmark").addEventListener("click", async () => {
 
 async function start() {
   try {
-    engine = await WasmEngine.create(new URL("engine.wasm", base), { resources });
+    await runtime.start();
+    engine = runtime.engine;
     setTheme(engine.theme(), "light", new URL("themes/light.json", base));
     $("engine-status").textContent = "WASMエンジン稼働中";
     document.querySelector(".status-light").classList.add("ready");
@@ -655,20 +453,11 @@ start();
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     disposed = true;
-    httpEffects.reset();
-    storageEffects.reset();
-    fileEffects.reset();
-    rpcEffects.reset();
-    pageEffects.reset();
-    loadController?.abort();
+    runtime.dispose();
     window.removeEventListener("popstate", followHistory);
     resources.setAuthentication({ mode: "none" });
     $("auth-token").value = "";
     $("auth-refresh-token").value = "";
     webmcpRegistration?.dispose();
-    resize.disconnect();
-    dom.dispose();
-    canvas.dispose();
-    cancelAnimationFrame(frame);
   });
 }

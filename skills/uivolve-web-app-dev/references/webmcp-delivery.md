@@ -4,7 +4,7 @@
 
 - webmcpで画面・部品の説明を宣言する。説明は認可や任意handler実行の権限ではない。専用業務ツール用のDSL属性は未実装。
 - 操作するAIはui_get_screenで可視key/actionsと最新screen.token/revisionを読み、ui_dispatchへ渡す。STALE_SCREENなら再参照し、Rhai検証エラーなら入力を修正する。DOM/Canvas専用の状態変更経路を作らない。
-- 外部アプリでは定義とscriptをHTTP配信し、既存ホストのローダーへ接続する。`/pages/<id>`はデモホストの画面カタログとSPA fallbackの仕組みで、任意の画面ファイル名から自動生成されるAPIではない。
+- 外部アプリは[共通ランタイム](../../../docs/runtime-distribution.md)を使い、YAML/Rhaiと`app.json`を静的配信できる。`/pages/<id>`は`app.json`のpages登録から解決する。深いURLの入口HTMLまたはSPA fallbackが必要。任意の画面ファイル名から自動生成されるAPIではない。WebMCPにはアプリ自身の画面一覧を渡す。
 - デモへ追加する場合だけpublic/screens、src/screen-catalog.js、index.htmlの選択欄を更新する。配信マニフェストとキャッシュの利用は[配信契約](../../../docs/files-cache-rpc.md)に従う。
 - 別オリジンへ置くならサーバー側のCORSが必要。認証は[JWT/CORS契約](../../../docs/authentication.md)に従う。画面へトークンを埋め込まない。
 - 実WASMのloadで定義・Rhai・initを検証し、入力とhandlerの結果を確認する。DOM/Canvasから同じ操作をして同じstateを得ることを見る。対応ブラウザではWebMCPの主要操作も確認する。

@@ -1,0 +1,711 @@
+/* UI styles are confined to the mounted surface; the host owns the page. */
+.uivolve-runtime {
+  font-family: "Inter", "Noto Sans JP", system-ui, sans-serif;
+  font-synthesis: none;
+  color: var(--ui-text, #263f50);
+}
+.uivolve-runtime,
+.uivolve-runtime * {
+  box-sizing: border-box;
+}
+.uivolve-runtime :is(button, input, select, textarea) {
+  font: inherit;
+}
+.uivolve-runtime button {
+  cursor: pointer;
+}
+.uivolve-runtime :is(button, select):disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.uivolve-runtime :is(button, input, select, textarea):focus-visible {
+  outline: 2px solid var(--ui-focus, #459782);
+  outline-offset: 3px;
+}
+.uivolve-runtime [hidden] {
+  display: none !important;
+}
+
+:where(.uivolve-runtime) .ui-dialog-message {
+  overflow: auto;
+  white-space: pre;
+  line-height: 22px;
+  font-size: 13px;
+  color: var(--ui-text);
+}
+
+:where(.uivolve-runtime) .ui-dialog-icon {
+  width: 100%;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  font-size: 30px;
+  line-height: 1;
+  color: var(--ui-info-text, #427fae);
+}
+
+:where(.uivolve-runtime) .ui-dialog-icon svg,
+:where(.uivolve-runtime) .ui-dialog-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+:where(.uivolve-runtime) .ui-dialog-icon[data-icon="success"] {
+  color: var(--ui-success-text, #287b63);
+}
+
+:where(.uivolve-runtime) .ui-dialog-icon[data-icon="warning"] {
+  color: var(--ui-warning-text, #9b7434);
+}
+
+:where(.uivolve-runtime) .ui-dialog-icon[data-icon="error"] {
+  color: var(--ui-text, #263f50);
+}
+
+:where(.uivolve-runtime).stage {
+  position: relative;
+  width: 100%;
+  min-height: 120px;
+  overflow: hidden;
+  background: var(--ui-background, white);
+}
+
+:where(.uivolve-runtime) .ui-kanban-lane {
+  border: 1px solid var(--ui-border);
+  border-radius: 8px;
+  background: var(--ui-subtle);
+}
+
+:where(.uivolve-runtime) .ui-kanban-lane > strong {
+  position: absolute;
+  top: 13px;
+  left: 11px;
+  right: 36px;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:where(.uivolve-runtime) .ui-kanban-lane > span {
+  position: absolute;
+  top: 14px;
+  right: 11px;
+  font-size: 11px;
+  color: var(--ui-muted);
+}
+
+:where(.uivolve-runtime) .ui-kanban-card,
+:where(.uivolve-runtime) .kanban-drag-ghost {
+  border: 1px solid var(--ui-border);
+  border-radius: 7px;
+  background: var(--ui-background);
+  color: var(--ui-text);
+  text-align: left;
+  padding: 0 10px;
+  cursor: grab;
+  user-select: none;
+  touch-action: pan-y;
+}
+
+:where(.uivolve-runtime) .ui-kanban-card > strong,
+:where(.uivolve-runtime) .kanban-drag-ghost > strong {
+  display: block;
+  margin-top: 14px;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:where(.uivolve-runtime) .ui-kanban-card > span,
+:where(.uivolve-runtime) .kanban-drag-ghost > span {
+  display: block;
+  margin-top: 13px;
+  color: var(--ui-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:where(.uivolve-runtime) .ui-kanban-card::after {
+  content: attr(data-card-id);
+  display: block;
+  margin-top: 5px;
+  font-size: 9px;
+  color: var(--ui-muted);
+}
+
+:where(.uivolve-runtime) .ui-kanban-card:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+:where(.uivolve-runtime) .kanban-drag-source {
+  opacity: 0.35;
+}
+
+:where(.uivolve-runtime) .kanban-drop-target {
+  border-color: var(--ui-focus);
+}
+
+:where(.uivolve-runtime) .kanban-drag-ghost {
+  position: absolute;
+  z-index: 10000;
+  opacity: 0.9;
+  border-color: var(--ui-focus);
+  box-shadow: 0 8px 14px var(--ui-shadow);
+  pointer-events: none;
+}
+
+:where(.uivolve-runtime) .kanban-drop-marker {
+  position: absolute;
+  z-index: 9999;
+  background: var(--ui-focus);
+  pointer-events: none;
+}
+
+:where(.uivolve-runtime).canvas-stage canvas {
+  display: block;
+  outline-offset: -3px;
+}
+
+:where(.uivolve-runtime) .canvas-editor {
+  position: absolute;
+  z-index: 2;
+  border: 1px solid var(--ui-focus);
+  border-radius: 7px;
+  padding: 0 10px;
+  color: var(--ui-text);
+  background: var(--ui-background);
+  font-size: 13px;
+  outline: none;
+}
+
+:where(.uivolve-runtime) .canvas-editor:focus-visible {
+  outline: none;
+}
+
+:where(.uivolve-runtime) .ui-widget {
+  position: absolute;
+  margin: 0;
+  font-size: 13px;
+  overflow: hidden;
+}
+
+:where(.uivolve-runtime) .ui-panel,
+:where(.uivolve-runtime) .ui-fieldset {
+  padding: 14px;
+  border: 1px solid var(--ui-border);
+  border-radius: 7px;
+  background: var(--ui-surface);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+:where(.uivolve-runtime) .ui-panel-toggle {
+  padding: 0 13px;
+  border: 0;
+  background: transparent;
+  color: var(--ui-text);
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 7px;
+}
+
+:where(.uivolve-runtime) .ui-panel-toggle:hover {
+  background: var(--ui-subtle);
+}
+
+:where(.uivolve-runtime) .ui-backdrop {
+  background: var(--ui-overlay);
+}
+
+:where(.uivolve-runtime) .ui-window {
+  border: 1px solid var(--ui-border);
+  border-radius: 9px;
+  background: var(--ui-background);
+  box-shadow: 0 8px 18px var(--ui-shadow);
+}
+
+:where(.uivolve-runtime) .window-title {
+  display: block;
+  padding: 14px 54px 0 14px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:where(.uivolve-runtime) .ui-window-close {
+  border: 0;
+  border-radius: 6px;
+  background: var(--ui-subtle);
+  color: var(--ui-muted);
+  font-size: 20px;
+}
+
+:where(.uivolve-runtime) .ui-window-close:hover {
+  background: var(--ui-subtle);
+}
+
+:where(.uivolve-runtime) .ui-metric {
+  border-radius: 7px;
+  background: var(--ui-info-background);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+:where(.uivolve-runtime) .ui-metric span {
+  color: var(--ui-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+:where(.uivolve-runtime) .ui-metric strong {
+  color: var(--ui-info-text);
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 27px;
+  white-space: nowrap;
+  letter-spacing: -0.5px;
+}
+
+:where(.uivolve-runtime) .ui-metric.variant-green {
+  background: var(--ui-success-background);
+}
+
+:where(.uivolve-runtime) .ui-metric.variant-green strong {
+  color: var(--ui-success-text);
+}
+
+:where(.uivolve-runtime) .ui-metric.variant-amber {
+  background: var(--ui-warning-background);
+}
+
+:where(.uivolve-runtime) .ui-metric.variant-amber strong {
+  color: var(--ui-warning-text);
+}
+
+:where(.uivolve-runtime) .ui-textfield {
+  overflow: visible;
+}
+
+:where(.uivolve-runtime) .ui-textfield label {
+  display: block;
+  font-size: 11px;
+  color: var(--ui-muted);
+  font-weight: 500;
+  height: 24px;
+  line-height: 20px;
+}
+
+:where(.uivolve-runtime) .ui-textfield input {
+  width: 100%;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: 7px;
+  font-size: 13px;
+  color: var(--ui-text);
+  background: var(--ui-background);
+}
+
+:where(.uivolve-runtime) .ui-textfield input:focus-visible {
+  outline: none;
+  border-color: var(--ui-focus);
+}
+
+:where(.uivolve-runtime) .ui-field {
+  overflow: visible;
+}
+
+:where(.uivolve-runtime) .ui-field > label,
+:where(.uivolve-runtime) .ui-displayfield > span {
+  display: block;
+  font-size: 11px;
+  color: var(--ui-muted);
+  font-weight: 500;
+  line-height: 20px;
+}
+
+:where(.uivolve-runtime) .ui-displayfield > span {
+  height: 24px;
+}
+
+:where(.uivolve-runtime) .ui-displayfield > div {
+  line-height: 38px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+:where(.uivolve-runtime) .ui-field > :is(input, select, textarea) {
+  width: 100%;
+  padding: 0 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: 7px;
+  font-size: 13px;
+  color: var(--ui-text);
+  background: var(--ui-background);
+}
+
+:where(.uivolve-runtime) .ui-field > textarea,
+:where(.uivolve-runtime) textarea.canvas-editor {
+  padding: 7px 10px;
+  line-height: 20px;
+  resize: none;
+}
+
+:where(.uivolve-runtime) .ui-field > select[size]:not([size="1"]),
+:where(.uivolve-runtime) select.canvas-editor:not([size="1"]) {
+  padding: 0;
+}
+
+:where(.uivolve-runtime) .ui-field select option,
+:where(.uivolve-runtime) select.canvas-editor option {
+  padding: 6px 10px;
+  min-height: 28px;
+}
+
+:where(.uivolve-runtime) .ui-field input[type="range"] {
+  padding: 0;
+  border: 0;
+  accent-color: var(--ui-primary);
+}
+
+:where(.uivolve-runtime) .ui-field > :is(input, select, textarea):focus-visible {
+  outline: none;
+  border-color: var(--ui-focus);
+}
+
+:where(.uivolve-runtime) .ui-field :disabled {
+  opacity: 0.5;
+}
+
+:where(.uivolve-runtime) .ui-field .box-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  color: var(--ui-text);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+:where(.uivolve-runtime) .box-control input {
+  margin: 0;
+  width: 17px;
+  height: 17px;
+  accent-color: var(--ui-primary);
+}
+
+:where(.uivolve-runtime) .ui-progressbar {
+  border: 1px solid var(--ui-border);
+  border-radius: 7px;
+  background: var(--ui-subtle);
+}
+
+:where(.uivolve-runtime) .ui-progressbar > div {
+  height: 100%;
+  background: var(--ui-selected);
+}
+
+:where(.uivolve-runtime) .ui-progressbar > span {
+  position: absolute;
+  inset: 0;
+  padding: 0 10px;
+  line-height: 28px;
+  font-size: 12px;
+}
+
+:where(.uivolve-runtime) .ui-button {
+  border: 1px solid var(--ui-border);
+  border-radius: 7px;
+  background: var(--ui-background);
+  color: var(--ui-text);
+  font-weight: 500;
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  padding: 0 8px;
+}
+
+:where(.uivolve-runtime) .ui-button:hover {
+  background: var(--ui-selected);
+}
+
+:where(.uivolve-runtime) .ui-extra-button {
+  border: 1px solid var(--ui-border);
+  border-radius: 6px;
+  color: var(--ui-text);
+  background: var(--ui-background);
+  font-size: 12px;
+}
+
+:where(.uivolve-runtime) .ui-extra-button:hover,
+:where(.uivolve-runtime) .ui-extra-button.selected {
+  background: var(--ui-selected);
+}
+
+:where(.uivolve-runtime) .ui-extra-button.variant-muted {
+  color: var(--ui-muted);
+}
+
+:where(.uivolve-runtime) .ui-figure,
+:where(.uivolve-runtime) .ui-document {
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
+  border-radius: 7px;
+}
+
+:where(.uivolve-runtime) .ui-figure svg,
+:where(.uivolve-runtime) .ui-document svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+:where(.uivolve-runtime) .ui-toolbar {
+  background: var(--ui-subtle);
+  border-radius: 6px;
+}
+
+:where(.uivolve-runtime) .ui-separator {
+  border-left: 1px solid var(--ui-border);
+  transform: translateY(5px);
+}
+
+:where(.uivolve-runtime) .ui-toast {
+  background: var(--ui-selected);
+  border: 1px solid var(--ui-border);
+  border-radius: 7px;
+  padding: 12px 44px 12px 14px;
+  color: var(--ui-text);
+  white-space: pre-line;
+  line-height: 26px;
+}
+
+:where(.uivolve-runtime) .code-input {
+  font-family: ui-monospace, monospace !important;
+  tab-size: 2;
+}
+
+:where(.uivolve-runtime) .ui-image,
+:where(.uivolve-runtime) .ui-video,
+:where(.uivolve-runtime) .ui-iframe,
+:where(.uivolve-runtime) .canvas-media {
+  overflow: hidden;
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
+  border-radius: 7px;
+}
+
+:where(.uivolve-runtime) .canvas-media {
+  position: absolute;
+}
+
+:where(.uivolve-runtime) .native-media {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  object-fit: contain;
+}
+
+:where(.uivolve-runtime) [data-media-kind][data-empty="true"]::after,
+:where(.uivolve-runtime) [data-media-error="true"]::after {
+  content: "メディアを読み込めません";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--ui-muted);
+  font-size: 12px;
+}
+
+:where(.uivolve-runtime) .ui-button.variant-primary {
+  background: var(--ui-primary);
+  border-color: var(--ui-primary);
+  color: var(--ui-on-primary);
+}
+
+:where(.uivolve-runtime) .ui-button.variant-primary:hover {
+  filter: brightness(0.94);
+}
+
+:where(.uivolve-runtime) .ui-grid-header,
+:where(.uivolve-runtime) .ui-row {
+  display: flex;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--ui-border);
+  border-radius: 0;
+  text-align: left;
+}
+
+:where(.uivolve-runtime) .ui-grid-shell,
+:where(.uivolve-runtime) .ui-tree-shell {
+  border: 1px solid var(--ui-border);
+  border-radius: 0;
+  background: var(--ui-background);
+}
+
+:where(.uivolve-runtime) .ui-grid-head,
+:where(.uivolve-runtime) .ui-tabbar {
+  background: var(--ui-subtle);
+  border-bottom: 1px solid var(--ui-border);
+}
+
+:where(.uivolve-runtime) .ui-grid-row {
+  border-bottom: 1px solid var(--ui-border);
+  background: var(--ui-background);
+}
+
+:where(.uivolve-runtime) .ui-grid-row.selected {
+  background: var(--ui-selected);
+}
+
+:where(.uivolve-runtime) .ui-grid-column,
+:where(.uivolve-runtime) .ui-grid-cell,
+:where(.uivolve-runtime) .ui-grid-select,
+:where(.uivolve-runtime) .ui-tab,
+:where(.uivolve-runtime) .ui-tree-node,
+:where(.uivolve-runtime) .ui-tree-toggle,
+:where(.uivolve-runtime) .ui-menu-item {
+  border: 0;
+  background: transparent;
+  color: var(--ui-text);
+  text-align: left;
+  padding: 0 8px;
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+:where(.uivolve-runtime) .ui-grid-column {
+  background: var(--ui-subtle);
+  font-weight: 500;
+}
+
+:where(.uivolve-runtime) .ui-grid-cell.editable {
+  cursor: text;
+}
+
+:where(.uivolve-runtime) .ui-grid-cell:hover,
+:where(.uivolve-runtime) .ui-tree-node:hover,
+:where(.uivolve-runtime) .ui-menu-item:hover {
+  background: var(--ui-selected);
+}
+
+:where(.uivolve-runtime) .ui-grid-select,
+:where(.uivolve-runtime) .ui-tree-toggle,
+:where(.uivolve-runtime) .ui-tab {
+  text-align: center;
+}
+
+:where(.uivolve-runtime) .ui-tab.selected {
+  box-shadow: inset 0 -3px var(--ui-primary);
+  background: var(--ui-selected);
+}
+
+:where(.uivolve-runtime) .ui-tree-shell {
+  padding: 13px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ui-muted);
+}
+
+:where(.uivolve-runtime) .ui-tree-node.selected {
+  background: var(--ui-selected);
+}
+
+:where(.uivolve-runtime) .ui-grid-page,
+:where(.uivolve-runtime) .ui-menu-trigger {
+  border: 1px solid var(--ui-border);
+  border-radius: 6px;
+  color: var(--ui-text);
+  background: var(--ui-background);
+  font-size: 12px;
+}
+
+:where(.uivolve-runtime) .ui-menu-surface {
+  border: 1px solid var(--ui-border);
+  border-radius: 7px;
+  background: var(--ui-background);
+  box-shadow: 0 8px 18px var(--ui-shadow);
+}
+
+:where(.uivolve-runtime) .ui-menuseparator {
+  border-top: 1px solid var(--ui-border);
+  transform: translateY(4px);
+}
+
+:where(.uivolve-runtime) .ui-grid-row .ui-field {
+  overflow: hidden;
+}
+
+:where(.uivolve-runtime) .ui-grid-row .ui-field > :is(input, select) {
+  border-radius: 0;
+  padding: 0 8px;
+}
+
+:where(.uivolve-runtime) .ui-grid-header {
+  background: var(--ui-subtle);
+  color: var(--ui-muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+:where(.uivolve-runtime) .ui-grid-header span,
+:where(.uivolve-runtime) .ui-row span {
+  flex-shrink: 0;
+  padding: 0 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:where(.uivolve-runtime) .ui-row {
+  background: var(--ui-background);
+  color: var(--ui-text);
+  font-size: 12px;
+}
+
+:where(.uivolve-runtime) .ui-row:hover {
+  background: var(--ui-selected);
+}
+
+:where(.uivolve-runtime) .ui-row.selected {
+  background: var(--ui-selected);
+  box-shadow: inset 3px 0 var(--ui-focus);
+}
+
+:where(.uivolve-runtime) .ui-label {
+  line-height: 24px;
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--ui-text);
+}
+
+:where(.uivolve-runtime) .ui-label.variant-muted,
+:where(.uivolve-runtime) .ui-empty {
+  color: var(--ui-muted);
+}
+
+:where(.uivolve-runtime) .ui-empty {
+  line-height: 42px;
+  padding-left: 10px;
+  font-size: 12px;
+}

@@ -1,5 +1,5 @@
 // Same host/engine, different package. The route identifies a bundled page only.
-export function readPageRoute(url, base, ids) {
+export function readPageRoute(url, base, ids, initialPage = "orders") {
   url = new URL(url);
   base = new URL(base);
   const prefix = `${base.pathname}pages/`;
@@ -11,7 +11,7 @@ export function readPageRoute(url, base, ids) {
   if (![base.pathname, `${base.pathname}index.html`].includes(url.pathname))
     throw new Error(`未知の画面URLです: ${url.pathname}`);
   const legacy = url.searchParams.get("screen");
-  return ids.includes(legacy) ? legacy : "orders";
+  return ids.includes(legacy) ? legacy : initialPage;
 }
 export function pageUrl(id, base, current) {
   const url = new URL(`pages/${encodeURIComponent(id)}`, base);

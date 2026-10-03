@@ -48,7 +48,7 @@
 
 ## 描画と操作
 
-既存のkindへ展開できれば、その描画実装を再利用する。新kindが必要ならDOMのcreate/render、Canvasのpaint、および対応するCSSへ追加する。状態・行の並べ替え・業務計算は描画コードに入れない。
+既存のkindへ展開できれば、その描画実装を再利用する。新kindが必要ならDOMのcreate/render、Canvasのpaint、および`src/runtime.css`へ追加する。部品のCSSは`.uivolve-runtime`の表示領域へ限定し、デモ用の`src/styles.css`へ入れない。状態・行の並べ替え・業務計算は描画コードに入れない。
 
 操作種別は`src/widget-contract.js`へ接続する。
 

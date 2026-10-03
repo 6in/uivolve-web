@@ -37,6 +37,8 @@ Rustを変更したら`bun run build:wasm`を実行する。フロントエン�
 
 配布物は`dist/`一式。静的HTTPサーバーで配信し、配信先でBunやRustを実行する必要はない。取得URL・プレビュー更新・エラー確認は[運用手順](docs/operations.md)を参照する。
 
+比較デモを含めない独立アプリは`bun run build:minimal`で`app-dist/`へ生成し、`bun run preview:minimal`で4175から確認できる。ランタイムだけなら`bun run build:runtime`。YAML・Rhai・`app.json`からアプリを構成する方法は[最小ランタイムの導入手順](docs/runtime-distribution.md)を参照する。
+
 ## 試せること
 
 - 「画面遷移・画面A」のボタンから、別のYAMLとRhaiをHTTPで取得して画面Bへ切り替える。画面Bの戻るボタンも画面Aを再取得する。失敗時は現在の画面と入力を保持する。[画面遷移チュートリアル](docs/tutorial-page-navigation.md)を参照。

@@ -12,6 +12,7 @@
 | WebMCP登録と操作                 | [WebMCP](../../../docs/webmcp.md)                                                                        |
 
 - 現行WASMはブラウザimportなし。I/Oは検証済みeffectsをホストが実行し、id付き完了を最新stateへ戻す。画面切替の中止と世代判定で古い応答を破棄する。
+- 共通の取得・状態・描画・effectsは`src/runtime.js`、独立アプリの設定・ルーティングは`src/application.js`、デモの一覧・編集・計測は`src/main.js`。デモ用DOMや画面カタログを共通ランタイムへ持ち込まない。CSSは`src/runtime.css`で表示領域へ限定する。[配布契約](../../../docs/runtime-distribution.md)を維持する。
 - HTTP、保存、ファイル、RPC、ダイアログの準備と容量確認が通ってからstate/effectsを確定する。新しい依頼種別ではホスト側の振り分けと完了ABIも接続する。
 - JWTはResourceClient/TokenSessionが保持し、WASM、state、Sceneへ渡さない。CORSはサーバーの設定も必要。更新・401再試行・同時要求・中止の契約を維持する。
 - 候補のエンジン/画面の取得・load成功後に置き換える。失敗時は現在の画面とテーマを保つ。WASMの再取得とページJSの再読み込みを区別する。

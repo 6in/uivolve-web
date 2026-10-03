@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hello World — uivolve-web</title>
+    <style>
+      body {
+        margin: 0;
+        background: #f5f6f3;
+        color: #263f50;
+        font-family: system-ui, sans-serif;
+      }
+      main {
+        max-width: 720px;
+        margin: 48px auto;
+        padding: 0 20px;
+      }
+      h1 {
+        font-size: 24px;
+      }
+      nav {
+        margin: 16px 0;
+        display: flex;
+        gap: 16px;
+      }
+      nav a {
+        color: #286c5c;
+      }
+      #app {
+        border: 1px solid #dce4de;
+        border-radius: 8px;
+        background: white;
+      }
+      #error {
+        color: #a65640;
+        white-space: pre-wrap;
+      }
+      #status {
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Hello World</h1>
+      <nav aria-label="描画方式">
+        <a href="?renderer=dom">DOMで表示</a>
+        <a href="?renderer=canvas">Canvasで表示</a>
+      </nav>
+      <p id="status" role="status">画面を読み込んでいます…</p>
+      <p id="error" role="alert" hidden></p>
+      <div id="app"></div>
+    </main>
+    <script type="module" src="./boot.js"></script>
+  </body>
+</html>

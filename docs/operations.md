@@ -4,6 +4,8 @@ GitHub Pagesでの公開とActionsによるスキル配布は[GitHub配布手順
 
 開発に必要な環境と基本コマンドは[README](../README.md)を参照する。uivolve-webの画面処理はブラウザ内で実行され、配信側には静的HTTPサーバーが必要。
 
+比較デモを含めない`app-dist/`と、既存HTMLへ組み込む`runtime-dist/`の生成・利用方法は[共通ランタイムと最小アプリ](runtime-distribution.md)を参照する。
+
 ## 開発とプレビュー
 
 ```sh

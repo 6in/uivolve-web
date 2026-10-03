@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "renderer": "dom",
+  "initialPage": "home",
+  "pages": [{ "id": "home", "title": "Hello World", "url": "pages/home.yaml" }]
+}

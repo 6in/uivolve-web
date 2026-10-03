@@ -1,5 +1,7 @@
 target/
 dist/
+runtime-dist/
+app-dist/
 public/engine.wasm
 public/THIRD_PARTY_NOTICES.txt
 node_modules/
