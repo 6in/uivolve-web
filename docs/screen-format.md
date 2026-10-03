@@ -2,7 +2,7 @@
 
 画面パッケージはJSONまたはYAML。UI処理は別URLのRhaiテキスト。`script`は、パッケージURLから解決する相対または絶対HTTP / HTTPS URL。YAMLの対応範囲は[ブラウザ機能の契約](platform-features.md)を参照。
 
-トップレベルには必須の`version / id / title / script / state / ui`と、任意の`requests / storage / files / rpc / stateSchema / webmcp`がある。`stateSchema`はDSLで宣言したstateの型・範囲を確定前に検証する。`storage`はIndexedDB/OPFSの名前付き保存レコード、`webmcp`は画面や部品の説明メタデータ。記法・制限・実行例は[保存・型・メタデータの契約](platform-features.md)にまとめる。`files`はOPFSのファイル領域、`rpc`はDescriptorを使うUnary呼び出し。[ファイル・キャッシュ・RPCの契約](files-cache-rpc.md)を参照する。
+トップレベルには必須の`version / id / title / script / state / ui`と、任意の`requests / pages / storage / files / rpc / stateSchema / webmcp`がある。`stateSchema`はDSLで宣言したstateの型・範囲を確定前に検証する。`storage`はIndexedDB/OPFSの名前付き保存レコード、`webmcp`は画面や部品の説明メタデータ。記法・制限・実行例は[保存・型・メタデータの契約](platform-features.md)にまとめる。`files`はOPFSのファイル領域、`rpc`はDescriptorを使うUnary呼び出し。[ファイル・キャッシュ・RPCの契約](files-cache-rpc.md)を参照する。`pages`は名前付きの遷移先。Rhaiの`navigate(name)`で別の画面パッケージを取得し、表示を切り替える。[画面遷移のチュートリアル](tutorial-page-navigation.md)を参照する。
 
 初めて書く場合は、入力・ボタン・結果表示を使う[Hello Worldチュートリアル](tutorial-hello-world.md)を参照。実行例は[hello-world.json](../public/screens/hello-world.json)と[hello-world.rhai](../public/screens/hello-world.rhai)。
 

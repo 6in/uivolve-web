@@ -8,7 +8,7 @@
 
 Node 24、Bun 1.3.12、Rust 1.95.0とwasm32-unknown-unknownを用意し、固定した依存関係で実WASMのテストを行う。Pagesが返すbase_pathでViteをビルドするので、`/uivolve-web/`配下から画面・Rhai・テーマ・WASMを取得する。
 
-GitHub PagesにはSPAの任意rewriteを設定しない。`scripts/prepare-pages.mjs`が同梱15画面の`pages/<id>/index.html`へビルド済みの入口をコピーする。直接アクセス・再読み込みでもHTTP 200で画面を開ける。未知の画面や存在しないアセットは通常の404となる。
+GitHub PagesにはSPAの任意rewriteを設定しない。`scripts/prepare-pages.mjs`が画面カタログの各`pages/<id>/index.html`へビルド済みの入口をコピーする。直接アクセス・再読み込みでもHTTP 200で画面を開ける。未知の画面や存在しないアセットは通常の404となる。
 
 ローカルで同じ成果物を作る例:
 

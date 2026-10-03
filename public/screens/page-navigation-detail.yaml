@@ -1,0 +1,40 @@
+version: 1
+id: page-navigation-detail
+title: 画面遷移・画面B
+script: page-navigation-detail.rhai
+pages:
+  home:
+    url: page-navigation.yaml
+state:
+  memo: ""
+  notice: 画面BのYAMLとRhaiをHTTPから読み込みました。
+ui:
+  xtype: container
+  layout: vbox
+  items:
+    - xtype: panel
+      title: 画面B · ダウンロードした画面
+      layout: vbox
+      items:
+        - xtype: label
+          itemId: destinationNotice
+          bind: notice
+        - xtype: textfield
+          itemId: destinationMemo
+          fieldLabel: この画面のメモ
+          bind: memo
+        - xtype: button
+          itemId: showMemo
+          text: 画面BのRhaiでメモを表示
+          handler: showMemo
+    - xtype: button
+      itemId: returnHome
+      text: 画面Aをダウンロードして戻る
+      handler: returnHome
+      variant: primary
+    - xtype: label
+      text: 画面Aと画面Bは、別々のYAML・Rhai・stateで動作します。
+      variant: muted
+    - xtype: label
+      text: 再取得した画面は初期状態で開きます。入力値は遷移先に引き継ぎません。
+      variant: muted

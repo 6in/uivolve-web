@@ -1,0 +1,40 @@
+version: 1
+id: page-navigation
+title: 画面遷移・画面A
+script: page-navigation.rhai
+pages:
+  details:
+    url: page-navigation-detail.yaml
+  missing:
+    url: missing-page.yaml
+state:
+  memo: ""
+ui:
+  xtype: container
+  layout: vbox
+  items:
+    - xtype: panel
+      title: 画面A · 遷移元
+      layout: vbox
+      items:
+        - xtype: label
+          text: ボタンから別のYAMLとRhaiをHTTPで取得して開きます。
+        - xtype: textfield
+          itemId: sourceMemo
+          fieldLabel: メモ（取得失敗時は保持されます）
+          bind: memo
+        - xtype: button
+          itemId: openDetails
+          text: 画面Bをダウンロードして開く
+          handler: openDetails
+          variant: primary
+    - xtype: button
+      itemId: tryMissingPage
+      text: 取得失敗を試す（存在しない画面）
+      handler: tryMissingPage
+    - xtype: label
+      text: 読み込みに成功すると、DOM・Canvasの両方が画面Bに切り替わります。
+      variant: muted
+    - xtype: label
+      text: 失敗時は、この画面と入力値を保ったままエラーを表示します。
+      variant: muted

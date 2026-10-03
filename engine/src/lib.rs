@@ -20,6 +20,7 @@ mod http;
 mod layouts;
 mod metadata;
 mod navigation;
+mod pages;
 mod rpc;
 mod state_schema;
 mod storage;
@@ -36,6 +37,8 @@ pub struct Package {
     pub ui: Node,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub requests: HashMap<String, http::Request>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub pages: HashMap<String, pages::Definition>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub storage: HashMap<String, storage::Definition>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
@@ -362,6 +365,7 @@ pub struct Runtime {
     files: files::Requests,
     rpc: rpc::Requests,
     dialogs: dialogs::Requests,
+    pages: pages::Requests,
     pub revision: u32,
 }
 
@@ -391,6 +395,7 @@ impl Runtime {
             return Err("Initial state must be an object".into());
         }
         package.webmcp.validate()?;
+        pages::Requests::validate(&package.pages)?;
         if let Some(schema) = &package.state_schema {
             schema.definition()?;
             schema.validate(&package.state)?;
@@ -422,6 +427,8 @@ impl Runtime {
         rpc.register(&mut engine);
         let mut dialogs = dialogs::Requests::default();
         dialogs.register(&mut engine);
+        let pages = pages::Requests::default();
+        pages.register(&mut engine);
         register(&mut engine);
         engine.set_max_operations(50_000);
         engine.set_max_call_levels(32);
@@ -524,6 +531,9 @@ impl Runtime {
         let file_intents = files.prepare(&package.files)?;
         let rpc_intents = rpc.prepare()?;
         let dialog_intents = dialogs.prepare(&ast)?;
+        if !pages.prepare(&package.pages)?.is_empty() {
+            return Err("navigate is only available in event handlers, not init".into());
+        }
         let (file_bytes, file_count) = files::Requests::size(&file_intents);
         let (rpc_bytes, rpc_count) = rpc::Requests::size(&rpc_intents);
         buffers::capacity(file_bytes + rpc_bytes, file_count + rpc_count)?;
@@ -544,11 +554,13 @@ impl Runtime {
             files,
             rpc,
             dialogs,
+            pages,
             revision: 0,
         })
     }
 
     pub fn dispatch(&mut self, target: &str, mut payload: Value) -> Result<(), String> {
+        self.pages.clear();
         self.http.clear();
         self.storage.clear();
         self.files.clear();
@@ -668,6 +680,7 @@ impl Runtime {
     }
 
     pub fn complete_http(&mut self, id: u64, response: Value) -> Result<(), String> {
+        self.pages.clear();
         let name = self.http.consume(id)?;
         self.http.clear();
         self.storage.clear();
@@ -690,6 +703,7 @@ impl Runtime {
     }
 
     pub fn complete_storage(&mut self, id: u64, mut response: Value) -> Result<(), String> {
+        self.pages.clear();
         let (name, operation) = self.storage.consume(id)?;
         self.http.clear();
         self.storage.clear();
@@ -724,6 +738,7 @@ impl Runtime {
         buffer: Option<u32>,
     ) -> Result<(), String> {
         self.http.clear();
+        self.pages.clear();
         self.storage.clear();
         self.files.clear();
         self.rpc.clear();
@@ -751,6 +766,7 @@ impl Runtime {
         mut response: Value,
         buffer: Option<u32>,
     ) -> Result<(), String> {
+        self.pages.clear();
         self.http.clear();
         self.storage.clear();
         self.files.clear();
@@ -771,6 +787,7 @@ impl Runtime {
         self.commit_state(next)
     }
     pub fn complete_dialog(&mut self, id: u64, mut response: Value) -> Result<(), String> {
+        self.pages.clear();
         self.http.clear();
         self.storage.clear();
         self.files.clear();
@@ -806,6 +823,7 @@ impl Runtime {
             .chain(self.files.take())
             .chain(self.rpc.take())
             .chain(self.dialogs.take())
+            .chain(self.pages.take())
             .collect()
     }
 
@@ -836,6 +854,18 @@ impl Runtime {
         let file_intents = self.files.prepare(&self.package.files)?;
         let rpc_intents = self.rpc.prepare()?;
         let dialog_intents = self.dialogs.prepare(&self.ast)?;
+        let page_intents = self.pages.prepare(&self.package.pages)?;
+        if !page_intents.is_empty()
+            && (!names.is_empty()
+                || !intents.is_empty()
+                || !file_intents.is_empty()
+                || !rpc_intents.is_empty()
+                || !dialog_intents.is_empty())
+        {
+            return Err(
+                "Navigation cannot be combined with other effects in the same handler".into(),
+            );
+        }
         let (file_bytes, file_count) = files::Requests::size(&file_intents);
         let (rpc_bytes, rpc_count) = rpc::Requests::size(&rpc_intents);
         buffers::capacity(file_bytes + rpc_bytes, file_count + rpc_count)?;
@@ -846,6 +876,7 @@ impl Runtime {
         self.files.commit(file_intents);
         self.rpc.commit(rpc_intents, &self.package.rpc);
         self.dialogs.commit(dialog_intents);
+        self.pages.commit(page_intents);
         self.revision += 1;
         Ok(())
     }

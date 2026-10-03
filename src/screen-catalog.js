@@ -26,6 +26,22 @@ export const SCREEN_CATALOG = Object.freeze(
       description: "Rhaiからタブと入力部品を追加",
     },
     {
+      id: "page-navigation",
+      title: "画面遷移・画面A",
+      label: "画面遷移 · 画面A",
+      category: "start",
+      description: "ボタンから別のYAML・Rhaiを取得して切り替え",
+      file: "page-navigation.yaml",
+    },
+    {
+      id: "page-navigation-detail",
+      title: "画面遷移・画面B",
+      label: "画面遷移 · 画面B",
+      category: "start",
+      description: "遷移先の画面と、画面Aへの戻り操作",
+      file: "page-navigation-detail.yaml",
+    },
+    {
       id: "uivolve-forms",
       title: "uivolve フォーム部品",
       label: "フォーム部品",

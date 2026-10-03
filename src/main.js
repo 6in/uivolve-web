@@ -14,6 +14,7 @@ import { RpcClient } from "./rpc-client.js";
 import { packageFormat, parsePackage, stringifyPackage } from "./package-format.js";
 import { readPageRoute, pageUrl } from "./page-router.js";
 import { createScreenPicker } from "./screen-picker.js";
+import { PageEffects } from "./page-effects.js";
 
 const $ = (id) => document.getElementById(id);
 const base = new URL(import.meta.env.BASE_URL, window.location.href);
@@ -107,12 +108,17 @@ const rpcEffects = new StorageEffects({
   runNext: runEffects,
   onError: (exception) => error(exception.message),
 });
+const pageEffects = new PageEffects({
+  load: (url) => load(url, { throwOnError: true, routeFromPackage: true }),
+  onError: (exception) => error(`画面を切り替えられませんでした。${exception.message}`),
+});
 function runEffects(effects = []) {
   return Promise.all([
     httpEffects.run(effects.filter((effect) => !effect.kind || effect.kind === "http")),
     storageEffects.run(effects.filter((effect) => effect.kind === "storage")),
     fileEffects.run(effects.filter((effect) => effect.kind === "file")),
     rpcEffects.run(effects.filter((effect) => effect.kind === "rpc")),
+    pageEffects.run(effects.filter((effect) => effect.kind === "navigate")),
   ]);
 }
 function writeRoute(id, mode = "push") {
@@ -289,6 +295,7 @@ function compile(
   storageEffects.reset(screen.id);
   fileEffects.reset(screen.id);
   rpcEffects.reset(source);
+  pageEffects.reset(source);
   $("source-format").value = format;
   editorFormat = format;
   $("dsl-source").value = rawSource ?? stringifyPackage(screen, format);
@@ -310,6 +317,7 @@ async function load(
     beforeCommit,
     throwOnError = false,
     routeId,
+    routeFromPackage = false,
     historyMode = "push",
     replacePending = false,
     refreshEngine = false,
@@ -363,6 +371,12 @@ async function load(
         `画面は表示できましたが、キャッシュを保存できませんでした。${e.message}`;
     }
     controller.signal.throwIfAborted();
+    if (
+      routeFromPackage &&
+      bundledScreens.includes(screen.id) &&
+      url.href === new URL(`screens/${screenFile(screen.id)}`, base).href
+    )
+      routeId = screen.id;
     if (routeId) writeRoute(routeId, historyMode);
     return true;
   } catch (exception) {
@@ -645,6 +659,7 @@ if (import.meta.hot) {
     storageEffects.reset();
     fileEffects.reset();
     rpcEffects.reset();
+    pageEffects.reset();
     loadController?.abort();
     window.removeEventListener("popstate", followHistory);
     resources.setAuthentication({ mode: "none" });
