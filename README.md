@@ -22,7 +22,7 @@ bun run dev
 
 開発サーバー: `http://127.0.0.1:4173/`。起動時にRustをWASMへビルドする。
 
-画面を直接開くには`/pages/hello-world`などを指定する。対応IDは画面選択欄にある15画面。旧`?screen=hello-world`も同じ画面を読み込む。プレビュー例: `http://127.0.0.1:4174/pages/hello-world`。戻る・進むにも対応する。
+画面を直接開くには`/pages/hello-world`などを指定する。「サンプル一覧」は15画面を「はじめに」「フォーム・部品」「レイアウト・画面構成」「通信・Rust拡張」「データ保存」「アプリケーション例」に分け、短い説明とともに表示する。一覧は折りたため、画面選択欄にも同じカテゴリがある。並び・説明は`src/screen-catalog.js`で管理する。旧`?screen=hello-world`も同じ画面を読み込む。プレビュー例: `http://127.0.0.1:4174/pages/hello-world`。戻る・進むにも対応する。
 
 ```sh
 bun run build       # WASM + Vite+本番ビルド → dist/

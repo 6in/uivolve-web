@@ -13,6 +13,7 @@ import { ApplicationLoader } from "./application-loader.js";
 import { RpcClient } from "./rpc-client.js";
 import { packageFormat, parsePackage, stringifyPackage } from "./package-format.js";
 import { readPageRoute, pageUrl } from "./page-router.js";
+import { createScreenPicker } from "./screen-picker.js";
 
 const $ = (id) => document.getElementById(id);
 const base = new URL(import.meta.env.BASE_URL, window.location.href);
@@ -60,6 +61,20 @@ let themeChoice = "light";
 let loadSequence = 0;
 let loadController;
 let pendingRoute;
+const screenPicker = createScreenPicker({
+  list: $("sample-list"),
+  select: $("screen-select"),
+  baseUrl: base,
+  onSelect: (id) => loadBundled(id),
+});
+$("sample-count").textContent = `${SCREEN_CATALOG.length}画面 · カテゴリから選択`;
+function syncScreenPicker() {
+  screenPicker.setState({
+    id: currentPackage?.id,
+    disabled: !engine || fetching || benchmarkRunning || themeFetching,
+  });
+}
+syncScreenPicker();
 function completeEffect(method, id, response) {
   const result = engine[method](id, response);
   updateState(result);
@@ -132,6 +147,7 @@ function error(message) {
   $("error").hidden = !message;
 }
 function enableControls() {
+  syncScreenPicker();
   for (const id of controls)
     $(id).disabled = !engine || fetching || benchmarkRunning || themeFetching;
   for (const id of ["auth-token", "auth-origins", "auth-refresh-enabled"])
@@ -265,6 +281,7 @@ function compile(
   dom.reset();
   canvas.reset();
   currentPackage = screen;
+  syncScreenPicker();
   currentDescriptors = descriptors;
   screenToken = crypto.randomUUID();
   packageUrl = source;
@@ -346,15 +363,11 @@ async function load(
         `画面は表示できましたが、キャッシュを保存できませんでした。${e.message}`;
     }
     controller.signal.throwIfAborted();
-    $("screen-select").value = bundledScreens.includes(screen.id) ? screen.id : "";
     if (routeId) writeRoute(routeId, historyMode);
     return true;
   } catch (exception) {
     if (!controller.signal.aborted) {
       error(`画面を読み込めませんでした。${exception.message}`);
-      $("screen-select").value = bundledScreens.includes(currentPackage?.id)
-        ? currentPackage.id
-        : "";
       if (routeId && historyMode === "replace") restoreRoute();
     }
     if (throwOnError) throw exception;
