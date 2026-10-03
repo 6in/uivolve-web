@@ -24,6 +24,7 @@ flowchart TD
 | -------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `engine/src/lib.rs`                          | Package/Node/Widget/Scene、Runtime、共通検証、イベントの確定、基本部品の計測・配置、windowの重ね表示  |
 | `engine/src/abi.rs`                          | UTF-8 JSONの操作振り分け、WASMインスタンス内のRuntime・応答バッファ、公開メモリ関数                   |
+| `engine/src/extensions/`                     | Rhaiへ公開するRust関数の共通登録、正規表現のキャッシュ・容量制限、整数配列の一括集計                  |
 | `engine/src/theme.rs`                        | テーマの検証・色トークンの解決・現在テーマ。画面切替後も同じWASMインスタンス内で保持                  |
 | `engine/src/fields.rs`                       | xtype別名・入力の初期値、型・範囲・選択肢検証、入力Widget設定                                         |
 | `engine/src/layouts.rs`                      | 共通レイアウトの設定・Card状態・必要高・配置スロット                                                  |

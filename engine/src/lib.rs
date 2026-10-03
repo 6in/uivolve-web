@@ -7,6 +7,7 @@ pub use abi::{input_alloc, input_free, request, response_len};
 mod theme;
 use theme::Theme;
 mod dynamic_ui;
+pub mod extensions;
 mod extras;
 mod fields;
 mod figures;
@@ -335,7 +336,16 @@ pub struct Runtime {
 }
 
 impl Runtime {
-    pub fn load(mut package: Package, script: &str) -> Result<Self, String> {
+    pub fn load(package: Package, script: &str) -> Result<Self, String> {
+        Self::load_with_extensions(package, script, |_| {})
+    }
+
+    /// Register application-specific native functions before compiling the downloaded script.
+    pub fn load_with_extensions(
+        mut package: Package,
+        script: &str,
+        register: impl FnOnce(&mut Engine),
+    ) -> Result<Self, String> {
         if package.version != 1 {
             return Err("Unsupported package version (expected 1)".into());
         }
@@ -353,8 +363,10 @@ impl Runtime {
             return Err("A window must be inside a container or panel".into());
         }
         let mut engine = Engine::new();
+        extensions::register(&mut engine);
         let mut http = http::Requests::default();
         http.register(&mut engine);
+        register(&mut engine);
         engine.set_max_operations(50_000);
         engine.set_max_call_levels(32);
         engine.set_max_expr_depths(64, 32);

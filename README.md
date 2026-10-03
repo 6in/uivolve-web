@@ -20,7 +20,7 @@ bun run dev
 
 開発サーバー: `http://127.0.0.1:4173/`。起動時にRustをWASMへビルドする。
 
-画面を直接開くにはURLへ`?screen=hello-world`などを付ける。対応値は`orders`、`tasks`、`hello-world`、`dynamic-tabs`、`http-grid`、`components`、`uivolve-forms`、`grid-lab`、`uivolve-gallery`、`layout-lab`。省略・不明な値は受注管理を開く。Hello Worldのプレビュー: `http://127.0.0.1:4174/?screen=hello-world`。
+画面を直接開くにはURLへ`?screen=hello-world`などを付ける。対応値は`orders`、`tasks`、`hello-world`、`dynamic-tabs`、`http-grid`、`native-extensions`、`components`、`uivolve-forms`、`grid-lab`、`uivolve-gallery`、`layout-lab`。省略・不明な値は受注管理を開く。Hello Worldのプレビュー: `http://127.0.0.1:4174/?screen=hello-world`。
 
 ```sh
 bun run build       # WASM + Vite+本番ビルド → dist/
@@ -42,6 +42,8 @@ Rustを変更したら`bun run build:wasm`を実行する。フロントエン�
 - 「動的タブ追加・Rhaiから部品を作る」で、ボタンを押すたびに商品名・数量・確認ボタン・結果表示を持つタブを追加する。入力と結果はタブごとに保持する。`itemsBind`でstate内の部品定義を共通WASMツリーへ展開する。[動的タブのチュートリアル](docs/tutorial-dynamic-tabs.md)を参照。
 
 - 「HTTP JSON・グリッドへ表示」で、ボタンから認証なしのJSONを取得し、商品8件をGridへ表示する。Rhaiの`http_get`で依頼し、受け取り関数でstateへ反映する。取得中・失敗・再取得を扱う。[HTTPグリッドのチュートリアル](docs/tutorial-http-grid.md)を参照。
+
+- 「Rust拡張・正規表現」で、RhaiからWASM内のRust関数を呼び、一致判定・抽出・キャプチャ・置換、整数配列の一括集計を試せる。登録窓口にRust関数を追加して再ビルドすれば、どの画面からも利用できる。[Rust拡張ガイド](docs/native-extensions.md)を参照。
 
 - 「Grid・Card・Border レイアウト」画面で、幅に応じたGrid配置と列span、入力を保持するCard切替、上下左右と中央を組むBorder、領域を使い切るFitを試せる。共通gap/paddingと最小高さを扱い、座標・寸法をWASMが計算する。詳細は[レイアウト契約](docs/layouts.md)。
 

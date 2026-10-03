@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "id": "native-extensions",
+  "title": "Rust拡張・正規表現",
+  "script": "native-extensions.rhai",
+  "state": {
+    "activeTab": 0,
+    "pattern": "(?P<name>[^\\s]+)\\s+(?P<count>[0-9]+)",
+    "text": "りんご 3\nみかん 12\nぶどう 5",
+    "replacement": "${name} × ${count}",
+    "matched": "未実行",
+    "matches": [],
+    "captures": "",
+    "replaced": "",
+    "notice": "入力した正規表現で、一致判定・抽出・置換を試せます。",
+    "a": 10,
+    "b": 20,
+    "c": 30,
+    "total": "未実行",
+    "sumNotice": "3つの整数を、Rustのサブルーチンでまとめて集計します。"
+  },
+  "ui": {
+    "xtype": "tabpanel",
+    "itemId": "nativeTabs",
+    "activeBind": "activeTab",
+    "items": [
+      {
+        "xtype": "panel",
+        "title": "正規表現",
+        "items": [
+          {
+            "xtype": "textfield",
+            "itemId": "regexPattern",
+            "fieldLabel": "正規表現",
+            "bind": "pattern",
+            "maxLength": 1024
+          },
+          {
+            "xtype": "textarea",
+            "itemId": "regexText",
+            "fieldLabel": "対象テキスト",
+            "bind": "text",
+            "rows": 3,
+            "maxLength": 10000
+          },
+          {
+            "xtype": "textfield",
+            "itemId": "regexReplacement",
+            "fieldLabel": "置換文字列（$1・${name}を利用できます）",
+            "bind": "replacement",
+            "maxLength": 4096
+          },
+          {
+            "xtype": "button",
+            "itemId": "runRegex",
+            "text": "正規表現を実行",
+            "handler": "runRegex",
+            "variant": "primary"
+          },
+          { "xtype": "label", "itemId": "regexNotice", "bind": "notice" },
+          { "xtype": "displayfield", "fieldLabel": "一致判定", "bind": "matched" },
+          {
+            "xtype": "gridpanel",
+            "itemId": "regexMatches",
+            "bind": "matches",
+            "pageSize": 3,
+            "columns": [
+              { "text": "番号", "dataIndex": "id", "flex": 1 },
+              { "text": "抽出結果", "dataIndex": "text", "flex": 4 }
+            ]
+          },
+          {
+            "xtype": "textarea",
+            "itemId": "captureResult",
+            "fieldLabel": "最初の一致のキャプチャ（0は一致全体）",
+            "bind": "captures",
+            "rows": 3,
+            "readOnly": true
+          },
+          {
+            "xtype": "textarea",
+            "itemId": "replaceResult",
+            "fieldLabel": "置換結果",
+            "bind": "replaced",
+            "rows": 3,
+            "readOnly": true
+          }
+        ]
+      },
+      {
+        "xtype": "panel",
+        "title": "整数の一括集計",
+        "items": [
+          { "xtype": "numberfield", "itemId": "sumA", "fieldLabel": "整数 A", "bind": "a" },
+          { "xtype": "numberfield", "itemId": "sumB", "fieldLabel": "整数 B", "bind": "b" },
+          { "xtype": "numberfield", "itemId": "sumC", "fieldLabel": "整数 C", "bind": "c" },
+          {
+            "xtype": "button",
+            "itemId": "runSum",
+            "text": "Rustで合計",
+            "handler": "runSum",
+            "variant": "primary"
+          },
+          { "xtype": "displayfield", "fieldLabel": "合計", "bind": "total" },
+          { "xtype": "label", "itemId": "sumNotice", "bind": "sumNotice" }
+        ]
+      }
+    ]
+  }
+}

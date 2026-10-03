@@ -24,6 +24,7 @@ description: uivolve-webの画面JSONとRhaiハンドラを作成・修正する
 - Rhaiのtrim()は文字列をその場で変更する。戻り値を代入・比較しない。コピーへtrim()を呼んでから空文字列か検査する。
 - レイアウトは共通レイアウト契約に従う。HTML編集はhtmleditorのソース文字列、図形座標はdraw.spritesの指定範囲で扱う。CSS・DOM参照・描画アダプターのAPIを画面処理へ混ぜない。動画/iframeの再生状態はネイティブ要素が管理し、共通WASM状態との同期を前提にしない。
 - 計算・検証・一覧の絞り込みはRhaiに置く。JSON取得にはトップレベルのrequestsとRhaiのhttp_get(name)、完了handlerを使う。[HTTPグリッドのチュートリアル](../../docs/tutorial-http-grid.md)を参照。POST、async/await、タイマー等の未実装APIを捏造しない。
+- 正規表現にはregex_is_match / regex_find_all / regex_captures / regex_replace_all、整数配列の一括集計にはsum_intsを使える。[Rust拡張ガイド](../../docs/native-extensions.md)で構文・型・サイズ上限・例外を確認する。未登録のRust関数をページ側で捏造しない。新しいネイティブ関数にはRustでの登録とエンジンの再ビルドが必要。
 - 変更したJSONとRhaiをWASMエンジンの`load`へ通し、主要イベントを確認する。ブラウザの定義エディタからも検証できる。両バックエンドで同じ状態が見えることを確認する。
 
 エンジン拡張が必要な場合は、画面パッケージの修正と分けて影響を説明し、[部品開発ガイド](../../docs/component-development.md)と[部品開発スキル](../uivolve-web-components/SKILL.md)を使う。対応属性・Rhai機能の最終的な根拠は`engine/src/lib.rs`と`engine/Cargo.toml`。

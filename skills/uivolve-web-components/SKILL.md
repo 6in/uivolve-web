@@ -9,7 +9,7 @@ description: uivolve-webのRust/WASMエンジンとDOM/Canvas描画へ部品を�
 
 - 設定・状態型・既定値・イベント・寸法・対応範囲を決め、近い実装を選ぶ。未知属性を拒否するDSL契約を維持する。
 - Runtimeのコピー→組み込み更新→Rhai→状態検証→確定の順序を維持する。新しい状態制約はinit後とhandler後に検証し、失敗時に元の画面・状態を保つ。
-- 状態・型・配置はRust、業務計算はRhai、HTTPとブラウザ入力・描画はJavaScriptへ置く。レンダラーだけで状態を変更しない。
+- 状態・型・配置はRust、業務の流れはRhai、HTTPとブラウザ入力・描画はJavaScriptへ置く。再利用する計算処理は[ネイティブ拡張ガイド](../../docs/native-extensions.md)に従いRust関数として登録できる。レンダラーだけで状態を変更しない。
 - 同じ幅で計測と配置を行い、安定したWidget keyを使う。子を隠す構造では、イベント遮断とwindow収集も揃える。
 - 操作種別は`src/widget-contract.js`へ接続する。表示部品、物理操作部品、Cardの意味的操作を区別し、WebMCPの可視key/actionとWASM検証を揃える。
 - IME中の入力要素と文字列を保持する。ネイティブメディアやリスナーには非表示・reset/dispose時の終了処理を用意する。

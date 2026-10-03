@@ -6,6 +6,7 @@ export const SCREEN_CATALOG = Object.freeze(
     { id: "hello-world", title: "Hello World・はじめての画面" },
     { id: "dynamic-tabs", title: "動的タブ追加・Rhaiから部品を作る" },
     { id: "http-grid", title: "HTTP JSON・グリッドへ表示" },
+    { id: "native-extensions", title: "Rust拡張・正規表現" },
     { id: "components", title: "パネル・ウィンドウ" },
     { id: "uivolve-forms", title: "uivolve フォーム部品" },
     { id: "grid-lab", title: "Grid・タブ・ツリー・メニュー" },
