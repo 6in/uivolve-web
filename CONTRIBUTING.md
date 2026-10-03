@@ -23,4 +23,4 @@ uivolve-webでは、画面定義・状態・イベント・配置を共通エン
 - 実装の整理と振る舞いの変更は、確認しやすい単位に分ける。テストは状態・座標・イベントの結果を確認する。
 - 移植・再利用したコードのライセンスとクレジットを[第三者通知](THIRD_PARTY_NOTICES.md)へ反映する。
 
-同梱AIスキルは[画面作成](skills/wasm-ui-authoring/SKILL.md)と[部品開発](skills/uivolve-web-components/SKILL.md)。これらはリポジトリ内のガイドであり、グローバル環境へのインストールを自動では行わない。
+同梱AIスキルは[アプリ開発](skills/uivolve-web-app-dev/SKILL.md)と[エンジン開発](skills/uivolve-web-engine-dev/SKILL.md)。[スキル案内](docs/skills.md)に選び方と独立した配布用フォルダーの生成方法を記す。グローバル環境へのインストールは自動では行わない。

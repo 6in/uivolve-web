@@ -1,0 +1,4 @@
+interface:
+  display_name: "uivolve-web エンジン開発"
+  short_description: "Rust/WASMの部品・DSL・ABIとブラウザホストを共通契約に沿って開発する"
+  default_prompt: "$uivolve-web-engine-dev を使って、エンジンの変更とDOM/Canvasへの接続を実装・検証してください。"

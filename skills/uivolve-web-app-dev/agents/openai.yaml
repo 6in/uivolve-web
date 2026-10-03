@@ -1,0 +1,4 @@
+interface:
+  display_name: "uivolve-web アプリ開発"
+  short_description: "YAMLとRhaiで画面・状態・イベントを組み立て、DOM/Canvasで確認する"
+  default_prompt: "$uivolve-web-app-dev を使って、既存エンジン上で動く画面とRhaiの処理を作成してください。"

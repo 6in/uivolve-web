@@ -1,0 +1,33 @@
+version: 1
+id: hello-world
+title: Hello World
+script: hello-world.rhai
+state:
+  name: ""
+  greeting: 名前を入力して「挨拶する」を押してください。
+stateSchema:
+  type: object
+  required: [name, greeting]
+  additionalProperties: false
+  properties:
+    name:
+      type: string
+      maxLength: 80
+    greeting:
+      type: string
+ui:
+  xtype: container
+  layout: vbox
+  items:
+    - xtype: textfield
+      itemId: nameInput
+      fieldLabel: 名前
+      bind: name
+    - xtype: button
+      itemId: helloButton
+      text: 挨拶する
+      handler: sayHello
+      variant: primary
+    - xtype: label
+      itemId: greetingLabel
+      bind: greeting

@@ -108,8 +108,9 @@ Rust / WASM エンジン
 - `engine/src/grid.rs` / `navigation.rs`: Gridの操作・下書き・ページ生成とタブ・ツリー・メニューの共通状態。
 - `docs/screen-format.md`: 画面・スクリプトの契約。
 - `docs/theme-format.md` / `public/themes/`: 配色の契約と標準テーマ。フォントや余白を指定する汎用スタイルDSLは含まない。
-- `skills/wasm-ui-authoring/SKILL.md`: AI向けの画面作成ガイド。
-- `skills/uivolve-web-components/SKILL.md`: AI向けのエンジン・部品開発ガイド。
+- `skills/uivolve-web-app-dev/SKILL.md`: AI向けのアプリ開発スキル。YAML/JSONとRhai、機能別資料、最小サンプル。
+- `skills/uivolve-web-engine-dev/SKILL.md`: AI向けのエンジン開発スキル。部品・DSL・ABIとブラウザホスト。
+- スキルの使い方と外部アプリ向け配布は[スキル案内](docs/skills.md)を参照。
 
 ## 検証上の限界
 
