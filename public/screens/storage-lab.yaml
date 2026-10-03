@@ -6,10 +6,19 @@ script: storage-lab.rhai
 webmcp:
   label: ブラウザ保存のサンプル
   description: 名前と年齢をIndexedDBまたはOPFSへ保存し、復元・削除する。stateSchemaで型と範囲を検証する。
-  tags: [storage, yaml, typed-state]
+  tags:
+    - storage
+    - yaml
+    - typed-state
 storage:
-  profileDb: { backend: indexeddb, key: profile, handler: stored }
-  profileFile: { backend: opfs, key: profile, handler: stored }
+  profileDb:
+    backend: indexeddb
+    key: profile
+    handler: stored
+  profileFile:
+    backend: opfs
+    key: profile
+    handler: stored
 state:
   name: 太郎
   age: 20
@@ -18,45 +27,63 @@ state:
   notice: 名前と年齢を入力し、保存方式を選んでください。
 stateSchema:
   type: object
-  required: [name, age, backend, loading, notice]
+  required:
+    - name
+    - age
+    - backend
+    - loading
+    - notice
   additionalProperties: false
   properties:
-    name: { type: string, maxLength: 40 }
-    age: { type: integer, minimum: 0, maximum: 130 }
-    backend: { type: string, enum: [indexeddb, opfs] }
-    loading: { type: boolean }
-    notice: { type: string, maxLength: 2000 }
+    name:
+      type: string
+      maxLength: 40
+    age:
+      type: integer
+      minimum: 0
+      maximum: 130
+    backend:
+      type: string
+      enum:
+        - indexeddb
+        - opfs
+    loading:
+      type: boolean
+    notice:
+      type: string
+      maxLength: 2000
 ui:
   xtype: container
   layout: vbox
   items:
-    - { xtype: label, text: ブラウザにプロフィールを保存, variant: heading }
+    - xtype: label
+      text: ブラウザにプロフィールを保存
+      variant: heading
     - xtype: combobox
       itemId: storageBackend
       fieldLabel: 保存方式
       bind: backend
       disabledBind: loading
       options:
-        - { text: IndexedDB, value: indexeddb }
-        - { text: OPFS, value: opfs }
+        - text: IndexedDB
+          value: indexeddb
+        - text: OPFS
+          value: opfs
     - xtype: textfield
       itemId: profileName
       fieldLabel: 名前（40文字以内）
       bind: name
       disabledBind: loading
       webmcp:
-        {
-          label: プロフィールの名前,
-          description: 保存・復元の対象となる名前。40文字以内。,
-          tags: [profile],
-        }
-    - {
-        xtype: numberfield,
-        itemId: profileAge,
-        fieldLabel: 年齢（0〜130の整数）,
-        bind: age,
-        disabledBind: loading,
-      }
+        label: プロフィールの名前
+        description: 保存・復元の対象となる名前。40文字以内。
+        tags:
+          - profile
+    - xtype: numberfield
+      itemId: profileAge
+      fieldLabel: 年齢（0〜130の整数）
+      bind: age
+      disabledBind: loading
     - xtype: container
       layout: hbox
       items:
@@ -67,25 +94,25 @@ ui:
           disabledBind: loading
           variant: primary
           webmcp:
-            { description: 選択した方式でプロフィールをこのブラウザへ保存する。, tags: [write] }
-        - {
-            xtype: button,
-            itemId: restoreProfile,
-            text: 復元,
-            handler: restoreProfile,
-            disabledBind: loading,
-          }
-        - {
-            xtype: button,
-            itemId: removeProfile,
-            text: 削除,
-            handler: removeProfile,
-            disabledBind: loading,
-          }
-    - { xtype: label, itemId: storageNotice, bind: notice }
-    - {
-        xtype: label,
-        text: 再読み込み後も「復元」で戻せます。保存先は画面idごとに分かれます。,
-        variant: muted,
-      }
-    - { xtype: label, text: 小数の年齢や長すぎる名前はstateSchemaが拒否します。, variant: muted }
+            description: 選択した方式でプロフィールをこのブラウザへ保存する。
+            tags:
+              - write
+        - xtype: button
+          itemId: restoreProfile
+          text: 復元
+          handler: restoreProfile
+          disabledBind: loading
+        - xtype: button
+          itemId: removeProfile
+          text: 削除
+          handler: removeProfile
+          disabledBind: loading
+    - xtype: label
+      itemId: storageNotice
+      bind: notice
+    - xtype: label
+      text: 再読み込み後も「復元」で戻せます。保存先は画面idごとに分かれます。
+      variant: muted
+    - xtype: label
+      text: 小数の年齢や長すぎる名前はstateSchemaが拒否します。
+      variant: muted
