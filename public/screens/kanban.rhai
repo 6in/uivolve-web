@@ -12,6 +12,15 @@ fn init(state) {
     state
 }
 
+fn reviewModeChanged(state, event) {
+    state.reviewModeNotice = if state.reviewRequired {
+        "検証モードON：完了への移動を拒否します。チェックを外すと移動できます。"
+    } else {
+        "通常モード：すべての列へドラッグして移動できます。"
+    };
+    state
+}
+
 fn cardMoved(state, event) {
     // The engine has already moved the card in a tentative copy of state.
     // Throwing rolls back the card, its order, and all changes from this handler.
@@ -32,6 +41,7 @@ fn resetBoard(state, event) {
     state.cards = initial_cards();
     state.moves = 0;
     state.reviewRequired = false;
+    state = reviewModeChanged(state, event);
     state.notice = "初期状態に戻しました。完了の空の列にもドロップできます。";
     state
 }

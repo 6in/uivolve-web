@@ -30,7 +30,8 @@ const card = (view, id) =>
   view.widgets.find((w) => w.kind === "kanban-card" && w.payload.id === id);
 const lane = (view, id) =>
   view.widgets.find((w) => w.kind === "kanban-lane" && w.config.lane === id);
-const plain = "fn init(s){s} fn cardMoved(s,e){s} fn resetBoard(s,e){s}";
+const plain =
+  "fn init(s){s} fn cardMoved(s,e){s} fn resetBoard(s,e){s} fn reviewModeChanged(s,e){s}";
 
 it("loads downloaded YAML/Rhai, moves to an empty lane and preserves stable card keys", () => {
   const before = scene();
@@ -93,6 +94,28 @@ it("rolls back the card, ordering, state and revision when Rhai refuses a move",
   result = engine.dispatch("reviewRequired", { value: false });
   move("task-1", "done");
   expect(result.state.moves).toBe(1);
+});
+
+it("shows the active review restriction while allowing moves between the other lanes", () => {
+  expect(scene().widgets.find((widget) => widget.key === "reviewModeNotice").text).toContain(
+    "通常モード",
+  );
+  result = engine.dispatch("reviewRequired", { value: true });
+  expect(scene().widgets.find((widget) => widget.key === "reviewModeNotice").text).toContain(
+    "検証モードON",
+  );
+  move("task-1", "doing");
+  expect(ids("doing")).toContain("task-1");
+  result = engine.dispatch("reviewRequired", { value: false });
+  expect(scene().widgets.find((widget) => widget.key === "reviewModeNotice").text).toContain(
+    "通常モード",
+  );
+  move("task-1", "done");
+  expect(ids("done")).toContain("task-1");
+  result = engine.dispatch("reviewRequired", { value: true });
+  result = engine.dispatch("resetBoard");
+  expect(result.state.reviewRequired).toBe(false);
+  expect(result.state.reviewModeNotice).toContain("通常モード");
 });
 
 it.each([

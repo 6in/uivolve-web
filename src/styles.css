@@ -605,6 +605,13 @@ dd {
   color: #a65640;
 }
 
+/* Keep failed operations visible while the demo's boards are below the fold. */
+#error {
+  position: sticky;
+  top: 12px;
+  z-index: 10001;
+}
+
 .loading-banner {
   background: #eaf4ee;
   color: #427862;

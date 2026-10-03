@@ -13,6 +13,7 @@ state:
   moves: 0
   notice: カードをつかんで別の列へ。上下の並べ替えもできます。
   reviewRequired: false
+  reviewModeNotice: 通常モード：すべての列へドラッグして移動できます。
 stateSchema:
   type: object
   properties:
@@ -46,6 +47,8 @@ stateSchema:
       type: string
     reviewRequired:
       type: boolean
+    reviewModeNotice:
+      type: string
 ui:
   xtype: container
   layout: vbox
@@ -72,7 +75,11 @@ ui:
     - xtype: checkbox
       itemId: reviewRequired
       bind: reviewRequired
+      handler: reviewModeChanged
       boxLabel: 完了への移動をRhaiで拒否する（元の位置を保持）
+    - xtype: label
+      itemId: reviewModeNotice
+      bind: reviewModeNotice
     - xtype: button
       itemId: resetBoard
       text: ボードを初期状態に戻す
