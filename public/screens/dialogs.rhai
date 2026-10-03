@@ -1,15 +1,23 @@
 fn init(s) { s }
 fn waiting(s) { s.loading = true; s.notice = "回答を待っています…"; s }
+fn dialogOptions(s) {
+    if s.dialogIcon == "default" { return #{}; }
+    if s.dialogIcon == "custom-image" {
+        return #{icon: #{src: "../assets/dialog-orbit.svg", alt: "アプリのアイコン"}};
+    }
+    if s.dialogIcon == "custom-text" { return #{icon: #{text: "🚀", alt: "ロケット"}}; }
+    #{icon: s.dialogIcon}
+}
 fn showAlert(s, e) {
-    alert("Hello " + s.name, "dialogDone");
+    alert("Hello " + s.name, "dialogDone", dialogOptions(s));
     waiting(s)
 }
 fn showConfirm(s, e) {
-    confirm(s.name + " さん、この内容でよいですか？", "dialogDone");
+    confirm(s.name + " さん、この内容でよいですか？", "dialogDone", dialogOptions(s));
     waiting(s)
 }
 fn showPrompt(s, e) {
-    prompt("名前を入力してください。", s.name, "dialogDone");
+    prompt("名前を入力してください。", s.name, "dialogDone", dialogOptions(s));
     waiting(s)
 }
 fn dialogDone(s, r) {

@@ -22,7 +22,7 @@ APIがないブラウザには登録しない。グローバルAPIの偽装やpo
 
 `ui_get_state`は1〜10個のキーを指定する。配列は既定25件、最大50件で、total / offset / nextOffsetを返す。入れ子の配列・オブジェクトは50項目、文字列2,000文字、深さ6、値1,000個までのプレビュー。省略した場合は`truncated:true`。全状態を無制限に返す機能ではない。
 
-[独自ダイアログ](dialogs.md)の回答待ちは`busy:true`となり、`ui_dispatch / ui_load_screen`の背景変更は`BUSY`になる。`ui_get_screen.dialog`は現在の`id / operation / title / message`と、promptの入力`value`を制限付きで参照する。非表示時はnull。ダイアログの回答はそのUIから行い、専用の回答ツールはまだ提供しない。
+[独自ダイアログ](dialogs.md)の回答待ちは`busy:true`となり、`ui_dispatch / ui_load_screen`の背景変更は`BUSY`になる。`ui_get_screen.dialog`は現在の`id / operation / title / message / icon`と、promptの入力`value`を制限付きで参照する。iconは標準名または任意文字／解決済み画像URLとalt。非表示時はnull。ダイアログの回答はそのUIから行い、専用の回答ツールはまだ提供しない。
 
 ## 操作手順
 

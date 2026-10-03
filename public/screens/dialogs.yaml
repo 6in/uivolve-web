@@ -6,6 +6,7 @@ state:
   name: 太郎
   notice: ボタンで通知・確認・入力ダイアログを試せます。
   loading: false
+  dialogIcon: default
 stateSchema:
   type: object
   properties:
@@ -15,7 +16,9 @@ stateSchema:
       type: string
     loading:
       type: boolean
-  required: [name, notice, loading]
+    dialogIcon:
+      type: string
+  required: [name, notice, loading, dialogIcon]
 ui:
   xtype: container
   layout: vbox
@@ -46,6 +49,32 @@ ui:
           text: 入力（prompt）
           handler: showPrompt
           disabledBind: loading
+    - xtype: combobox
+      itemId: dialogIcon
+      fieldLabel: アイコン
+      bind: dialogIcon
+      disabledBind: loading
+      options:
+        - value: default
+          text: 種類ごとのデフォルト
+        - value: info
+          text: 情報
+        - value: success
+          text: 成功
+        - value: warning
+          text: 警告
+        - value: error
+          text: エラー
+        - value: question
+          text: 確認
+        - value: input
+          text: 入力
+        - value: custom-image
+          text: 任意の画像（SVG）
+        - value: custom-text
+          text: 任意の文字・絵文字
+        - value: none
+          text: アイコンなし
     - xtype: label
       itemId: dialogNotice
       bind: notice
@@ -54,4 +83,7 @@ ui:
       variant: muted
     - xtype: label
       text: confirmのキャンセルはfalse、promptのキャンセルはnull、空文字のOKは空文字として受け取ります。
+      variant: muted
+    - xtype: label
+      text: アイコンは標準・画像URL・絵文字を選べます。相対画像URLは画面定義のURLを基準に読み込みます。
       variant: muted

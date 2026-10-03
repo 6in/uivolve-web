@@ -94,7 +94,9 @@ const rpcEffects = new StorageEffects({
   runNext: runEffects,
   onError: (exception) => error(exception.message),
 });
-const dialogPresenter = new DialogPresenter();
+const dialogPresenter = new DialogPresenter({
+  getAssetBase: () => packageUrl?.href || document.baseURI,
+});
 const dialogEffects = new DialogEffects({
   client: dialogPresenter,
   complete: (id, response) => completeEffect("completeDialog", id, response),

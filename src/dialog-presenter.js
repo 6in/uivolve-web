@@ -1,3 +1,5 @@
+import { resolveDialogIcon, createDialogIcon } from "./dialog-icons.js";
+
 // Patterns describe content and answers; the shared shell owns modality and focus.
 const patterns = Object.freeze({
   alert: { title: "お知らせ", buttons: [{ label: "OK", value: null }], cancel: null },
@@ -21,17 +23,19 @@ const patterns = Object.freeze({
 });
 export class DialogPresenter {
   #current;
-  constructor({ document = globalThis.document } = {}) {
+  constructor({ document = globalThis.document, getAssetBase } = {}) {
     this.document = document;
+    this.getAssetBase = getAssetBase || (() => this.document.baseURI);
   }
   snapshot() {
     if (!this.#current) return null;
-    const { effect, pattern, input } = this.#current;
+    const { effect, pattern, input, icon } = this.#current;
     return {
       id: effect.id,
       operation: effect.operation,
       title: pattern.title,
       message: effect.message,
+      icon,
       ...(input ? { value: input.value } : {}),
     };
   }
@@ -42,6 +46,7 @@ export class DialogPresenter {
     const pattern = patterns[effect.operation];
     const doc = this.document;
     if (!doc?.body) throw new Error("ダイアログの表示先がありません");
+    const icon = resolveDialogIcon(effect.icon, effect.operation, this.getAssetBase());
     const modal = doc.createElement("dialog");
     modal.className = "ui-dialog";
     modal.setAttribute("role", "dialog");
@@ -51,6 +56,11 @@ export class DialogPresenter {
     const title = doc.createElement("h2");
     title.id = "ui-dialog-title";
     title.textContent = pattern.title;
+    const header = doc.createElement("div");
+    header.className = "ui-dialog-header";
+    const iconElement = createDialogIcon(doc, icon);
+    if (iconElement) header.append(iconElement);
+    header.append(title);
     const message = doc.createElement("p");
     message.id = "ui-dialog-message";
     message.textContent = effect.message;
@@ -61,7 +71,7 @@ export class DialogPresenter {
     close.className = "ui-dialog-close";
     close.textContent = "×";
     close.setAttribute("aria-label", "閉じる");
-    modal.append(close, title, message, form);
+    modal.append(close, header, message, form);
     let input;
     if (pattern.input) {
       const label = doc.createElement("label");
@@ -147,7 +157,7 @@ export class DialogPresenter {
       modal.addEventListener("close", () => finish(pattern.cancel));
       close.addEventListener("click", () => finish(pattern.cancel));
       signal?.addEventListener("abort", abort, { once: true });
-      this.#current = { effect, pattern, input };
+      this.#current = { effect, pattern, input, icon };
       doc.body.append(modal);
       try {
         signal?.throwIfAborted();

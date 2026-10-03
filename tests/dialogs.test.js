@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { WasmEngine } from "../src/engine.js";
 import { DialogEffects } from "../src/dialog-effects.js";
 import { parsePackage } from "../src/package-format.js";
+import { resolveDialogIcon } from "../src/dialog-icons.js";
 
 let wasm, engine, screen, script;
 beforeAll(async () => {
@@ -95,8 +96,8 @@ it("checks handlers, argument sizes and request limits before committing state o
   for (const body of [
     'confirm("x","missing")',
     'prompt("x","")',
-    'alert("x".repeat(4097))',
-    'prompt("x","あ".repeat(1366),"done")',
+    `alert(${JSON.stringify("x".repeat(4097))})`,
+    `prompt("x",${JSON.stringify("あ".repeat(1366))},"done")`,
     'for i in 0..9 {alert("x");}',
     'alert("x");s.loading="bad"',
   ]) {
@@ -246,4 +247,81 @@ it("aborts a displayed asynchronous dialog on screen replacement and resumes the
   client.execute.mockResolvedValueOnce(true);
   await h.run([{ id: 2, operation: "confirm", message: "new" }]);
   expect(complete).toHaveBeenCalledWith(2, ok(true));
+});
+it("supplies type-specific defaults without changing the existing API", () => {
+  load('alert("x");confirm("x","done");prompt("x","done")');
+  expect(engine.dispatch("go").effects.map((e) => e.icon)).toEqual(["info", "question", "input"]);
+});
+it("supports icon options for every signature, including custom images and text", () => {
+  load(
+    'alert("x",#{icon:"success"});alert("x","done",#{icon:"warning"});confirm("x","done",#{icon:"error"});prompt("x","done",#{icon:"none"});prompt("x","太郎","done",#{icon:#{src:"../assets/dialog-orbit.svg",alt:"アプリ"}});alert("x",#{icon:#{text:"🚀",alt:"ロケット"}})',
+  );
+  const effects = engine.dispatch("go").effects;
+  expect(effects.map((e) => e.icon)).toEqual([
+    "success",
+    "warning",
+    "error",
+    "none",
+    { src: "../assets/dialog-orbit.svg", alt: "アプリ" },
+    { text: "🚀", alt: "ロケット" },
+  ]);
+  expect(effects[3].defaultValue).toBe("");
+  expect(effects[4].defaultValue).toBe("太郎");
+  effects.forEach((effect) =>
+    engine.completeDialog(effect.id, ok(effect.operation === "confirm" ? true : null)),
+  );
+});
+it.each([
+  '#{icon:"unknown"}',
+  "#{icon:42}",
+  '#{icons:"info"}',
+  '#{icon:#{src:"x",text:"🚀"}}',
+  '#{icon:#{src:"x",width:100}}',
+  '#{icon:#{text:" "}}',
+  `#{icon:#{text:${JSON.stringify("あ".repeat(22))}}}`,
+  '#{icon:#{src:"data:image/svg+xml;base64,ABC"}}',
+  '#{icon:#{src:"javascript:alert(1)"}}',
+  '#{icon:#{src:"file:///tmp/icon.svg"}}',
+  `#{icon:#{src:${JSON.stringify("x".repeat(2049))}}}`,
+  '#{icon:#{src:"icon with space.svg"}}',
+  `#{icon:#{text:"🚀",alt:${JSON.stringify("あ".repeat(54))}}}`,
+])("rejects invalid icon options atomically: %s", (options) => {
+  load(`alert("valid");s.name="should not commit";alert("bad",${options})`);
+  const before = engine.layout(500);
+  expect(() => engine.dispatch("go")).toThrow(/Dialog/);
+  expect(engine.layout(500)).toEqual(before);
+  expect(() => engine.completeDialog(1, ok())).toThrow(/completed/);
+});
+it("resolves custom assets against the downloaded package, including deployment subpaths", () => {
+  const base = "https://example.com/app/screens/dialogs.yaml";
+  expect(resolveDialogIcon(undefined, "confirm", base)).toBe("question");
+  expect(resolveDialogIcon({ src: "../assets/icon.svg", alt: "アプリ" }, "alert", base)).toEqual({
+    src: "https://example.com/app/assets/icon.svg",
+    alt: "アプリ",
+  });
+  expect(resolveDialogIcon({ src: "https://cdn.example.com/icon.png" }, "alert", base)).toEqual({
+    src: "https://cdn.example.com/icon.png",
+    alt: "",
+  });
+  expect(resolveDialogIcon({ text: "<svg>", alt: "文字" }, "prompt", base)).toEqual({
+    text: "<svg>",
+    alt: "文字",
+  });
+  expect(resolveDialogIcon("none", "alert", base)).toBe("none");
+});
+it.each([
+  { src: "javascript:alert(1)" },
+  { src: "data:image/png;base64,AAAA" },
+  { src: "//user:secret@example.com/x" },
+  { src: "https://user:secret@example.com/x" },
+  { src: "../a.svg", text: "x" },
+  { src: "../a.svg", width: 20 },
+  { text: "あ".repeat(22) },
+  { text: "🚀", alt: "あ".repeat(54) },
+  { src: "../a\\b.svg" },
+  "__proto__",
+])("rejects invalid custom icon contracts at the host boundary: %j", (icon) => {
+  expect(() =>
+    resolveDialogIcon(icon, "alert", "https://example.com/app/screens/demo.yaml"),
+  ).toThrow();
 });

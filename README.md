@@ -37,7 +37,7 @@ Rustを変更したら`bun run build:wasm`を実行する。フロントエン�
 
 ## 試せること
 
-- 「ダイアログ」で、Rhaiの`alert / confirm / prompt`からテーマに合わせた独自モーダルを表示する。DOM・Canvas共通で1つだけ開き、回答は完了handlerで受け取る。空文字でのOKとキャンセルを区別し、画面切替時は破棄する。[呼び出し方と拡張方法](docs/dialogs.md)を参照。
+- 「ダイアログ」で、Rhaiの`alert / confirm / prompt`からテーマに合わせた独自モーダルを表示する。標準アイコン6種類・任意画像URL・絵文字・非表示を指定できる。DOM・Canvas共通で1つだけ開き、回答は完了handlerで受け取る。空文字でのOKとキャンセルを区別し、画面切替時は破棄する。[呼び出し方と拡張方法](docs/dialogs.md)を参照。
 - 「OPFS・ファイル操作」で、日本語のテキスト・バイナリの読み書き、フォルダー作成、一覧、存在・サイズ確認、削除を試せる。ツールバーの「通信優先＋保存版」で同じ版のYAML/Rhai/Descriptorをキャッシュし、通信障害時に復元する。[ファイル・キャッシュ契約](docs/files-cache-rpc.md)を参照。
 - 「Protobuf・Unary RPC」で、ConnectとgRPC-Webのバイナリ通信を比較する。別ターミナルで`bun run demo:rpc`を起動する。ダウンロードしたDescriptorをWASMで解釈し、64bit整数・bytesも扱う。[RPCの使い方](docs/files-cache-rpc.md)を参照。
 
