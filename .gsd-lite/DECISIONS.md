@@ -37,3 +37,8 @@
 - subagents=auto、reflect=true。CLIが対応しない並列実行はスキルの定める従来動作へ戻す。
 - 6スキルはホストテンプレートと一致。GSD_LITE_ENGINE/GSD_LITE_CODEX_SANDBOX環境変数による上書きなし。gsd-lite-loop.sh --check合格。
 - 要件確定とresearchへの遷移を一括コミットする。ループ起動方法は最後の確認で決める。
+
+## Codexループの再開設定
+
+- ユーザーが2026-10-04に承認したため、再開時は `GSD_LITE_CODEX_SANDBOX=danger-full-access` を指定する。workspace-writeでは既存試験のlocalhost bindがEPERMとなり、approval_policy=neverの無人ターンでは解除できない。ファイルシステムのsandbox制限が外れることを説明したうえで承認された。
+- プロジェクトローカルの6スキルと管理文書をvp fmtで整形し、指示内容は維持する。

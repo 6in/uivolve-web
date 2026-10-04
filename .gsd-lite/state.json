@@ -19,21 +19,15 @@
     "path": "."
   },
   "milestone": "opfs-file-transfer",
-  "phase": "blocked",
-  "next_command": "BLOCKED",
+  "phase": "impl",
+  "next_command": "/gsd-lite-impl",
   "branch": {
     "name": "gsd-lite/opfs-file-transfer",
     "base": "main"
   },
   "research": {
-    "targets": [
-      "similar_oss",
-      "official_docs",
-      "local_projects"
-    ],
-    "local_search_paths": [
-      "~/workspaces"
-    ]
+    "targets": ["similar_oss", "official_docs", "local_projects"],
+    "local_search_paths": ["~/workspaces"]
   },
   "turn": 3,
   "max_turns": 60,
@@ -47,5 +41,5 @@
     "verify": "claude-fable-5-1",
     "reflect": "claude-fable-5-1"
   },
-  "updated_at": "2026-10-04T21:21:52+09:00"
+  "updated_at": "2026-10-04T22:02:06+09:00"
 }

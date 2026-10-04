@@ -24,14 +24,14 @@ bun run build
 
 ## 追従先チェックリスト
 
-| 変更の種類 | 直す場所 | 確かめ方 |
-|---|---|---|
-| cancel/進捗ABI・Rhai登録 | engine/src/host.rs、engine/src/lib.rs、engine/src/abi.rs、src/engine.js、src/runtime.js、src/host-effects.js、tests/abi.test.js、tests/host-adapters.test.js | `rg -n 'host_result|host_call|host_cancel|host_progress' engine/src src tests` と実WASM試験 |
-| http action・ホスト設定 | src/adapters/http.js、src/resource-client.js、src/runtime.js、src/application.js、docs/http-adapter.md、docs/runtime-distribution.md | `rg -n 'http.request|http.download|http.upload|http.multipart|transferLimit' src docs examples tests` と起動設定試験 |
-| 通常filesと転送の排他/権限 | src/opfs.js、src/file-client.js、src/runtime.js、engine/src/files.rs、tests/helpers/opfs.js、tests/files-cache-rpc.test.js、docs/files-cache-rpc.md | Web Locks/fallback競合試験。cacheの別namespaceの既存挙動も退行確認 |
-| 現行API・制限の説明 | README.md、docs/README.md、docs/http-adapter.md、docs/files-cache-rpc.md、docs/authentication.md、docs/screen-format.md、docs/architecture.md、docs/runtime-distribution.md、docs/host-adapters-design.md、docs/opfs-file-transfer-plan.md、docs/platform-features-plan.md | `rg -n 'multipart.*未対応|巨大ファイル|15秒|15 秒|900,000|1,000,000|100,000|最大.*件|最大.*本' README.md docs skills` を全件レビューし、転送にも適用と読める古い記述0件。一般HTTP/Rhaiの既存制限は明示して保持 |
-| AI向け参照・文書検証 | skills/uivolve-web-app-dev/references/http.md、references/io-extensions.md、skills/uivolve-web-engine-dev/references/host.md、scripts/check-docs.mjs、tests/documented-http.test.js | docs:check、文書例実行、必要なskills:bundle後の差分確認。無関係な部品件数は変更しない |
-| サンプル/サーバー/配布 | examples/opfs-file-transfer/、scripts/transfer-server.mjs、package.json、tests/distribution.test.js、docs/operations.md | DOM/Canvasの入口URL、サーバー停止、ビルド配布先、既存HTTPデモの退行試験 |
+| 変更の種類                 | 直す場所                                                                                                                                                                                                                                                                   | 確かめ方                                                                              |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| cancel/進捗ABI・Rhai登録   | engine/src/host.rs、engine/src/lib.rs、engine/src/abi.rs、src/engine.js、src/runtime.js、src/host-effects.js、tests/abi.test.js、tests/host-adapters.test.js                                                                                                               | `rg -n 'host_result                                                                   | host_call     | host_cancel | host_progress' engine/src src tests` と実WASM試験 |
+| http action・ホスト設定    | src/adapters/http.js、src/resource-client.js、src/runtime.js、src/application.js、docs/http-adapter.md、docs/runtime-distribution.md                                                                                                                                       | `rg -n 'http.request                                                                  | http.download | http.upload | http.multipart                                    | transferLimit' src docs examples tests` と起動設定試験 |
+| 通常filesと転送の排他/権限 | src/opfs.js、src/file-client.js、src/runtime.js、engine/src/files.rs、tests/helpers/opfs.js、tests/files-cache-rpc.test.js、docs/files-cache-rpc.md                                                                                                                        | Web Locks/fallback競合試験。cacheの別namespaceの既存挙動も退行確認                    |
+| 現行API・制限の説明        | README.md、docs/README.md、docs/http-adapter.md、docs/files-cache-rpc.md、docs/authentication.md、docs/screen-format.md、docs/architecture.md、docs/runtime-distribution.md、docs/host-adapters-design.md、docs/opfs-file-transfer-plan.md、docs/platform-features-plan.md | `rg -n 'multipart.*未対応                                                             | 巨大ファイル  | 15秒        | 15 秒                                             | 900,000                                                | 1,000,000 | 100,000 | 最大.*件 | 最大.*本' README.md docs skills` を全件レビューし、転送にも適用と読める古い記述0件。一般HTTP/Rhaiの既存制限は明示して保持 |
+| AI向け参照・文書検証       | skills/uivolve-web-app-dev/references/http.md、references/io-extensions.md、skills/uivolve-web-engine-dev/references/host.md、scripts/check-docs.mjs、tests/documented-http.test.js                                                                                        | docs:check、文書例実行、必要なskills:bundle後の差分確認。無関係な部品件数は変更しない |
+| サンプル/サーバー/配布     | examples/opfs-file-transfer/、scripts/transfer-server.mjs、package.json、tests/distribution.test.js、docs/operations.md                                                                                                                                                    | DOM/Canvasの入口URL、サーバー停止、ビルド配布先、既存HTTPデモの退行試験               |
 
 探索根拠: `rg -n 'host_call|http.request|15秒|未対応|本|件' README.md docs/http-adapter.md skills`、`rg -n 'host_result|completeHost' src/engine.js engine/src/abi.rs`。転送action数を記した既存文書はない。文書の数値一覧は上記rgを最終タスクで再走査する。
 
@@ -124,28 +124,28 @@ bun run build
 - 受け入れ条件をまず契約/保存/排他/認証/通知/サンプル/大容量/文書へ分解し、同一境界の実装と試験を統合して12タスクにした。転送実装と競合統合/実ブラウザは切り戻し単位が異なるため分離。PLANターンではサブエージェント不要、implでは列挙した独立所有範囲をsubagents=autoで利用できる。
 - `.gsd-lite/reflect/` の直近2件: ファイルなし（`rg --files --hidden -g '.gsd-lite/reflect/**'`）。採用/不採用の提案なし。
 
-| RESEARCHの盗める点 | 採否と理由 |
-|---|---|
-| happy-opfsのpath/writable/実ブラウザ試験 | 採用: T3/T6/T11で標準APIを利用。依存追加は却下: ホスト契約を置換しない |
-| drip-fsのstaging/cleanup | 採用: T6のclose/abort責任。全量memory fallback/SW保存は却下: 領域内ストリーム契約に不要 |
-| 既存FileClient/OpfsDirectory | 採用: T3、権限/namespace/lockを共有。全量read/write転送利用は却下: 大容量と旧上限の分離 |
-| HTTP/ResourceClient/host実装 | 採用: T2/T4/T5/T8。転送時認証再送は却下: 結果不明と二重送信防止 |
-| mock/gate/既存HTTPデモ | 採用: T1/T9/T10。mockのみの合格は却下: T11で標準挙動を実測 |
+| RESEARCHの盗める点                       | 採否と理由                                                                                        |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| happy-opfsのpath/writable/実ブラウザ試験 | 採用: T3/T6/T11で標準APIを利用。依存追加は却下: ホスト契約を置換しない                            |
+| drip-fsのstaging/cleanup                 | 採用: T6のclose/abort責任。全量memory fallback/SW保存は却下: 領域内ストリーム契約に不要           |
+| 既存FileClient/OpfsDirectory             | 採用: T3、権限/namespace/lockを共有。全量read/write転送利用は却下: 大容量と旧上限の分離           |
+| HTTP/ResourceClient/host実装             | 採用: T2/T4/T5/T8。転送時認証再送は却下: 結果不明と二重送信防止                                   |
+| mock/gate/既存HTTPデモ                   | 採用: T1/T9/T10。mockのみの合格は却下: T11で標準挙動を実測                                        |
 | ローカルCacheManager / FileSystemAdapter | capability/finallyとhandle境界のみ採用: T3/T6。read失敗null化/親自動作成/全量textは却下: 契約違反 |
 
-| RESEARCH落とし穴 | 機械検証するタスク |
-|---|---|
-| 旧ファイル消失・新規entry残留 | T6、T9、T11 |
-| cleanup前のロック解放 | T3、T8、T9 |
-| 複数領域漏れ/デッドロック | T3、T9、T11 |
-| 容量境界/圧縮/虚偽length | T5、T6、T7、T11 |
-| 全量読込/WASM経由 | T6、T7、T9、T11 |
-| FormData型/順序 | T5、T7、T10、T11 |
-| 権限/パス/ヘッダー迂回 | T3、T5、T11 |
-| 認証更新後の再送 | T4、T7、T11 |
-| 成功更新outcome | T7、T8、T9 |
-| timeout/cancel不到達 | T2、T8、T9、T11 |
-| 古い進捗/handler例外 | T2、T8、T9 |
-| mockだけの仕様誤認 | T1、T10、T11 |
+| RESEARCH落とし穴              | 機械検証するタスク |
+| ----------------------------- | ------------------ |
+| 旧ファイル消失・新規entry残留 | T6、T9、T11        |
+| cleanup前のロック解放         | T3、T8、T9         |
+| 複数領域漏れ/デッドロック     | T3、T9、T11        |
+| 容量境界/圧縮/虚偽length      | T5、T6、T7、T11    |
+| 全量読込/WASM経由             | T6、T7、T9、T11    |
+| FormData型/順序               | T5、T7、T10、T11   |
+| 権限/パス/ヘッダー迂回        | T3、T5、T11        |
+| 認証更新後の再送              | T4、T7、T11        |
+| 成功更新outcome               | T7、T8、T9         |
+| timeout/cancel不到達          | T2、T8、T9、T11    |
+| 古い進捗/handler例外          | T2、T8、T9         |
+| mockだけの仕様誤認            | T1、T10、T11       |
 
 ゴール逆算: GET保存=T6、本文/multipart=T7、通常files共有排他=T3/T9、認証=T4、cancel/期限/進捗/画面切替=T2/T8/T9、サーバーとDOM/Canvas/100MiB=T10/T11、契約文書と全退行=T12。全受け入れ基準に担当と検証を割り当て済み。

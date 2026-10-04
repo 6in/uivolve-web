@@ -7,15 +7,15 @@ REQUIREMENTS.md / DECISIONS.mdを優先し、要件本文は変更しない。�
 
 既存http adapter、ResourceClient、FileClient、OpfsDirectoryを拡張する。ブラウザ標準のFile / FormData / ReadableStream / createWritableで実現可能。新しい転送ライブラリは必須ではない。確認したOSSは転送やOPFS一般の部品であり、本プロジェクトのRhai、領域権限、JWT、世代管理、outcomeまで置換する根拠は見つからなかった。discussを覆す重大発見なし。
 
-| 参考 | 使える設計・採用判断 |
-| --- | --- |
-| [happy-opfs](https://github.com/JiangJie/happy-opfs) | OPFSのパスAPI、writable stream、downloadFile/uploadFile、実ブラウザ試験の参考。ホスト契約まで満たすと判断せず、依存追加せず設計を参照する。 |
-| [drip-fs](https://github.com/pratherbytecraft/drip-fs) | ストリームとOPFS staging、後始末の参考。Service Worker/ユーザー向け保存やblob fallbackは本件の領域内転送と異なる。全量メモリfallbackは採用しない。 |
-| `src/opfs.js`, `src/file-client.js` | 領域namespace `uivolve-web/fs/<scope>/<volume>`、相対パス制限、通常filesのロックキーを再利用。テキスト100,000 bytes/バイナリ1,000,000 bytesの既存制限は維持。 |
-| `src/adapters/http.js`, `src/resource-client.js`, `src/http-policy.js` | URL範囲、許可ヘッダー、JWT/CORS、応答上限、json/text/emptyを再利用。転送は認証失敗後の再送も無効化。 |
-| `src/host-effects.js`, `src/runtime.js`, `engine/src/host.rs` | transactional effect発行、世代、完了handler、既存host_callの実装箇所。host_cancelと進捗はここへ統合する。 |
+| 参考                                                                                                                       | 使える設計・採用判断                                                                                                                                                       |
+| -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [happy-opfs](https://github.com/JiangJie/happy-opfs)                                                                       | OPFSのパスAPI、writable stream、downloadFile/uploadFile、実ブラウザ試験の参考。ホスト契約まで満たすと判断せず、依存追加せず設計を参照する。                                |
+| [drip-fs](https://github.com/pratherbytecraft/drip-fs)                                                                     | ストリームとOPFS staging、後始末の参考。Service Worker/ユーザー向け保存やblob fallbackは本件の領域内転送と異なる。全量メモリfallbackは採用しない。                         |
+| `src/opfs.js`, `src/file-client.js`                                                                                        | 領域namespace `uivolve-web/fs/<scope>/<volume>`、相対パス制限、通常filesのロックキーを再利用。テキスト100,000 bytes/バイナリ1,000,000 bytesの既存制限は維持。              |
+| `src/adapters/http.js`, `src/resource-client.js`, `src/http-policy.js`                                                     | URL範囲、許可ヘッダー、JWT/CORS、応答上限、json/text/emptyを再利用。転送は認証失敗後の再送も無効化。                                                                       |
+| `src/host-effects.js`, `src/runtime.js`, `engine/src/host.rs`                                                              | transactional effect発行、世代、完了handler、既存host_callの実装箇所。host_cancelと進捗はここへ統合する。                                                                  |
 | `tests/helpers/opfs.js`, `tests/host-adapters.test.js`, `tests/files-cache-rpc.test.js`, `tests/platform-features.test.js` | close確定、beforeClose gate、異常応答、世代切替試験を拡張。現在のOPFS mockはwriteごとに置換し、getFileもFileではないので、複数chunk・File/FormData試験向けの忠実性を補う。 |
-| `scripts/http-server.mjs`, `examples/host-http` | BunローカルHTTPサーバーとサンプルの雛形。現状JSON CRUDであり、転送/multipartは未対応。 |
+| `scripts/http-server.mjs`, `examples/host-http`                                                                            | BunローカルHTTPサーバーとサンプルの雛形。現状JSON CRUDであり、転送/multipartは未対応。                                                                                     |
 
 ## 公式資料からの技術前提
 
@@ -40,20 +40,20 @@ REQUIREMENTS.md / DECISIONS.mdを優先し、要件本文は変更しない。�
 
 ## 落とし穴と検証方法（planの完了基準候補）
 
-| 落とし穴 | 回避・検証 |
-| --- | --- |
+| 落とし穴                          | 回避・検証                                                                                                                                                                                                                    |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 旧ファイル消失・空の新規entry残留 | write/createWritable/read/close各段階の失敗を注入。close開始前の中止で旧bytesを比較、新規pathは不存在を確認。close中に中止しclose成功したケースは確定済み扱いで消さない。abort/remove失敗も契約内エラーとなることを確認する。 |
-| cleanup前にロックが解放される | reader/write/close/abortをgateで遅延。TIMEOUT/CANCELLEDを受けても実処理中は同領域の通常read/write/remove/転送がBUSY、settle後は成功。画面切替後の同scope/volumeでも試験。 |
-| 複数領域の漏れ・デッドロック | A+BとB+A、A+A、2番目の競合を試験。全取得前にfetchせず、先に取った領域は競合後に利用可能。Web Locks実装とfallback両方、実ブラウザ2タブでも確認。 |
-| 容量境界・圧縮・虚偽length | limit-1/limit/limit+1、0 bytes、length有/無/不正、実stream超過、gzip復号後の超過を試験。超過chunkをwriteせず旧file保持。multipartは個別がlimit以下でも合計超過、同一file重複、parts32/33・files8/9を確認。 |
-| 全量読み込みの混入 | 100 MiB級をホストでchunk生成し送受信hash/size比較。転送中arrayBuffer/text/blob全量読み取りを禁止するspyとコード確認。WASM buffer/stateに本体を渡さない。ブラウザ内部のバッファ量は保証対象外。 |
-| FormDataによる型の黙認・順序喪失 | string以外のvalue、file/value両方、未知属性を送信前に拒否。文字列/ファイル混在・同名重複・Unicode filename・空文字をPOST/PUTサーバーで順序/内容/型/filename照合。 |
-| 権限・パス・ヘッダーの迂回 | 未宣言/read-onlyへのdownload、未宣言upload、../・絶対パス・backslash・UTF-8上限、親未作成を拒否。未許可headers/Authorization/手動boundaryとURL範囲逸脱を副作用前に拒否。 |
-| 認証更新後の自動再送 | JWTをホストのみで扱い、401/403とネットワーク切断で実送信回数1を確認。GET downloadでも401後に再送しない。事前token provider失敗と実送信後のunknownを区別。CORS preflight/許可応答headersを実サーバーで試験。 |
-| 成功更新をfailed扱いにする | upload送信後切断=unknown、2xx後のJSON/UTF-8/サイズ解析失敗=committed。HostEffects最終JSONサイズ検査もcommittedを落とさない。downloadはclose前failed、確定後に副作用を否定しない。非2xxは既存HTTP契約に整合し、bodyをcancel。 |
-| timeout・cancelが届かない | 期限1/120/300秒と範囲外を検証。header待ち、reader待ち、write待ち、応答解析中で中止。同名全中止・別名継続、未知/終了済み名の安全な処理、終了一回を確認。 |
-| 古い進捗・handler例外 | 毎秒10回以下、byte単調増加、total不明=null、完了後0回、世代切替時の予約通知破棄。handler例外後もclose/完了成功、完了handlerのpendingが残ることを確認。圧縮やCORSで総量が信頼できない場合はtotal=nullを提案。 |
-| mockだけでブラウザ仕様を誤認 | OPFS mockへ複数chunk、File、abort/close failureを追加。実localhostブラウザでcreateWritableとFile/FormDataを確認し、DOM/Canvas両方でdownload→小CSV加工→別名保存→複数file multipartまで実行。 |
+| cleanup前にロックが解放される     | reader/write/close/abortをgateで遅延。TIMEOUT/CANCELLEDを受けても実処理中は同領域の通常read/write/remove/転送がBUSY、settle後は成功。画面切替後の同scope/volumeでも試験。                                                     |
+| 複数領域の漏れ・デッドロック      | A+BとB+A、A+A、2番目の競合を試験。全取得前にfetchせず、先に取った領域は競合後に利用可能。Web Locks実装とfallback両方、実ブラウザ2タブでも確認。                                                                               |
+| 容量境界・圧縮・虚偽length        | limit-1/limit/limit+1、0 bytes、length有/無/不正、実stream超過、gzip復号後の超過を試験。超過chunkをwriteせず旧file保持。multipartは個別がlimit以下でも合計超過、同一file重複、parts32/33・files8/9を確認。                    |
+| 全量読み込みの混入                | 100 MiB級をホストでchunk生成し送受信hash/size比較。転送中arrayBuffer/text/blob全量読み取りを禁止するspyとコード確認。WASM buffer/stateに本体を渡さない。ブラウザ内部のバッファ量は保証対象外。                                |
+| FormDataによる型の黙認・順序喪失  | string以外のvalue、file/value両方、未知属性を送信前に拒否。文字列/ファイル混在・同名重複・Unicode filename・空文字をPOST/PUTサーバーで順序/内容/型/filename照合。                                                             |
+| 権限・パス・ヘッダーの迂回        | 未宣言/read-onlyへのdownload、未宣言upload、../・絶対パス・backslash・UTF-8上限、親未作成を拒否。未許可headers/Authorization/手動boundaryとURL範囲逸脱を副作用前に拒否。                                                      |
+| 認証更新後の自動再送              | JWTをホストのみで扱い、401/403とネットワーク切断で実送信回数1を確認。GET downloadでも401後に再送しない。事前token provider失敗と実送信後のunknownを区別。CORS preflight/許可応答headersを実サーバーで試験。                   |
+| 成功更新をfailed扱いにする        | upload送信後切断=unknown、2xx後のJSON/UTF-8/サイズ解析失敗=committed。HostEffects最終JSONサイズ検査もcommittedを落とさない。downloadはclose前failed、確定後に副作用を否定しない。非2xxは既存HTTP契約に整合し、bodyをcancel。  |
+| timeout・cancelが届かない         | 期限1/120/300秒と範囲外を検証。header待ち、reader待ち、write待ち、応答解析中で中止。同名全中止・別名継続、未知/終了済み名の安全な処理、終了一回を確認。                                                                       |
+| 古い進捗・handler例外             | 毎秒10回以下、byte単調増加、total不明=null、完了後0回、世代切替時の予約通知破棄。handler例外後もclose/完了成功、完了handlerのpendingが残ることを確認。圧縮やCORSで総量が信頼できない場合はtotal=nullを提案。                  |
+| mockだけでブラウザ仕様を誤認      | OPFS mockへ複数chunk、File、abort/close failureを追加。実localhostブラウザでcreateWritableとFile/FormDataを確認し、DOM/Canvas両方でdownload→小CSV加工→別名保存→複数file multipartまで実行。                                   |
 
 ## ローカル過去プロジェクトの探索
 
