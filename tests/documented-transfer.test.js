@@ -94,7 +94,7 @@ it("executes the documented transfer chain and cancellation with real WASM", asy
       ]),
     ).toEqual([
       ["tag", "original"],
-      ["file", { name: "source.csv", type: "" }],
+      ["file", { name: "source.csv", type: "application/octet-stream" }],
       ["tag", "copy"],
       ["file", { name: "複製.csv", type: "text/csv" }],
     ]);

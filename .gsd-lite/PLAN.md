@@ -109,7 +109,7 @@ bun run build
   - 依存: T11
   - 並列サブ作業: A: 利用契約/入口文書（docs/opfs-file-transfer.md、README.md、docs/README.md、docs/http-adapter.md、docs/files-cache-rpc.md、docs/runtime-distribution.md）。B: ABI/認証/設計履歴/skills（残りの追従先文書）。C: 文書例と検証（tests/documented-transfer.test.js、scripts/check-docs.mjs）。親が統合して最終判定。
 
-- [ ] F1: 本文アップロードの既定Content-Typeを要件どおり送信する
+- [x] F1: 本文アップロードの既定Content-Typeを要件どおり送信する
   - 完了基準: 下表の送信結果を満たす。空typeのOPFS Fileにも既定ヘッダーを設定し、許可済みの明示Content-Typeを保持する。multipartのboundaryは引き続きブラウザ生成とする。既存の誤った欠落期待を修正し、サーバー受信ヘッダーまでPOST/PUTで確認する。File本文と全量JS読み込み禁止を維持する。
   - 対象: src/adapters/http.js、tests/opfs-file-transfer.test.js、tests/browser/opfs-file-transfer.mjs（必要に応じscripts/transfer-server.mjs・tests/transfer-server.test.jsの受信ヘッダーfixture）
   - 検証: 下表を参照する回帰試験と `bun run verify:transfer`。既存期待値変更をPROGRESSに記録する。

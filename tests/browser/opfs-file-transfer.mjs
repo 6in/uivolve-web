@@ -169,16 +169,43 @@ export async function runBrowserTests({ context, origin, api, requests }) {
       setTimeout(() => controller.abort(), 250);
       const cancelled = await capture(() => pending);
       const preserved = await (await t.reference("a", file.path).file()).text();
+      const uploadFile = { volume: "a", path: "small" };
+      await t.seed("a", uploadFile.path, preserved);
+      const uploadType = (await t.reference("a", uploadFile.path).file()).type;
+      const contentTypes = [];
       for (const method of ["POST", "PUT"]) {
-        await t.guarded(async () => {
-          await t.transfer("upload", "upload", { file }, { method });
-          await t.transfer(
-            "multipart",
-            "multipart",
-            { parts: [{ name: "file", file }] },
-            { method },
-          );
-        });
+        contentTypes.push(
+          await t.guarded(async () => {
+            const defaultUpload = await t.transfer(
+              "upload",
+              "upload",
+              { file: uploadFile },
+              { method },
+            );
+            const explicitUpload = await t.transfer(
+              "upload",
+              "upload",
+              { file: uploadFile },
+              {
+                method,
+                headers: { "cOnTeNt-TyPe": "text/csv; charset=utf-8" },
+              },
+            );
+            const multipart = await t.transfer(
+              "multipart",
+              "multipart",
+              {
+                parts: [
+                  { name: "tag", value: "first" },
+                  { name: "file", file: uploadFile },
+                  { name: "tag", value: "last" },
+                ],
+              },
+              { method },
+            );
+            return { method, defaultUpload, explicitUpload, multipart };
+          }),
+        );
       }
       t.resources.setAuthentication({
         mode: "jwt",
@@ -203,6 +230,8 @@ export async function runBrowserTests({ context, origin, api, requests }) {
         preserved,
         auth,
         unauthorized,
+        contentTypes,
+        uploadType,
       };
     }, api);
     assert.equal(boundaries.overwrite, "ALREADY_EXISTS");
@@ -215,6 +244,30 @@ export async function runBrowserTests({ context, origin, api, requests }) {
     assert.equal(boundaries.preserved, boundaries.after);
     assert.equal(boundaries.auth.body.authenticated, true);
     assert.equal(boundaries.unauthorized, "HTTP_401");
+    const smallHash = createHash("sha256").update(boundaries.preserved).digest("hex");
+    assert.equal(boundaries.uploadType, "");
+    for (const { method, defaultUpload, explicitUpload, multipart } of boundaries.contentTypes) {
+      assert.equal(defaultUpload.body.method, method);
+      assert.equal(defaultUpload.body.contentType, "application/octet-stream");
+      assert.equal(explicitUpload.body.contentType, "text/csv; charset=utf-8");
+      for (const result of [defaultUpload, explicitUpload]) {
+        assert.equal(result.body.sha256, smallHash);
+        assert.equal(result.body.size, Buffer.byteLength(boundaries.preserved));
+      }
+      assert.equal(multipart.body.method, method);
+      assert.match(multipart.body.contentType, /^multipart\/form-data; boundary=.+/);
+      assert.deepEqual(multipart.body.entries, [
+        { name: "tag", value: "first" },
+        {
+          name: "file",
+          filename: "small",
+          type: "application/octet-stream",
+          size: Buffer.byteLength(boundaries.preserved),
+          sha256: smallHash,
+        },
+        { name: "tag", value: "last" },
+      ]);
+    }
     assert.ok(requests.some((r) => r.method === "OPTIONS"));
     assert.equal(requests.filter((r) => r.path === "/api/auth" && r.method === "POST").length, 2);
     assert.ok(

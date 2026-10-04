@@ -986,7 +986,7 @@ it("sends File bodies for POST/PUT and returns bounded json/text/empty metadata"
       expect(request.body.name).toBe("日本語.csv");
       expect(request.body.size).toBe(3);
       expect(request.body.type).toBe("");
-      expect(request.headers.has("content-type")).toBe(false);
+      expect(request.headers.get("content-type")).toBe("application/octet-stream");
       expect(result).toEqual({
         status: 200,
         headers: { "x-result": "yes" },
@@ -995,6 +995,20 @@ it("sends File bodies for POST/PUT and returns bounded json/text/empty metadata"
         files: [{ ...f.args.file, size: 3 }],
       });
     }
+  }
+});
+
+it("preserves explicit upload Content-Type for POST/PUT", async () => {
+  for (const method of ["POST", "PUT"]) {
+    const f = await uploadFixture("http.upload", {
+      method,
+      headers: { "cOnTeNt-TyPe": "text/csv; charset=utf-8" },
+    });
+    await f.run();
+    const request = f.resources.transferRequest.mock.calls[0][1];
+    expect(request.headers.get("content-type")).toBe("text/csv; charset=utf-8");
+    expect(request.body).toBeInstanceOf(File);
+    expect(request.body.size).toBe(3);
   }
 });
 
@@ -1019,7 +1033,7 @@ it("appends ordered multipart values and files with default and explicit filenam
     expect(entries[0][1]).toBe("");
     expect(entries[2][1]).toBe("日本語");
     expect(entries[1][1].name).toBe("日本語.csv");
-    expect(entries[1][1].type).toBe("");
+    expect(entries[1][1].type).toBe("application/octet-stream");
     expect(entries[3][1].name).toBe("別名.csv");
     expect(entries[3][1].type).toBe("text/csv");
     expect(request.headers.has("content-type")).toBe(false);

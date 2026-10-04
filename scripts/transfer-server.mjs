@@ -26,9 +26,9 @@ function integer(url, name, fallback, maximum) {
     throw new Error(`Invalid ${name}`);
   return Number(value);
 }
-// Bun 1.3.12 drops .name on parsed zero-byte files. Read just the MIME
-// headers for their filenames; formData still owns value/file decoding.
-function multipartFilenames(bytes, contentType) {
+// Read wire metadata: Bun 1.3.12 can drop names and infer types from filenames.
+// formData still owns value/file decoding.
+function multipartMetadata(bytes, contentType) {
   const boundary = contentType
     .match(/boundary=(?:"([^"]+)"|([^;\s]+))/)
     ?.slice(1)
@@ -43,7 +43,10 @@ function multipartFilenames(bytes, contentType) {
     const end = data.indexOf("\r\n\r\n", start);
     if (start < 0 || end < 0) break;
     const headers = data.toString("utf8", start, end);
-    filenames.push(headers.match(/;\s*filename="([^"]*)"/i)?.[1]);
+    filenames.push({
+      filename: headers.match(/;\s*filename="([^"]*)"/i)?.[1],
+      type: headers.match(/\r\ncontent-type:\s*([^\r\n]+)/i)?.[1],
+    });
     const next = data.indexOf(separator, end + 4);
     if (next < 0) break;
     offset = next + 2;
@@ -110,10 +113,14 @@ export async function transferFixture(request) {
       return new Response(body, { headers });
     }
     if (path === "upload" && ["POST", "PUT"].includes(request.method))
-      return json({ method: request.method, ...(await digest(request.body)) });
+      return json({
+        method: request.method,
+        contentType: request.headers.get("content-type"),
+        ...(await digest(request.body)),
+      });
     if (path === "multipart" && ["POST", "PUT"].includes(request.method)) {
       const bytes = await request.arrayBuffer();
-      const filenames = multipartFilenames(bytes, request.headers.get("content-type") ?? "");
+      const metadata = multipartMetadata(bytes, request.headers.get("content-type") ?? "");
       const form = await new Request(request.url, {
         method: request.method,
         headers: request.headers,
@@ -126,13 +133,17 @@ export async function transferFixture(request) {
             ? { name, value }
             : {
                 name,
-                filename: value.name ?? filenames[entries.length],
-                type: value.type,
+                filename: metadata[entries.length].filename,
+                type: metadata[entries.length].type,
                 ...(await digest(value.stream())),
               },
         );
       }
-      return json({ method: request.method, entries });
+      return json({
+        method: request.method,
+        contentType: request.headers.get("content-type"),
+        entries,
+      });
     }
     return json({ error: "not found" }, 404);
   } catch {

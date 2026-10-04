@@ -253,9 +253,7 @@ export function httpAdapter({ resources, transferLimit = 104_857_600, files = ne
                   const file = selected[index++];
                   body.append(
                     part.name,
-                    part.contentType === undefined
-                      ? file
-                      : file.slice(0, file.size, part.contentType),
+                    file.slice(0, file.size, part.contentType ?? "application/octet-stream"),
                     part.filename ?? file.name,
                   );
                   metadata.push({ ...part.file, size: file.size });
@@ -263,11 +261,14 @@ export function httpAdapter({ resources, transferLimit = 104_857_600, files = ne
               }
             } else metadata.push({ ...args.file, size: body.size });
             const options = operation.options;
+            const headers = new Headers(options.headers);
+            if (!multipart && !headers.has("content-type"))
+              headers.set("Content-Type", "application/octet-stream");
             let response;
             try {
               response = await resources.transferRequest(prepared.url, {
                 method: options.method,
-                headers: new Headers(options.headers),
+                headers,
                 body,
                 signal,
                 allowHttpErrors: true,

@@ -67,6 +67,7 @@ it("hashes POST/PUT bodies and preserves multipart order, duplicate names and fi
   for (const method of ["POST", "PUT"]) {
     expect(await (await fetch(`${base}upload`, { method, body: bytes })).json()).toEqual({
       method,
+      contentType: null,
       size: bytes.length,
       sha256: hash(bytes),
     });
@@ -77,6 +78,7 @@ it("hashes POST/PUT bodies and preserves multipart order, duplicate names and fi
     body.append("file", new Blob([]), "empty.bin");
     expect(await (await fetch(`${base}multipart`, { method, body })).json()).toEqual({
       method,
+      contentType: expect.stringMatching(/^multipart\/form-data; boundary=.+/),
       entries: [
         { name: "tag", value: "first" },
         {
@@ -114,6 +116,7 @@ it("accepts 100 MiB bodies beyond Bun's default body limit", async () => {
     await (await fetch(`${base}upload`, { method: "PUT", body, duplex: "half" })).json(),
   ).toEqual({
     method: "PUT",
+    contentType: null,
     size: 104857600,
     sha256: expected.digest("hex"),
   });
