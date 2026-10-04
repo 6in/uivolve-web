@@ -145,3 +145,5 @@ Rhaiは同期実行。トップレベルの任意の`requests`にHTTP GETのURL�
 日付・時計の共通関数は[日付・時計の契約](date-functions.md)を参照。Date/DateTimeは文字列としてstateへ保存する。
 
 任意の`operations`はホスト操作の宣言。`connection / action / handler / options`を持ち、`host_call(name, args)`で依頼する。HTTPメソッド、パス変数、本文、ホスト登録、応答形式は[HTTPアダプター契約](http-adapter.md)を参照。options内の設定を操作の直下へ置かない。
+
+OPFSの大容量ファイルは`http.download / http.upload / http.multipart`をoperationsへ宣言し、ファイルの領域・相対パスを`host_call`の引数で渡す。[転送契約](opfs-file-transfer.md)を参照。`host_cancel(name)`は同名の進行中操作すべてへ中止を要求するtransactional intentで、handler/state検証に失敗した場合は中止effectも発行しない。downloadの`options.progressHandler`は最新stateで呼ばれ、完了pendingを消費しない。アップロードbyte進捗は提供しない。ファイル本体はWASM/stateを経由せず、上記Rhai・JSON制限は引き続き適用する。

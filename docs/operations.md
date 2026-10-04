@@ -63,3 +63,9 @@ HTTP取得はCORSモードが既定。Vite+開発・プレビューは公開デ�
 | 画面に編集が反映されない | 開発4173かプレビュー4174か、dist/WASMの再ビルドと再取得         |
 | WebMCPが未対応           | ブラウザAPIとsecure context。通常UIは別に確認する               |
 | WebMCPのSTALE_SCREEN     | ui_get_screenを再取得し、最新token/revisionを使う               |
+
+## OPFS転送の開発・検証
+
+`bun run demo:transfer`で転送fixtureサーバー（127.0.0.1:4177）を起動する。Vite開発サーバーの`/examples/opfs-file-transfer/index.html?renderer=dom`と`?renderer=canvas`がサンプル入口。開発時の起動設定・容量・CORS・ファイル確定境界は[OPFS転送契約](opfs-file-transfer.md)を参照する。
+
+`bun run verify:transfer`はWASM生成、全JS/Rust試験、check、docs:check、build、localhostの実ブラウザ試験を順に実行する。runnerがサーバーとブラウザを起動・終了し、未実行や起動不能は非0で終了する。Chromiumの実行パスは`TRANSFER_BROWSER_PATH`で指定できる。実OPFS/File/FormData、DOM/Canvas、100 MiBのhash/size、CORS、2タブWeb Locksを確認する。サンプルとfixtureは開発・検証用で、本番のJWT検証・保存APIは配信側で用意する。

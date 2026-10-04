@@ -103,7 +103,7 @@ bun run build
   - 依存: T10
   - 並列サブ作業: なし（browser runner/fixtures連携）。
 
-- [ ] T12: 現行契約文書と最終判定
+- [x] T12: 現行契約文書と最終判定
   - 完了基準: docs/opfs-file-transfer.mdへ起動設定/YAML/Rhai/API/エラー/確定境界/容量/中止/進捗/サンプル/テスト実行を実装通り記載し、追従先の古い転送不可記述を更新。文書例を実WASMで実行。追従先rgの数値を全件照合。`bun run verify:transfer`をクリーン開始で合格し、実ブラウザ環境・コマンド・結果を記録。一般JSON/Rhai/Workerの上限と期限を維持し、アップロードbyte進捗やブラウザ内部buffer保証を追加しない。
   - 対象: docs/opfs-file-transfer.md、追従先チェックリストの文書/skills、tests/documented-transfer.test.js、scripts/check-docs.mjs、必要な最終修正
   - 依存: T11

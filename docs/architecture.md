@@ -80,7 +80,7 @@ DOMはkeyを使って既存要素を更新し、Canvasは面全体を再描画�
 
 制御用の公開関数は`input_alloc(len)`、`input_free(ptr,len)`、`request(ptr,len)`、`response_len()`。JSは入力を確保してUTF-8 JSONを書き込み、requestが返す応答のポインターと長さを読む。入力はfinallyで解放する。応答はエンジン所有で、次のrequestまで有効。次の呼び出しより前にJSONへ読み取る。メモリが拡張され得るため、呼び出し後はその時点の`memory.buffer`を使う。バイナリには`buffer_store / buffer_ptr / buffer_len / buffer_free`を追加した。[所有権・上限の契約](files-cache-rpc.md)に従う。
 
-操作は`load / event / host_result / http_result / storage_result / file_result / rpc_result / dialog_result / layout / theme`。成功は`{ "ok": true, "data": ... }`、失敗は`{ "ok": false, "error": "..." }`。入力の上限は2,000,000バイト。現在のWASMはブラウザのimportを要求しない。HTTP取得・保存・描画APIはホストが担当する。各操作の詳細は[画面形式](screen-format.md)、[HTTP取得](tutorial-http-grid.md)、[保存・型](platform-features.md)、[ファイル・RPC](files-cache-rpc.md)、[独自ダイアログ](dialogs.md)、[レイアウト](layouts.md)、[テーマ](theme-format.md)を参照する。
+操作は`load / event / host_result / host_progress / http_result / storage_result / file_result / rpc_result / dialog_result / layout / theme`。成功は`{ "ok": true, "data": ... }`、失敗は`{ "ok": false, "error": "..." }`。入力の上限は2,000,000バイト。現在のWASMはブラウザのimportを要求しない。HTTP取得・保存・描画APIはホストが担当する。各操作の詳細は[画面形式](screen-format.md)、[HTTP取得](tutorial-http-grid.md)、[保存・型](platform-features.md)、[ファイル・RPC](files-cache-rpc.md)、[独自ダイアログ](dialogs.md)、[レイアウト](layouts.md)、[テーマ](theme-format.md)を参照する。
 
 Rhaiの`http_get(name)`は要求を一時キューへ置く。stateとUIの検証後に要求を確定し、結果へ`effects`を添える。ホストは画面JSONを基準にURLを解決し、ResourceClientでJSONを取得してid付きの`http_result`を送る。Runtimeは進行中のidだけを受け入れ、最新stateと応答を受け取りhandlerへ渡す。通常のイベントと同じ確定処理を通し、完了でもrevisionが進む。画面置換の成功時にホストが進行中の取得を中止し、世代番号でも遅延応答を破棄する。
 
@@ -101,3 +101,7 @@ Rhaiは同期実行で、操作数などの制限を持つ。非同期HTTP GET�
 日付計算はRustのextensions/date.rs、時計の採取はホストのsrc/clock.js。Rhaiを実行するABI操作にclockを渡し、Runtimeの実行スコープで保持する。画面loadではinitとdatepicker.todayへ同じサンプルを使う。[日付・時計の契約](date-functions.md)を参照。
 
 汎用ホスト操作はengine/src/host.rsの宣言・依頼・pendingを使い、src/host-effects.jsが登録済みアダプターへ配送する。現在の組み込みアダプターはsrc/adapters/http.js。kind=host、v=1のeffectsを受け、host_resultで最新stateのhandlerへ戻す。動的なHTTP引数の検証はホストの実行時に行う。[現行HTTP契約](http-adapter.md)を参照。
+
+OPFS転送は[転送契約](opfs-file-transfer.md)に従い、`src/adapters/http-download.js`でResponse readerからOPFS writableへ逐次書き込み、upload/multipartは`src/adapters/http.js`でFile/FormDataを送信する。ファイル本体をWASM/stateへコピーせず、一般JSON/Rhai/Workerの容量制限を変更しない。通常filesと転送は同じscope/volumeの非待機ロックを使い、実処理とcleanupがsettleするまで保持する。
+
+`host_cancel(name)`はengineのtransactional intentからkind=host_cancelのcontrol effectを発行する。HostEffectsは同名の進行中操作をすべて中止し、未知・終了済み名はno-opとする。`host_progress` ABI（JSの`progressHost`）はid/operationを照合して最新stateへdownloadの進捗を適用し、完了pendingを保持する。配送側は世代を照合し、終端後・旧世代の通知を破棄する。handler失敗でstate/effectsを確定せず、onErrorへ報告して転送は継続する。アップロードbyte進捗は提供しない。

@@ -2,7 +2,7 @@
 
 AIエージェントは[参照入口](ai-development.md)から作業に必要な現行契約を選ぶ。計画書・検討書は使用APIの根拠にしない。
 
-OPFSのダウンロード・アップロード（multipartを初期対応）の検討は[ファイル転送方針](opfs-file-transfer-plan.md)に記録している。未実装の方針として扱う。
+OPFSのGET受信・POST/PUT本文・multipart送信は[ファイル転送契約](opfs-file-transfer.md)を参照。[ファイル転送方針](opfs-file-transfer-plan.md)は実装前の検討記録。
 
 公開デモ・Actions・Claude Code向けマーケットプレイスは[GitHub配布手順](github-publishing.md)を参照。
 

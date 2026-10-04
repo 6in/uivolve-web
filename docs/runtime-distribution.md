@@ -103,3 +103,5 @@ CSSとテーマ変数は表示領域の`.uivolve-runtime`へ適用する。外�
 時計を固定・差し替えする場合はcreateApplicationまたはUiRuntimeへ`clockProvider`を渡す。既定はブラウザ時計。[日付・時計の契約](date-functions.md)を参照。
 
 HTTP操作を使う場合は`connections`を設定する。httpAdapterは自動登録されるので重複登録しない。追加のアダプターは起動コードの`adapters`へ渡す。createApplicationのconnectionsはapp.jsonにも置けるが、JavaScript側の値を渡すと優先される。[HTTP起動例](http-adapter.md)、[WorkerモックAPI](worker-mock-api.md)を参照。配布されたWorkerのassetsもruntime-distごとコピーする。
+
+OPFS転送を使う場合、JavaScript起動設定の`transferLimit`はUiRuntime/createRuntime/createApplication共通でbytes単位の正の安全整数、既定104857600（100 MiB）。ホスト専用の容量設定で、画面・操作から変更できない。操作別`options.timeout`は秒単位1〜300、既定120秒。一般HostEffectsの15秒・通常JSON/Rhai/filesの上限は維持する。[OPFS転送の宣言・サンプル・検証](opfs-file-transfer.md)を参照。

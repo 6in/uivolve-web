@@ -1,12 +1,13 @@
 # ブラウザホスト・アダプター設計
 
-設計日: 2026-10-04。状態: 将来設計と設計履歴。host_call、HostEffects、HTTPアダプターは初期版を実装済みで、使用するAPI・DSLは[現行HTTP契約](http-adapter.md)を優先する。この文書の残りのアダプターと継続通知、バッファ送信は未実装。既存GET、storage、file、RPCも維持している。
+設計日: 2026-10-04。状態: 将来設計と設計履歴。host_call、HostEffects、HTTPアダプターは初期版を実装済みで、使用するAPI・DSLは[現行HTTP契約](http-adapter.md)と[OPFS転送契約](opfs-file-transfer.md)を優先する。downloadのhost_progressとhost_cancelは実装済み。この文書の残りのアダプターとhost_event/host_close、WASMバッファ本文送信は未実装。既存GET、storage、file、RPCも維持している。
 
-| 範囲                                                         | 状態                                                               | コード生成の根拠                     |
-| ------------------------------------------------------------ | ------------------------------------------------------------------ | ------------------------------------ |
-| host_call / host_result / HTTP                               | 実装済み。optionsにメソッド等を置く。JSON本文、json/text/empty応答 | [現行HTTP契約](http-adapter.md)      |
-| WebWorkerの固定応答・CRUD                                    | 実装済み。独立モックDSLとworkerMockAdapter                         | [現行Worker契約](worker-mock-api.md) |
-| host_event / host_close / WebSocket / Media / Bluetooth / DB | 将来案。本文の例を実装済みAPIとして使わない                        | 実装する際の検討資料                 |
+| 範囲                                                         | 状態                                                               | コード生成の根拠                      |
+| ------------------------------------------------------------ | ------------------------------------------------------------------ | ------------------------------------- |
+| host_call / host_result / HTTP                               | 実装済み。optionsにメソッド等を置く。JSON本文、json/text/empty応答 | [現行HTTP契約](http-adapter.md)       |
+| host_cancel / host_progress / OPFS転送                       | 実装済み。File本文・multipart送信とストリーム保存                  | [現行転送契約](opfs-file-transfer.md) |
+| WebWorkerの固定応答・CRUD                                    | 実装済み。独立モックDSLとworkerMockAdapter                         | [現行Worker契約](worker-mock-api.md)  |
+| host_event / host_close / WebSocket / Media / Bluetooth / DB | 将来案。本文の例を実装済みAPIとして使わない                        | 実装する際の検討資料                  |
 
 ## 目的と境界
 
@@ -180,11 +181,11 @@ WebSocket/BLEはキュー満杯で黙ってデータを捨てず、subscription�
 
 ## HTTP（当初案・現行との差）
 
-以下は当初案。現行版はJSON要求本文とjson/text/empty応答を提供し、bytes・バッファ本文は未実装。実行コードは[現行HTTP契約](http-adapter.md)から生成する。
+以下は当初案。現行http.requestはJSON要求本文とjson/text/empty応答を提供し、bytes・WASMバッファ本文は未実装。OPFSのFile本文・multipart送信とストリーム保存は別actionで実装済み。実行コードは[現行HTTP契約](http-adapter.md)から生成する。
 
-GET/POST/PUT/PATCH/DELETE/HEADを提供。JSON、text、bytes、空応答を明示する。204/HEADはbodyなしで成功。応答にstatusと許可したheadersを含める。非2xxはHTTP statusを持つ失敗として返す。bodyはJSON/text/既存バッファを初期対応とし、multipartは後続とする。
+GET/POST/PUT/PATCH/DELETE/HEADを提供。JSON、text、bytes、空応答を明示する。204/HEADはbodyなしで成功。応答にstatusと許可したheadersを含める。非2xxはHTTP statusを持つ失敗として返す。bodyはJSON/text/既存バッファを初期対応とし、multipartは後続とする、という当初案だった。現在のOPFS転送はmultipartにも対応する。
 
-既存ResourceClientのURL・CORS・送信先・認証ポリシーを共有する。JWTはstate/DSLへ渡さず、Authorizationはホストが設定する。任意headersはホスト許可リスト内に制限。GETの従来契約は維持する。更新メソッドは401更新を含む自動再送を標準OFFにし、サーバーが保証するidempotency key等を宣言した場合だけ許可する。
+既存ResourceClientのURL・CORS・送信先・認証ポリシーを共有する。JWTはstate/DSLへ渡さず、Authorizationはホストが設定する。任意headersはホスト許可リスト内に制限。GETの従来契約は維持する。更新メソッドは401更新を含む自動再送を標準OFFにし、サーバーが保証するidempotency key等を宣言した場合だけ許可する、という将来案。現行OPFS転送には再送を許可する宣言はなく、GETを含め401後の更新・再送を行わない。
 
 ## WebSocket
 
@@ -255,3 +256,5 @@ DBは両driverでparams、精度、null、重複列名、rollback、並行依頼
 - [DuckDB-WASM query](https://duckdb.org/docs/current/clients/wasm/query): prepared statement、Arrow、streaming。
 - [DuckDB-WASM instantiation](https://duckdb.org/docs/current/clients/wasm/instantiation): Worker、OPFS、スレッド構成。
 - [カメラ・マイク](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia)、[Bluetoothのデバイス選択](https://developer.mozilla.org/en-US/docs/Web/API/Bluetooth/requestDevice)。
+
+現行の中止・進捗は[OPFS転送契約](opfs-file-transfer.md)を参照。`host_cancel`はtransactional intent、`host_progress`は完了pendingを消費しない通知であり、将来案のsubscriptionやhost_event/host_closeとは別の契約。転送は既定120秒（options.timeoutは1〜300秒）、一般hostは既定15秒を維持する。転送容量はホストのtransferLimitで制御し、一般JSON/Rhai/Workerの上限は変更しない。アップロードbyte進捗とブラウザ内部buffer量の保証は提供しない。

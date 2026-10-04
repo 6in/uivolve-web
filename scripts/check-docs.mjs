@@ -3,6 +3,8 @@ import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
+// The transfer guide is a required entry point, even if removed from the link graph.
+await access(resolve(root, "docs/opfs-file-transfer.md"));
 async function markdown(directory) {
   const files = await Promise.all(
     (await readdir(directory, { withFileTypes: true })).map((entry) => {

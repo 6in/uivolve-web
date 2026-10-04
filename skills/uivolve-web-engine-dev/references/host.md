@@ -25,3 +25,6 @@
 - HTTPの固定宣言は画面load前、動的path/query/bodyは確定後のホストで検証する。state確定前に通信しない。host_resultのerrorは構造化オブジェクトで、旧http_resultの文字列と区別する。
 - 外部操作の完了handlerが失敗してもidは消費される。onErrorのexternalResultを保持し、UIの巻き戻しを外部更新の取り消しとみなさない。
 - HostEffects/HTTP以外のWebSocket・Media・Bluetooth・DB、host_event/host_closeは未実装。将来設計を現行DSLへそのまま追加しない。
+
+- [OPFS転送](../../../docs/opfs-file-transfer.md)はFile/FormData専用送信とResponse reader→OPFS writableの逐次保存。一般JSON/Rhai/Workerの上限を拡張せず、本体をWASM/stateへ通さない。通常filesと同scope/volumeの共有ロックを使い、実処理とcleanupのsettleまで保持する。
+- host_cancel(name)はtransactional intentで、handler/state検証失敗時にcontrol effectを発行しない。同名全中止、未知・終了済み名はno-op。host_progress/progressHostはid/operationを照合して最新stateへ適用し、完了pendingを消費しない。配送では世代・100ms以上の間隔・終端通知取消を維持する。アップロードbyte進捗は提供しない。
