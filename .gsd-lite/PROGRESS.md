@@ -62,3 +62,12 @@
 - 想定外: 最初のloop推定パスが存在せずPATH上のgsd-lite-loop.shで解決。追加したruntime試験用files宣言で必須backendが欠けていた。prepared context配送のため対象一覧にないsrc/host-effects.jsとtests/runtime.test.jsも必要最小限変更した。
 - やり直し: 2 回（loop呼び出しパスの修正1回、追加試験のbackend欠落を修正1回）。実装の検証失敗による立て直しは1回で、その後全テストとcheckが成功。
 - 次への注意: 次はT6のみ。loopはPATH上のgsd-lite-loop.shを使う。files宣言にはbackend: opfsが必須。HTTP内部transferArgumentsはURLと限定FileClient参照を返すが、executeは純粋検証後にUNSUPPORTEDを返す段階で、T6/T7で実処理へ接続する。境界の正常入力試験も現在はUNSUPPORTED到達を確認するため、接続時に実処理のfixtureへ更新する。不正入力試験はINVALID_ARGUMENT/LIMITを要求しfetch/OPFS未到達を確認済み。準備contextはscope/files、transferLimitはadapterに保持し、options.timeoutは秒で既定120（配送への適用はT8）。T11未完成のためverify:transferはまだ最終合格用に実行しない。
+
+
+## turn 9 — impl — T6 downloadのストリーム保存と原子的確定
+
+- やったこと: http.downloadを共有領域ロック内の専用helperへ接続し、2xx応答をread→容量検査→writeの逐次awaitで保存。close成功を確定境界とし、失敗・中止時はreader.cancel/writer.abort/新規entry削除を待ち、既存bytesを保持する。0 bytes、容量境界、Content-Length虚偽/不正/なし、gzip復号後超過、非2xx、各OPFS例外、cleanup gate、中止中closeを検証。転送53件、全JS578件、Rust15件、WASM生成、check（警告0）、docs:check（412リンク）、buildが成功。
+- 想定外: close中の中止ではclose成功後もreader.cancelの実promiseを待つ必要があり、cleanupを確定済みでも待機する構造へ修正。初回checkは成功したがfinally内throwと試験配列生成に警告が出たため、cleanup結果を保持してfinally後に判定する構造とArray.fromへ修正した。
+- やり直し: 1 回（整形後の行とpatchが一致せず、該当箇所を読み直して適用）。検証失敗による立て直しは0回。レビューと警告解消後に全テスト/check/buildを再確認した。
+- 既存テスト期待値変更: tests/opfs-file-transfer.test.jsの「validates host transferLimit and snapshots file declarations in prepared context」で、HostEffects完了のUNSUPPORTED期待をok:true/body:nullへ変更。理由はT6でdownload実処理が接続されたため。fixtureのtransferRequestは200空応答を返す。multipart境界試験のUNSUPPORTED期待はT7まで維持。
+- 次への注意: 次はT7のみ。download helperはsrc/adapters/http-download.js。withFileLocksでfetchからcleanupまで保持し、close成功後は中止されても確定済みfileを削除しない。cleanup失敗はCLEANUP、確定後ならoutcome=committed。共有FileClient/OpfsDirectory境界と通常files/cache退行試験を確認済み、既存全量上限は維持。配送のcancel/期限/進捗/世代および最終結果検査はT8で接続する。T11未完成のためverify:transferはまだ最終合格用に実行しない。

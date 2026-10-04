@@ -26,10 +26,16 @@
     "base": "main"
   },
   "research": {
-    "targets": ["similar_oss", "official_docs", "local_projects"],
-    "local_search_paths": ["~/workspaces"]
+    "targets": [
+      "similar_oss",
+      "official_docs",
+      "local_projects"
+    ],
+    "local_search_paths": [
+      "~/workspaces"
+    ]
   },
-  "turn": 8,
+  "turn": 9,
   "max_turns": 60,
   "retry_max": 2,
   "verify_round": 0,
@@ -41,5 +47,5 @@
     "verify": "claude-fable-5-1",
     "reflect": "claude-fable-5-1"
   },
-  "updated_at": "2026-10-04T22:25:08+09:00"
+  "updated_at": "2026-10-04T22:32:00+09:00"
 }
