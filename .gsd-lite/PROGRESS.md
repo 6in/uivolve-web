@@ -92,3 +92,10 @@
 - 想定外: 最初のloop推定パスが存在せずPATH上へ修正。adapter.executeをmicrotaskへ移した初回実装が既存の同期開始契約を壊し、reset試験のresolveが未設定となった。同期executeとPromise.resolveの構造へ戻した。対象一覧外のhttp-download.js/http.jsも進捗contextの接続に必要だった。checkの例外変数代入警告は代入を除去して解消した。既存テスト期待値変更なし。
 - やり直し: 1 回（既存試験失敗を受けadapter同期開始を復元し、対象/全検査が成功）。loopパス修正1回。警告修正後も全検査を再確認。
 - 次への注意: 次はT9のみ。loopはPATH上のgsd-lite-loop.sh。転送の期限/中止結果はcleanupを含む実処理settle後に一度配送するため、ロックはそれまで保持される。中止中close成功はCANCELLED/TIMEOUTのoutcome=committed。進捗はwrite成功後のbytes、符号化/不正/欠落/超過したContent-Lengthはtotal=null。実WASM進捗契約と既存runtime試験も成功。T9で実WASMからのwrite/close/abort gateと通常files競合の交差試験を追加する。T11未完成のためverify:transferは未実行。
+
+## turn 13 — impl — T10 テストサーバーとDOM/Canvasサンプル（BLOCKED）
+
+- やったこと: 独立localhost転送サーバー、DOM/Canvas共通YAML/Rhai、ホストで100 MiBをOPFSへchunk生成するhelper、demo:transfer登録、サーバー/実WASM試験を作成。WASM生成とcheck成功。対象試験78件中77件成功（既存転送72件、サーバー5件）、サンプルのCSV加工試験1件失敗。既存テスト期待値変更なし。実装差分は未コミットのまま保持し、PLANのT10は未完了。
+- 想定外: 最初に推定したloopパスが存在せずPATH上のgsd-lite-loop.shで解決。Bun 1.3.12はReadableStream応答のContent-Lengthを外し、空multipart Fileのnameを失うため既知長Blob fixtureとMIMEヘッダー補助を追加。初回試験はOPFS helper名が誤り、1回目修正後はfetchのRequest変換が不足。2回目修正後、Rhai replaceの戻り値がunitでfile_write_textの型不一致となった。state.turn=12/T9完了コミットはあるがPROGRESSにはturn12の追記がなく、過去記録は改変していない。
+- やり直し: 2 回（1: Bun fixture互換とOPFS helper名修正。2: fixtureへRequestを渡すfetch wrapper修正）。スキルの上限に達したため追加修正なし。
+- 次への注意: BLOCKED.mdを参照。再開時は今回の未コミット差分をT10の続きとして扱う。home.rhaiのCSV加工はローカル文字列にreplaceを適用してからfile_write_textへ渡す方式を実WASMで確認する。checkは成功したが全検証コマンドは未完走。T11の実ブラウザ試験は未実装なのでverify:transferは未実行。
