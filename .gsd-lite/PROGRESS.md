@@ -41,3 +41,10 @@
 - 想定外: 最初に推定したloopパスが存在せず、PATH上のgsd-lite-loop.shで解決した。差分レビューでtotal欠落と余分なキーの組合せが通ることを見つけ、明示的な必須キー検証と試験を追加した。
 - やり直し: 1 回（loop呼び出しパスの修正）。検証失敗による立て直しは0回。payload検証修正後に全テスト/check/buildを再確認した。
 - 次への注意: 次はT3のみ。loopはPATH上のgsd-lite-loop.shを使う。進捗ABIはdata={operation,transferred,total}（非負の安全整数、totalはnullまたはtransferred以上）を受け取る。cancel effectはkind=host_cancel/v=1/operationでIDを消費しない。runtime/HostEffectsの配送接続、generation照合、頻度制御はT8で実装する（追従先の既存runtime/host-effectsを確認済み）。T11未完成のためverify:transferはまだ最終合格用に実行しない。
+
+## turn 6 — impl — T3 共有領域ロックと転送用handle境界
+
+- やったこと: fileLockKey/withFileLocksを追加し、通常filesと転送のscope/volumeキーを共通化。複数キーを重複除去・固定順でifAvailable非待機取得し、競合はcode=BUSY、実promiseのsettleまで保持する。指定パス・宣言権限に限定したtransferFileとOPFS handle/File/writable取得を追加し、親事前mkdirと既存全量上限を維持。転送基盤19件、全JS536件、Rust15件、WASM生成、check、docs:check（412リンク）、buildが成功。既存テスト期待値の変更なし。
+- 想定外: 差分レビューでdirectory全体の公開では指定パス/読み取り権限を迂回できるため、パスをclosureに固定したtransferFileへ変更。fileのoptionsからcreateを渡さず、読み取り用参照にはmutable handle/writable/removeを許可しない。
+- やり直し: 0 回（検証失敗なし。境界レビュー修正後に全テスト、最終の軽微な権限制約修正後に対象19件/checkを再確認）。
+- 次への注意: 次はT4のみ。transferFile(scope, declarations, volume, path, {write})はkey/file/handle/writable/removeを返す。uploadはfileのみ、downloadはwrite=trueで利用し、withFileLocks(keys, action, {signal, locks})で処理とcleanup全体を囲む（取得メソッド単独ではロックしない）。handleはmutableなためwrite=true限定。cacheのnamespaceは別のままで既存files/cache試験が成功。T11未完成のためverify:transferはまだ最終合格用に実行しない。
