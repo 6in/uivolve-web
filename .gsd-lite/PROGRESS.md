@@ -55,3 +55,10 @@
 - 想定外: 最初に推定したloopパスが存在せず、PATH上のgsd-lite-loop.shで作業場所を解決した。
 - やり直し: 1 回（loop呼び出しパスの修正）。実装・検証の立て直しは0回。
 - 次への注意: 次はT5のみ。loopはPATH上のgsd-lite-loop.shを使う。転送はtransferRequest(url, {method, body, headers, signal, allowHttpErrors:true})を使用し、非2xxの処理はadapterで行う。GETはbodyなし、POST/PUTはBlob（File含む）またはFormDataのみ。認証の事前refreshは許容するが401後の再送は常に無効。容量/parts/接続範囲/ヘッダーの転送固有検証はT5/T7で行う。T11未完成のためverify:transferはまだ最終合格用に実行しない。
+
+## turn 8 — impl — T5 HTTP転送宣言・引数・ホスト設定の純粋検証
+
+- やったこと: http.download/upload/multipartを登録し、宣言のmethod/timeout/overwrite/progressHandler、URL/headers、file/partsの形・権限・相対パス、32parts/8files/100,000 UTF-8 bytesを副作用前に検証した。transferLimitはホスト限定の正の安全整数（既定104857600）としてcreateApplication/UiRuntimeから渡し、HostEffects.prepareにscope/filesのsnapshotを接続した。全JS548件、Rust15件、転送23件、WASM生成、check、docs:check（412リンク）、buildが成功。追従先のResourceClient/一般HTTPと起動経路を確認し、文書更新はT12に維持。既存テスト期待値の変更なし。
+- 想定外: 最初のloop推定パスが存在せずPATH上のgsd-lite-loop.shで解決。追加したruntime試験用files宣言で必須backendが欠けていた。prepared context配送のため対象一覧にないsrc/host-effects.jsとtests/runtime.test.jsも必要最小限変更した。
+- やり直し: 2 回（loop呼び出しパスの修正1回、追加試験のbackend欠落を修正1回）。実装の検証失敗による立て直しは1回で、その後全テストとcheckが成功。
+- 次への注意: 次はT6のみ。loopはPATH上のgsd-lite-loop.shを使う。files宣言にはbackend: opfsが必須。HTTP内部transferArgumentsはURLと限定FileClient参照を返すが、executeは純粋検証後にUNSUPPORTEDを返す段階で、T6/T7で実処理へ接続する。境界の正常入力試験も現在はUNSUPPORTED到達を確認するため、接続時に実処理のfixtureへ更新する。不正入力試験はINVALID_ARGUMENT/LIMITを要求しfetch/OPFS未到達を確認済み。準備contextはscope/files、transferLimitはadapterに保持し、options.timeoutは秒で既定120（配送への適用はT8）。T11未完成のためverify:transferはまだ最終合格用に実行しない。
