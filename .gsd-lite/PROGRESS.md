@@ -163,3 +163,10 @@
 - 想定外: 最初に推定した.gsd-lite/gsd-lite-loop.shは存在せずPATH上のgsd-lite-loop.shで解決。mainにはgithub/mainの追跡設定があるが、スキルの分岐対象originは未設定。
 - やり直し: 0 回（検証・実装修正なし。loopパス修正1回）。
 - 次への注意: 次はgsd-lite-reflectのみ。phase=reflect、next_command=/gsd-lite-reflect、turn=20。main上で状態をコミットし、マイルストーンブランチは保持。loopはPATH上を使用。BLOCKED.mdは解消済みの履歴。
+
+## turn 21 — reflect — opfs-file-transfer
+
+- やったこと: 振り返りを .gsd-lite/reflect/20261005-0843-opfs-file-transfer.md に作成（提案6件）。20試行の計測、3回のBLOCKEDと1件のverify差し戻し、38コミットを照合した。
+- 想定外: loopの推定パスが存在せずPATH上へ修正。モデル・出力/キャッシュ・コスト・permission_denialsはログに記録なし。PROGRESS turn13のturn12不足記述と現存turn12欄の差異を記録した。
+- やり直し: 0 回（振り返りの立て直しなし。loopパス修正1回）。
+- 次への注意: 次回は入口パス固定、環境事前確認、fixtureとサンプルの分割、ブラウザ起動前整形、要件既定値の受信試験、停止/立て直しの記録を検討する。ローカルマージ済みのmainでDONEへ更新する。
