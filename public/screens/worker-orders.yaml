@@ -1,0 +1,165 @@
+version: 1
+id: worker-orders
+title: 受注管理・Worker API
+script: worker-orders.rhai
+operations:
+  listOrders:
+    connection: ordersMock
+    action: http.request
+    handler: listed
+    options: { method: GET, path: orders, response: json }
+  getOrder:
+    connection: ordersMock
+    action: http.request
+    handler: fetched
+    options: { method: GET, path: "orders/{id}", response: json }
+  createOrder:
+    connection: ordersMock
+    action: http.request
+    handler: changed
+    options: { method: POST, path: orders, response: json }
+  updateOrder:
+    connection: ordersMock
+    action: http.request
+    handler: changed
+    options: { method: PATCH, path: "orders/{id}", response: json }
+  deleteOrder:
+    connection: ordersMock
+    action: http.request
+    handler: changed
+    options: { method: DELETE, path: "orders/{id}", response: empty }
+  resetOrders:
+    connection: ordersMock
+    action: http.request
+    handler: changed
+    options: { method: POST, path: reset, response: json }
+state:
+  orders: []
+  selected: ""
+  id: ""
+  customer: ""
+  date: "2026-10-04"
+  price: "1200"
+  quantity: "1"
+  loading: false
+  notice: ""
+ui:
+  xtype: container
+  layout: vbox
+  items:
+    - { xtype: label, text: 受注管理・Worker API, variant: heading }
+    - {
+        xtype: label,
+        text: 行を選ぶと編集できます。登録時のIDは自動採番。税率10％・支払期限14日後。,
+        variant: muted,
+      }
+    - xtype: gridpanel
+      itemId: ordersGrid
+      height: 190
+      bind: orders
+      selectedBind: selected
+      handler: selectOrder
+      disabledBind: loading
+      columns:
+        - { dataIndex: id, text: ID, flex: 0.6 }
+        - { dataIndex: customer, text: 顧客, flex: 1 }
+        - { dataIndex: date, text: 受注日, flex: 1 }
+        - { dataIndex: due, text: 支払期限, flex: 1 }
+        - { dataIndex: totalLabel, text: 税込金額, flex: 1, align: right }
+    - xtype: container
+      layout: hbox
+      items:
+        - {
+            xtype: textfield,
+            itemId: orderId,
+            fieldLabel: 編集・取得するID,
+            bind: id,
+            disabledBind: loading,
+          }
+        - {
+            xtype: button,
+            itemId: getOrder,
+            text: IDから取得,
+            handler: getOrder,
+            disabledBind: loading,
+          }
+    - xtype: container
+      layout: hbox
+      items:
+        - {
+            xtype: textfield,
+            itemId: customer,
+            fieldLabel: 顧客名,
+            bind: customer,
+            disabledBind: loading,
+          }
+        - {
+            xtype: datefield,
+            itemId: orderDate,
+            fieldLabel: 受注日,
+            bind: date,
+            disabledBind: loading,
+          }
+    - xtype: container
+      layout: hbox
+      items:
+        - {
+            xtype: textfield,
+            itemId: price,
+            fieldLabel: 単価,
+            bind: price,
+            align: right,
+            disabledBind: loading,
+          }
+        - {
+            xtype: textfield,
+            itemId: quantity,
+            fieldLabel: 数量,
+            bind: quantity,
+            align: right,
+            disabledBind: loading,
+          }
+    - xtype: container
+      layout: hbox
+      items:
+        - {
+            xtype: button,
+            itemId: createOrder,
+            text: 新規登録,
+            handler: createOrder,
+            disabledBind: loading,
+          }
+        - {
+            xtype: button,
+            itemId: updateOrder,
+            text: 更新,
+            handler: updateOrder,
+            disabledBind: loading,
+          }
+        - {
+            xtype: button,
+            itemId: deleteOrder,
+            text: 削除,
+            handler: deleteOrder,
+            disabledBind: loading,
+          }
+        - {
+            xtype: button,
+            itemId: refreshOrders,
+            text: 再取得,
+            handler: refreshOrders,
+            disabledBind: loading,
+          }
+        - {
+            xtype: button,
+            itemId: resetOrders,
+            text: 初期データへ,
+            handler: resetOrders,
+            disabledBind: loading,
+          }
+    - { xtype: label, itemId: notice, bind: notice }
+    - {
+        xtype: label,
+        text: 更新はWebWorker内のメモリへ保存します。画面切替では保持し、ページ再読込で初期化。,
+        variant: muted,
+      }

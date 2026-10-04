@@ -59,6 +59,7 @@ export function syncControl(record, widget) {
   record.widget = widget;
   const { input } = record;
   const config = widget.config;
+  input.style.textAlign = config.align || "left";
   input.classList.toggle("code-input", Boolean(config.monospace));
   if (config.language) input.dataset.language = config.language;
   input.disabled = widget.disabled;

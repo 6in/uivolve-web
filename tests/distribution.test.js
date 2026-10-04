@@ -116,7 +116,12 @@ it("builds a standalone static app with real deep entries and no demo or build d
       )
     ).flat();
   }
-  expect((await files(output)).sort()).toEqual(
+  const publishedFiles = await files(output);
+  const workerAssets = publishedFiles.filter((path) =>
+    /^runtime\/assets\/mock-api-worker-[\w-]+\.js$/.test(path),
+  );
+  expect(workerAssets).toHaveLength(1);
+  expect(publishedFiles.sort()).toEqual(
     [
       "app.json",
       "boot.js",
@@ -128,6 +133,7 @@ it("builds a standalone static app with real deep entries and no demo or build d
       "runtime/engine.wasm",
       "runtime/index.css",
       "runtime/index.js",
+      ...workerAssets,
     ].sort(),
   );
   const entry = await readFile(join(output, "pages/home/index.html"), "utf8");
@@ -137,6 +143,8 @@ it("builds a standalone static app with real deep entries and no demo or build d
   expect(bootstrap).toContain('"./runtime/index.js"');
   expect(bootstrap).not.toContain("../../src/");
   const runtime = await readFile(join(output, "runtime/index.js"), "utf8");
+  expect(runtime).toContain(workerAssets[0].replace("runtime/", ""));
+  expect(runtime).not.toContain('"/assets/mock-api-worker-');
   expect(runtime).not.toMatch(/SCREEN_CATALOG|screen-select|benchmark|import\.meta\.env/);
   const css = await readFile(join(output, "runtime/index.css"), "utf8");
   expect(css).toContain(".uivolve-runtime");

@@ -4,6 +4,7 @@ import { applyTheme } from "./theme.js";
 import { SCREEN_CATALOG, screenFile } from "./screen-catalog.js";
 import { createUiTools, registerUiTools } from "./webmcp.js";
 import { ResourceClient } from "./resource-client.js";
+import { workerMockAdapter } from "./adapters/worker-mock.js";
 import { packageFormat, parsePackage, stringifyPackage } from "./package-format.js";
 import { readPageRoute, pageUrl } from "./page-router.js";
 import { createScreenPicker } from "./screen-picker.js";
@@ -124,6 +125,14 @@ const runtime = new UiRuntime({
   baseUrl: base,
   wasmUrl: new URL("engine.wasm", base),
   resources,
+  adapters: [workerMockAdapter({ resources })],
+  connections: {
+    ordersMock: {
+      adapter: "worker-mock",
+      baseUrl: new URL("mock-api/", base).href,
+      definition: new URL("mock/orders-api.yaml", base).href,
+    },
+  },
   surfaces: [
     { element: $("dom-stage"), renderer: "dom" },
     { element: $("canvas-stage"), canvas: $("canvas"), renderer: "canvas" },

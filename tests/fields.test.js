@@ -1,6 +1,7 @@
 import { beforeAll, beforeEach, expect, it } from "vite-plus/test";
 import { readFile } from "node:fs/promises";
 import { WasmEngine } from "../src/engine.js";
+import { CanvasRenderer } from "../src/canvas-renderer.js";
 
 let compiled, bytes, screen, script, engine;
 beforeAll(async () => {
@@ -13,6 +14,57 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   engine = new WasmEngine((await WebAssembly.instantiate(compiled, {})).exports, bytes.length);
+});
+
+it("preserves decimal strings and exposes field alignment while rejecting invalid alignment", () => {
+  const definition = {
+    version: 1,
+    id: "aligned",
+    title: "Alignment",
+    script: "aligned.rhai",
+    state: { quantity: "1.25" },
+    ui: {
+      xtype: "textfield",
+      itemId: "quantity",
+      bind: "quantity",
+      fieldLabel: "数量",
+      align: "right",
+    },
+  };
+  engine.load(definition, "fn init(s){s}");
+  expect(engine.layout(400).widgets[0]).toMatchObject({
+    value: "1.25",
+    config: { align: "right" },
+  });
+  expect(engine.dispatch("quantity", { value: "123.50" }).state.quantity).toBe("123.50");
+  definition.ui.align = "justify";
+  expect(() => engine.load(definition, "fn init(s){s}")).toThrow(/Field align/);
+});
+
+it("anchors Canvas numeric text at the right edge without adding whitespace to the value", () => {
+  const draws = [];
+  const context = {
+    measureText: (s) => ({ width: s.length * 8 }),
+    fillText: (...args) => draws.push(args),
+  };
+  const renderer = { context, scene: { theme: { colors: { text: "black" } } } };
+  CanvasRenderer.prototype.text.call(
+    renderer,
+    "123",
+    10,
+    20,
+    100,
+    "black",
+    13,
+    400,
+    "sans-serif",
+    "right",
+  );
+  expect(context.textAlign).toBe("right");
+  expect(draws[0]).toEqual(["123", 110, 20]);
+  CanvasRenderer.prototype.text.call(renderer, "label", 10, 20, 100);
+  expect(context.textAlign).toBe("left");
+  expect(draws[1]).toEqual(["label", 10, 20]);
 });
 
 it("ports uivolve aliases, stores, labels, typed events and Rhai handlers to the same scene", () => {

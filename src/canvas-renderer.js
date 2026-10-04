@@ -541,17 +541,19 @@ export class CanvasRenderer {
     size = 13,
     weight = 400,
     family = FONT,
+    align = "left",
   ) {
     const ctx = this.context;
     ctx.font = `${weight} ${size}px ${family}`;
     ctx.textBaseline = "middle";
+    ctx.textAlign = align;
     ctx.fillStyle = color;
     let value = text;
     if (ctx.measureText(value).width > width) {
       while (value.length && ctx.measureText(`${value}…`).width > width) value = value.slice(0, -1);
       value += "…";
     }
-    ctx.fillText(value, x, y);
+    ctx.fillText(value, align === "right" ? x + width : align === "center" ? x + width / 2 : x, y);
   }
 
   paint() {
@@ -864,7 +866,7 @@ export class CanvasRenderer {
     const h = height - label;
     const border = this.focusKey === widget.key ? colors.focus : colors.border;
     if (kind === "displayfield") {
-      this.text(value, x, top + h / 2, width);
+      this.text(value, x, top + h / 2, width, colors.text, 13, 400, FONT, c.align || "left");
     } else if (isBox(widget)) {
       const cy = top + h / 2;
       if (kind === "checkbox") {
@@ -940,6 +942,7 @@ export class CanvasRenderer {
               13,
               400,
               c.monospace ? "monospace" : FONT,
+              c.align || "left",
             ),
           );
       } else {
@@ -955,6 +958,10 @@ export class CanvasRenderer {
           top + h / 2,
           width - (kind === "combobox" ? 42 : 22),
           value ? colors.text : colors.muted,
+          13,
+          400,
+          FONT,
+          c.align || "left",
         );
         if (kind === "combobox") this.text("▾", x + width - 24, top + h / 2, 16, colors.muted);
       }

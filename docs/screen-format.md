@@ -77,6 +77,8 @@ toolbar、datepicker、messagebox、toast、エディター、文書、図表、
 
 フォーム系の追加属性: `fieldLabel`, `boxLabel`, `name`, `value`, `inputValue`, `checked`, `emptyText`, `inputType`, `readOnly`, `disabled`, `allowBlank`, `minLength`, `maxLength`, `minValue`, `maxValue`, `increment`, `rows`, `size`, `multiSelect`, `options`, `store`, `data`, `displayField`, `valueField`, `collapsible`, `collapsed`, `checkboxToggle`, `ui`。各部品で意味のある属性を使う。設定の対応範囲は[移植対応表](uivolve-port.md)を参照。
 
+フォーム値の配置は`align: left | center | right`で指定する。既定はleft。ラベルは左寄せのまま、入力値・表示値をDOM/Canvasと編集中の入力欄で揃える。値に空白を足して配置しない。数量や金額にはrightを使い、10進文字列の金額をnumberfieldへ変換しない。
+
 Grid・ナビゲーションの追加属性: `pageSize`, `pageBind`, `sortBind`, `filterBind`, `editingBind`, `activeTab`, `activeBind`, `itemsBind`, `expandedBind`, `openBind`, `root`, `rootVisible`, `children`。Grid列の追加属性は`sortable`, `hidden`, `align`, `editor`。設定は[Grid・ナビゲーション形式](grid-navigation.md)を参照。tabpanelのitemsBindは、state内の部品定義の配列を動的な子要素として使う。[動的タブのチュートリアル](tutorial-dynamic-tabs.md)も参照。
 
 `bind` / `selectedBind` / `disabledBind`は状態参照。表示の参照は`a.b`形式に対応。入力の書き込みはトップレベルキーのみ。disabledBindがtrueの操作は実行しない。

@@ -1,0 +1,31 @@
+version: 1
+collections:
+  orders:
+    key: id
+    seed:
+      - {
+          id: O001,
+          customer: 山田商店,
+          date: "2026-10-01",
+          due: "2026-10-15",
+          price: "1200",
+          quantity: "2",
+          total: "2640",
+        }
+      - {
+          id: O002,
+          customer: 佐藤工業,
+          date: "2026-10-02",
+          due: "2026-10-16",
+          price: "850",
+          quantity: "3",
+          total: "2805",
+        }
+routes:
+  listOrders: { method: GET, path: orders, operation: list, collection: orders }
+  getOrder: { method: GET, path: "orders/{id}", operation: get, collection: orders }
+  createOrder: { method: POST, path: orders, operation: insert, collection: orders }
+  updateOrder: { method: PATCH, path: "orders/{id}", operation: update, collection: orders }
+  deleteOrder: { method: DELETE, path: "orders/{id}", operation: delete, collection: orders }
+  reset: { method: POST, path: reset, operation: reset }
+  health: { method: GET, path: health, response: { status: 200, body: { ready: true } } }

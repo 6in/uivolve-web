@@ -143,6 +143,13 @@ export const SCREEN_CATALOG = Object.freeze(
       description: "受注検索・行選択・顧客情報の編集",
     },
     {
+      id: "worker-orders",
+      title: "受注管理・Worker API",
+      category: "apps",
+      description: "サーバー不要の一覧・登録・更新・削除と日付・金額計算",
+      file: "worker-orders.yaml",
+    },
+    {
       id: "kanban",
       title: "KANBAN・ドラッグ＆ドロップ",
       label: "KANBAN",

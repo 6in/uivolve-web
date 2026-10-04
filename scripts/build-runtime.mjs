@@ -12,6 +12,8 @@ export async function buildRuntime(outputDirectory = resolve(root, "runtime-dist
   await build({
     configFile: false,
     root,
+    // Keep Worker assets relative to index.js when runtime/ is deployed under any prefix.
+    base: "./",
     publicDir: false,
     logLevel: "warn",
     build: {

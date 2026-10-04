@@ -30,6 +30,7 @@ app-dist/
     index.css
     engine.wasm
     THIRD_PARTY_NOTICES.txt
+    assets/mock-api-worker-<hash>.js
 ```
 
 `app-dist/`全体を静的ホストへ配置できる。配信にRust・Vite・npmのインストールは不要。Bunをサーバーとして選ぶ場合だけ配信先にBunが必要。添付のサーバーはローカル確認用に127.0.0.1へバインドする。`PORT=4180 bun run preview:minimal`でポートを変更できる。HTML・JS・CSS・WASM・YAML・Rhaiをそのまま配信し、存在しないファイルは404とする。
@@ -101,4 +102,4 @@ CSSとテーマ変数は表示領域の`.uivolve-runtime`へ適用する。外�
 
 時計を固定・差し替えする場合はcreateApplicationまたはUiRuntimeへ`clockProvider`を渡す。既定はブラウザ時計。[日付・時計の契約](date-functions.md)を参照。
 
-ホスト操作を使う場合は起動コードで`adapters`と`connections`を設定する。createApplicationのconnectionsはapp.jsonにも置けるが、JavaScript側の値を渡すと優先される。httpAdapterは自動登録されない。[メソッド・パス変数を含む起動例](http-adapter.md)を参照。
+HTTP操作を使う場合は`connections`を設定する。httpAdapterは自動登録されるので重複登録しない。追加のアダプターは起動コードの`adapters`へ渡す。createApplicationのconnectionsはapp.jsonにも置けるが、JavaScript側の値を渡すと優先される。[HTTP起動例](http-adapter.md)、[WorkerモックAPI](worker-mock-api.md)を参照。配布されたWorkerのassetsもruntime-distごとコピーする。

@@ -134,6 +134,9 @@ pub fn validate(node: &Node) -> Result<(), String> {
     if !input(node) && !["progressbar", "displayfield"].contains(&node.xtype.as_str()) {
         return Ok(());
     }
+    if !["", "left", "center", "right"].contains(&node.align.as_str()) {
+        return Err("Field align must be left, center or right".into());
+    }
     if !(1..=12).contains(&node.rows) || !(1..=12).contains(&node.size) {
         return Err("rows and size must be between 1 and 12".into());
     }
@@ -359,7 +362,7 @@ pub fn configure(node: &Node, state: &Value, w: &mut Widget) {
         };
         w.config = json!({ "fraction": n });
     } else {
-        w.config = json!({ "rawValue": raw, "boxLabel": node.box_label, "checked": checked, "inputValue": node.input_value, "name": node.name, "group": node.bind, "placeholder": node.empty_text, "inputType": node.input_type, "readOnly": node.read_only, "required": !node.allow_blank, "minLength": node.min_length, "maxLength": node.max_length, "min": node.min_value, "max": node.max_value, "step": node.increment, "rows": node.rows, "size": node.size, "multiple": node.multi_select.unwrap_or(false), "options": options, "labelHeight": if ["checkbox", "radio"].contains(&node.xtype.as_str()) && node.field_label.is_empty() { 0 } else { 24 } });
+        w.config = json!({ "rawValue": raw, "align": node.align, "boxLabel": node.box_label, "checked": checked, "inputValue": node.input_value, "name": node.name, "group": node.bind, "placeholder": node.empty_text, "inputType": node.input_type, "readOnly": node.read_only, "required": !node.allow_blank, "minLength": node.min_length, "maxLength": node.max_length, "min": node.min_value, "max": node.max_value, "step": node.increment, "rows": node.rows, "size": node.size, "multiple": node.multi_select.unwrap_or(false), "options": options, "labelHeight": if ["checkbox", "radio"].contains(&node.xtype.as_str()) && node.field_label.is_empty() { 0 } else { 24 } });
     }
     if ["codeeditor", "htmleditor"].contains(&node.port_kind.as_str()) {
         w.config["monospace"] = json!(true);

@@ -2,10 +2,11 @@
 
 設計日: 2026-10-04。状態: 将来設計と設計履歴。host_call、HostEffects、HTTPアダプターは初期版を実装済みで、使用するAPI・DSLは[現行HTTP契約](http-adapter.md)を優先する。この文書の残りのアダプターと継続通知、バッファ送信は未実装。既存GET、storage、file、RPCも維持している。
 
-| 範囲                                                         | 状態                                                               | コード生成の根拠                |
-| ------------------------------------------------------------ | ------------------------------------------------------------------ | ------------------------------- |
-| host_call / host_result / HTTP                               | 実装済み。optionsにメソッド等を置く。JSON本文、json/text/empty応答 | [現行HTTP契約](http-adapter.md) |
-| host_event / host_close / WebSocket / Media / Bluetooth / DB | 将来案。本文の例を実装済みAPIとして使わない                        | 実装する際の検討資料            |
+| 範囲                                                         | 状態                                                               | コード生成の根拠                     |
+| ------------------------------------------------------------ | ------------------------------------------------------------------ | ------------------------------------ |
+| host_call / host_result / HTTP                               | 実装済み。optionsにメソッド等を置く。JSON本文、json/text/empty応答 | [現行HTTP契約](http-adapter.md)      |
+| WebWorkerの固定応答・CRUD                                    | 実装済み。独立モックDSLとworkerMockAdapter                         | [現行Worker契約](worker-mock-api.md) |
+| host_event / host_close / WebSocket / Media / Bluetooth / DB | 将来案。本文の例を実装済みAPIとして使わない                        | 実装する際の検討資料                 |
 
 ## 目的と境界
 

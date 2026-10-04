@@ -10,6 +10,7 @@
 | 独立アプリの起動設定             | [共通ランタイム](runtime-distribution.md)                                              | CSS/JS/WASMの配置、app.json、登録済みアダプターと接続 |
 | メソッド・パス変数・本文付きHTTP | [HTTP契約](http-adapter.md)                                                            | ホスト登録＋operations.options＋host_callのargs       |
 | 固定URLのJSON GET                | [GETチュートリアル](tutorial-http-grid.md)                                             | requests＋http_get                                    |
+| サーバーなしの固定応答・CRUD     | [WorkerモックAPI](worker-mock-api.md)                                                  | 独立モックDSL＋workerMockAdapter＋既存operations      |
 | 日付、金額、Unicode加工          | [日付](date-functions.md)、[小数](decimal-functions.md)、[文字列](text-functions.md)   | 引数の型、単位、丸め、上限                            |
 | 保存、OPFS、Unary RPC            | [保存・型](platform-features.md)、[ファイル・RPC](files-cache-rpc.md)                  | 依頼宣言、完了handler、JSON/bytes寿命                 |
 | 部品やエンジンを変更             | [engine-devスキル](../skills/uivolve-web-engine-dev/SKILL.md)、[構成](architecture.md) | Rust、ABI、両レンダラー、対応テスト                   |
@@ -20,7 +21,7 @@
 ## 実装済みの境界
 
 - 共通UI WASMはstate・型・部品・layout・イベントを確定し、ブラウザimportを持たない。Rhaiは同期。通信・保存はホストへ依頼し、完了handlerで最新stateへ反映する。
-- host_call、HostEffects、HTTPアダプターは実装済み。WebSocket、カメラ/マイク、Bluetooth、PGlite/DuckDBアダプター、host_event、host_closeは将来設計。ブラウザ自体のAPIが存在することと、この製品のDSLで使えることを区別する。
+- host_call、HostEffects、HTTPアダプター、WebWorkerの宣言的モックAPIは実装済み。WebSocket、カメラ/マイク、Bluetooth、PGlite/DuckDBアダプター、host_event、host_closeは将来設計。ブラウザ自体のAPIが存在することと、この製品のDSLで使えることを区別する。
 - 日付・時計、10進文字列の金額、Unicodeの正規化・書記素処理は登録済み。専用かな変換・文字種検査は後続。日時をJSのDateオブジェクト、金額をFLOATとして扱うコードを生成しない。
 - 比較デモの画面一覧はsrc/screen-catalog.jsから生成する。外部アプリはapp.jsonのpagesを使う。画面追加のためだけにデモindex.htmlの選択肢を手動追加しない。
 

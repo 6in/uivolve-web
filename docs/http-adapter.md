@@ -16,7 +16,7 @@
 [ランタイム配布](runtime-distribution.md)のruntime-distを`runtime/`へ配置した例。HTMLに空の`<div id="app"></div>`を置き、`./runtime/index.css`を読み込む。boot.jsはアプリのルートに配置する。
 
 ```js
-import { createRuntime, ResourceClient, httpAdapter } from "./runtime/index.js";
+import { createRuntime, ResourceClient } from "./runtime/index.js";
 
 const baseUrl = new URL("./", import.meta.url);
 const resources = new ResourceClient({ baseUrl });
@@ -24,7 +24,6 @@ const ui = await createRuntime({
   element: document.getElementById("app"),
   baseUrl,
   resources,
-  adapters: [httpAdapter({ resources })],
   connections: {
     api: { adapter: "http", baseUrl: new URL("./api/", baseUrl).href },
   },
@@ -36,7 +35,7 @@ await ui.load("screens/orders.yaml");
 
 APIエンドポイントは利用者のサーバーで用意する。このライブラリは`./api/`にサーバーを生成しない。baseUrlは末尾/のHTTP(S)ディレクトリURLで、query/fragmentを付けない。相対接続URLは画面URLから解決されるため、複数画面で共有する接続は上のように絶対URLにする。
 
-createApplicationも同じresources、adapters、connectionsを受け取る。connectionsをapp.jsonに置く場合でも、httpAdapterの登録は起動JavaScriptで必要。既定で自動登録されない。JWTは共有ResourceClientへ設定し、画面やRhaiへトークンを渡さない。詳細は[認証契約](authentication.md)。
+createApplicationも同じresources、adapters、connectionsを受け取る。HTTPアダプターはUiRuntime/createRuntime/createApplicationで自動登録されるので、重複登録しない。connectionsはapp.jsonにも置ける。HostEffectsを単独で使う場合はhttpAdapterの明示登録が必要。サーバーなしで試す場合は[WorkerモックAPI](worker-mock-api.md)を登録する。JWTは共有ResourceClientへ設定し、画面やRhaiへトークンを渡さない。詳細は[認証契約](authentication.md)。
 
 ## 画面を宣言する（screens/orders.yaml）
 

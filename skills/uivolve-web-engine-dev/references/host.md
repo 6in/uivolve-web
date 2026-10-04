@@ -5,6 +5,7 @@
 | 変更対象                          | 契約                                                                                                       |
 | --------------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | host_call・HTTPメソッド・パス変数 | [現行HTTP契約](../../../docs/http-adapter.md)、[将来設計と実装状態](../../../docs/host-adapters-design.md) |
+| WebWorker・宣言的モックAPI        | [WorkerモックAPI](../../../docs/worker-mock-api.md)                                                        |
 | 配信・自然なURL・WASM更新         | [運用](../../../docs/operations.md)、[JSON/YAML・URL](../../../docs/platform-features.md)                  |
 | JWT・CORS・refresh token          | [認証](../../../docs/authentication.md)                                                                    |
 | HTTPの依頼と完了                  | [HTTP](../../../docs/tutorial-http-grid.md)                                                                |

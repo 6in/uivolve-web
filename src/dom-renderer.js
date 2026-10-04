@@ -280,7 +280,8 @@ export class DomRenderer {
       root.dataset.target = widget.target;
       if (widget.config.menu) root.dataset.menu = widget.config.menu;
       else delete root.dataset.menu;
-      if (widget.config.align) root.style.textAlign = widget.config.align;
+      root.style.textAlign =
+        isField(widget) || widget.kind === "displayfield" ? "" : widget.config.align || "";
       const roles = {
         "grid-shell": "grid",
         "grid-head": "row",
@@ -369,6 +370,7 @@ export class DomRenderer {
       } else if (widget.kind === "displayfield") {
         record.label.textContent = widget.text;
         record.value.textContent = widget.value;
+        record.value.style.textAlign = widget.config.align || "left";
       } else if (widget.kind === "progressbar") {
         record.fill.style.width = `${widget.config.fraction * 100}%`;
         record.caption.textContent = widget.text;
