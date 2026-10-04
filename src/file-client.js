@@ -1,10 +1,40 @@
-import { OpfsDirectory, relativePath, safeName, withFileLock } from "./opfs.js";
+import { OpfsDirectory, relativePath, safeName, fileLockKey, withFileLock } from "./opfs.js";
 
 export class FileClient {
   constructor({ engine, storage, locks } = {}) {
     this.engine = engine;
     this.storage = storage;
     this.locks = locks;
+  }
+  transferFile(scope, declarations, volume, path, { write = false } = {}) {
+    fileLockKey(scope, volume);
+    relativePath(path);
+    const declaration = Object.hasOwn(declarations ?? {}, volume) ? declarations[volume] : null;
+    if (!declaration || !["read", "readwrite"].includes(declaration.access))
+      throw new Error("未宣言のファイル領域です");
+    if (write && declaration.access !== "readwrite") throw new Error("read-only ファイル領域です");
+    const directory = new OpfsDirectory(["uivolve-web", "fs", scope, volume], {
+      storage: this.storage,
+    });
+    const requireWrite = () => {
+      if (!write) throw new Error("read-only ファイル操作です");
+    };
+    return {
+      key: fileLockKey(scope, volume),
+      file: ({ signal } = {}) => directory.file(path, { signal }),
+      handle: (options = {}) => {
+        requireWrite();
+        return directory.fileHandle(path, options);
+      },
+      writable: (options) => {
+        requireWrite();
+        return directory.writable(path, options);
+      },
+      remove: (options) => {
+        requireWrite();
+        return directory.remove(path, options);
+      },
+    };
   }
   async execute(scope, effect, { signal } = {}) {
     if (!safeName(scope) || !safeName(effect.volume)) throw new Error("ファイル領域が不正です");
@@ -27,7 +57,7 @@ export class FileClient {
       storage: this.storage,
     });
     return withFileLock(
-      `uivolve-web:file:${scope}:${effect.volume}`,
+      fileLockKey(scope, effect.volume),
       async () => {
         const options = { signal };
         if (operation === "read_text") {

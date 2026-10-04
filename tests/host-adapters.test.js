@@ -312,3 +312,266 @@ it("supports custom registered adapters and serializes delivery while child effe
   await Promise.resolve();
   expect(dispose).toHaveBeenCalledTimes(1);
 });
+
+it("emits transactional cancellation by name without consuming completion slots", () => {
+  const definition = screen();
+  definition.operations.other = { ...definition.operations.request };
+  const start = 'host_call("request", #{});host_call("request", #{});host_call("other", #{});';
+  const cancel = 'host_cancel("request");host_cancel("missing");';
+  const code = script.replace('host_call("request", #{});', start);
+  engine.load(definition, code);
+  const pending = engine.dispatch("start").effects;
+  engine.load(definition, code.replace("s.calls+=1;", cancel + "s.calls+=1;"));
+  const active = engine.dispatch("start").effects;
+  expect(engine.completeHost(active[2].id, ok({})).effects).toEqual([
+    { kind: "host_cancel", v: 1, operation: "request" },
+  ]);
+  expect(engine.completeHost(active[0].id, ok({})).state.calls).toBe(2);
+  expect(engine.completeHost(active[1].id, ok({})).effects).toBeUndefined();
+  expect(pending.map((effect) => effect.operation)).toEqual(["request", "request", "other"]);
+  for (const failure of ['throw "bad";', 's.calls="bad";', 'http_get("missing");']) {
+    engine.load(definition, code.replace("s.calls+=1;", cancel + failure + "s.calls+=1;"));
+    const effect = engine.dispatch("start").effects[2];
+    expect(() => engine.completeHost(effect.id, ok({}))).toThrow();
+    expect(engine.dispatch("edit", { value: "kept" }).effects).toBeUndefined();
+  }
+});
+
+it("validates progress handlers and applies progress transactionally with latest state", () => {
+  const definition = screen();
+  definition.operations.request.options.progressHandler = "progress";
+  for (const invalid of ["missing", 1, null]) {
+    definition.operations.request.options.progressHandler = invalid;
+    expect(() => engine.load(definition, script)).toThrow(/progress handler/);
+  }
+  definition.operations.request.options.progressHandler = "progress";
+  const code = script + " fn progress(s,p){s.calls+=1;s.result=p;s}";
+  engine.load(definition, code);
+  const effect = engine.dispatch("start").effects[0];
+  engine.dispatch("edit", { value: "latest" });
+  const data = { operation: "request", transferred: 2, total: null };
+  expect(engine.progressHost(effect.id, data).state).toMatchObject({
+    calls: 1,
+    edit: "latest",
+    result: data,
+  });
+  expect(engine.progressHost(effect.id, { ...data, transferred: 3, total: 3 }).state.calls).toBe(2);
+  for (const bad of [
+    null,
+    {},
+    { ...data, operation: "other" },
+    { ...data, transferred: -1 },
+    { ...data, transferred: 0.5 },
+    { ...data, total: 1 },
+    { ...data, total: "3" },
+    { ...data, extra: true },
+    { operation: "request", transferred: 2, extra: true },
+  ]) {
+    expect(() => engine.progressHost(effect.id, bad)).toThrow(/progress/);
+  }
+  expect(engine.completeHost(effect.id, ok({})).state.calls).toBe(3);
+  expect(() => engine.progressHost(effect.id, data)).toThrow(/Unknown or completed/);
+  for (const failure of ['throw "bad";', 's.calls="bad";', 'http_get("missing");']) {
+    engine.load(definition, script + ' fn progress(s,p){host_cancel("request");' + failure + "s}");
+    const id = engine.dispatch("start").effects[0].id;
+    const before = engine.layout(500);
+    expect(() => engine.progressHost(id, data)).toThrow();
+    expect(engine.layout(500)).toEqual(before);
+    expect(engine.dispatch("edit", { value: "kept" }).effects).toBeUndefined();
+    expect(engine.completeHost(id, ok({})).state.calls).toBe(1);
+  }
+});
+
+function transferHost(execute, options = {}) {
+  const complete = vi.fn();
+  const progress = vi.fn();
+  const onError = vi.fn();
+  const effects = new HostEffects({
+    adapters: [{ name: "http", actions: ["http.download"], validate() {}, execute }],
+    connections: { api: { adapter: "http" } },
+    complete,
+    progress,
+    onError,
+    ...options,
+  });
+  const prepared = effects.prepare(
+    {
+      receive: {
+        connection: "api",
+        action: "http.download",
+        options: { progressHandler: "progress", timeout: 1 },
+      },
+      other: { connection: "api", action: "http.download", options: {} },
+    },
+    source,
+  );
+  effects.reset(prepared);
+  return { effects, complete, progress, onError, prepared };
+}
+const transferEffect = (id, operation = "receive") => ({
+  kind: "host",
+  v: 1,
+  id,
+  operation,
+  args: {},
+});
+
+it("cancels every matching operation and awaits actual cleanup while other names continue", async () => {
+  const pending = [];
+  const current = transferHost(
+    (operation, args, context) =>
+      new Promise((resolve, reject) => {
+        pending.push({ resolve, reject, context });
+      }),
+  );
+  const running = current.effects.run([
+    transferEffect(1),
+    transferEffect(2),
+    transferEffect(3, "other"),
+  ]);
+  await current.effects.run([{ kind: "host_cancel", v: 1, operation: "receive" }]);
+  expect(pending.map((p) => p.context.signal.aborted)).toEqual([true, true, false]);
+  expect(current.complete).not.toHaveBeenCalled();
+  pending[0].reject(Object.assign(new Error("cancelled"), { outcome: "failed" }));
+  pending[1].resolve({ files: [] });
+  pending[2].resolve({ files: [] });
+  await running;
+  expect(current.complete).toHaveBeenCalledTimes(3);
+  expect(current.complete.mock.calls.find(([id]) => id === 1)[1].error).toMatchObject({
+    code: "CANCELLED",
+    outcome: "failed",
+  });
+  expect(current.complete.mock.calls.find(([id]) => id === 2)[1].error).toMatchObject({
+    code: "CANCELLED",
+    outcome: "committed",
+  });
+  expect(current.complete.mock.calls.find(([id]) => id === 3)[1].ok).toBe(true);
+});
+
+it("uses transfer seconds, throttles progress and cancels queued notifications on termination", async () => {
+  vi.useFakeTimers();
+  try {
+    let context, reject;
+    const current = transferHost(
+      (op, args, value) => {
+        context = value;
+        return new Promise((resolve, fail) => {
+          reject = fail;
+        });
+      },
+      {
+        progress: vi.fn(() => {
+          throw new Error("handler");
+        }),
+      },
+    );
+    const running = current.effects.run([transferEffect(1)]);
+    context.progress({ transferred: 1, total: null });
+    await Promise.resolve();
+    expect(current.onError).toHaveBeenCalledTimes(1);
+    context.progress({ transferred: 2, total: null });
+    context.progress({ transferred: 3, total: null });
+    await vi.advanceTimersByTimeAsync(99);
+    expect(current.onError).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(current.onError).toHaveBeenCalledTimes(2);
+    context.progress({ transferred: 4, total: null });
+    await vi.advanceTimersByTimeAsync(900);
+    expect(context.signal.aborted).toBe(true);
+    reject(Object.assign(new Error("timeout"), { outcome: "failed" }));
+    await running;
+    expect(current.complete.mock.calls[0][1].error.code).toBe("TIMEOUT");
+    const count = current.onError.mock.calls.length;
+    context.progress({ transferred: 5, total: null });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(current.onError).toHaveBeenCalledTimes(count);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("discards old generation progress and completion and preserves committed result validation failures", async () => {
+  let context, resolve;
+  const current = transferHost((op, args, value) => {
+    context = value;
+    return new Promise((done) => {
+      resolve = done;
+    });
+  });
+  const running = current.effects.run([transferEffect(1)]);
+  context.progress({ transferred: 1, total: null });
+  current.effects.reset(current.prepared);
+  resolve({ files: [] });
+  await running;
+  expect(current.complete).not.toHaveBeenCalled();
+  expect(current.progress).not.toHaveBeenCalled();
+  const cyclic = {};
+  cyclic.self = cyclic;
+  const invalid = transferHost(async () => cyclic);
+  await invalid.effects.run([transferEffect(1)]);
+  expect(invalid.complete.mock.calls[0][1].error).toMatchObject({
+    code: "INVALID_RESULT",
+    outcome: "committed",
+  });
+});
+
+it("cancels reserved progress on reset and isolates reused ids from the old transfer", async () => {
+  vi.useFakeTimers();
+  const pending = [];
+  const current = transferHost(
+    (op, args, context) =>
+      new Promise((resolve) => {
+        pending.push({ context, resolve });
+      }),
+  );
+  try {
+    const old = current.effects.run([transferEffect(1)]);
+    pending[0].context.progress({ transferred: 1, total: null });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(current.progress).toHaveBeenCalledTimes(1);
+    pending[0].context.progress({ transferred: 2, total: null });
+    await vi.advanceTimersByTimeAsync(99);
+    expect(current.progress).toHaveBeenCalledTimes(1);
+    current.effects.reset(current.prepared);
+    expect(pending[0].context.signal.aborted).toBe(true);
+    const fresh = current.effects.run([transferEffect(1)]);
+    pending[1].context.progress({ transferred: 7, total: 9 });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(current.progress.mock.calls).toEqual([
+      [1, { operation: "receive", transferred: 1, total: null }],
+      [1, { operation: "receive", transferred: 7, total: 9 }],
+    ]);
+    pending[0].context.progress({ transferred: 3, total: null });
+    pending[0].resolve({ generation: "old" });
+    await old;
+    expect(current.complete).not.toHaveBeenCalled();
+    expect(pending[1].context.signal.aborted).toBe(false);
+    pending[1].resolve({ generation: "new" });
+    await fresh;
+    expect(current.complete.mock.calls).toEqual([[1, ok({ generation: "new" })]]);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(current.progress).toHaveBeenCalledTimes(2);
+  } finally {
+    current.effects.dispose();
+    for (const entry of pending) entry.resolve({});
+    vi.useRealTimers();
+  }
+});
+
+it.each([0, 1])("checks the final transfer response UTF-8 limit at boundary +%s", async (extra) => {
+  const overhead = new TextEncoder().encode(JSON.stringify(ok({ body: "" }))).length;
+  const result = { body: "a".repeat(1_000_000 - overhead + extra) };
+  const current = transferHost(async () => result);
+  try {
+    await current.effects.run([transferEffect(1)]);
+    expect(current.complete).toHaveBeenCalledOnce();
+    if (extra)
+      expect(current.complete.mock.calls[0][1].error).toMatchObject({
+        code: "LIMIT",
+        outcome: "committed",
+      });
+    else expect(current.complete.mock.calls[0][1]).toEqual(ok(result));
+  } finally {
+    current.effects.dispose();
+  }
+});

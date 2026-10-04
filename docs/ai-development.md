@@ -10,6 +10,7 @@
 | 独立アプリの起動設定             | [共通ランタイム](runtime-distribution.md)                                              | CSS/JS/WASMの配置、app.json、登録済みアダプターと接続 |
 | メソッド・パス変数・本文付きHTTP | [HTTP契約](http-adapter.md)                                                            | ホスト登録＋operations.options＋host_callのargs       |
 | 固定URLのJSON GET                | [GETチュートリアル](tutorial-http-grid.md)                                             | requests＋http_get                                    |
+| OPFSファイルのHTTP転送           | [転送契約](opfs-file-transfer.md)                                                      | files＋転送operations、容量・中止・受信進捗           |
 | サーバーなしの固定応答・CRUD     | [WorkerモックAPI](worker-mock-api.md)                                                  | 独立モックDSL＋workerMockAdapter＋既存operations      |
 | 日付、金額、Unicode加工          | [日付](date-functions.md)、[小数](decimal-functions.md)、[文字列](text-functions.md)   | 引数の型、単位、丸め、上限                            |
 | 保存、OPFS、Unary RPC            | [保存・型](platform-features.md)、[ファイル・RPC](files-cache-rpc.md)                  | 依頼宣言、完了handler、JSON/bytes寿命                 |

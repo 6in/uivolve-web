@@ -1,6 +1,6 @@
 # OPFSファイル転送の実装方針
 
-記録日: 2026-10-04。状態: 会話で合意した方向性と設計候補。ファイル転送は未実装。操作名・DSL・容量などのAPI契約は未確定。この文書から未登録のRhai関数や操作を生成しない。
+記録日: 2026-10-04。状態: 会話で合意した方向性と設計候補の履歴。後続の実装でdownload/upload/multipartが対応済み。確定した操作名・DSL・容量・中止・進捗は[現行OPFS転送契約](opfs-file-transfer.md)を参照し、以下の候補を現行APIとして使わない。
 
 ## 合意した方向性
 
@@ -31,10 +31,10 @@ OPFSをブラウザ内のファイル作業場所として使い、サーバー�
 
 multipartの候補項目は、フォームのファイル項目名、送信時のファイル名、ファイルのContent-Type、追加の文字列項目。FormDataのboundaryはブラウザに任せ、画面から手動指定させない。
 
-## 現行実装との境界
+## 記録当時の実装との境界
 
-- [OPFSの現行契約](files-cache-rpc.md)にはテキスト・バイナリの読み書きがある。テキスト100 KB、バイナリ1 MBなどの上限は現行APIの契約であり、新しい転送APIの容量は別途決める。
-- [HTTPアダプター](http-adapter.md)はJSON本文送信とjson/text/empty応答に対応する。ファイル本文・multipart送信や、HTTPからOPFSへ直接保存する操作は未実装。
+- [OPFSの現行契約](files-cache-rpc.md)にはテキスト・バイナリの読み書きがある。通常のテキスト100 KB、バイナリ1 MBなどの上限は維持する。後続の転送APIは独立したtransferLimit（既定104857600 bytes）で制御する。
+- [HTTPアダプター](http-adapter.md)はJSON本文送信とjson/text/empty応答に対応する。記録当時はファイル本文・multipart送信やHTTPからOPFSへ直接保存する操作が未実装だった。後続のhttp.upload/http.multipart/http.downloadで対応した。
 - [WorkerモックAPI](worker-mock-api.md)はJSONの固定応答・CRUD用。今回のファイル転送やmultipartを既に扱えるとは考えない。
 - 本番バックエンドのBun／TypeScript構成は別途検討する。今回の記録ではバックエンド製品やDBを確定しない。
 
@@ -48,4 +48,4 @@ multipartの候補項目は、フォームのファイル項目名、送信時�
 6. 成功メタデータ、アップロード応答本文、HTTPエラー、CORS・認証と再送方針。
 7. DOM／Canvasのサンプルと、ダウンロード→加工・生成→multipartアップロードを確認できるテスト用サーバー。
 
-次の検討は`$gsd-lite-discuss OPFSのダウンロード・アップロード（multipart対応）`へ引き継げる。この記録では要件確定や無人ループ起動は行わない。
+この記録を後続のdiscuss/researchへ引き継ぎ、実装とDOM/Canvas・100 MiB・実ブラウザ検証を追加した。使い方・実行コマンドは[現行契約](opfs-file-transfer.md)を参照。転送は本体をWASM/stateに通さず、一般HTTP本文・JSON・Rhai・Workerの上限を引き上げない。受信進捗だけを提供し、アップロードbyte進捗やブラウザ内部buffer量の保証は含まない。

@@ -34,9 +34,9 @@ disable-model-invocation: true
 
 ## 作業場所の判定（最初に 1 回）
 
-| 状況 | 形 | `$MS`（state と成果物） | `$TARGET`（コードを書くリポジトリ） |
-|---|---|---|---|
-| `.gsd-lite/state.json` がある | **in-repo**（従来） | `.gsd-lite` | `.`（今いるリポジトリ） |
+| 状況                          | 形                  | `$MS`（state と成果物） | `$TARGET`（コードを書くリポジトリ） |
+| ----------------------------- | ------------------- | ----------------------- | ----------------------------------- |
+| `.gsd-lite/state.json` がある | **in-repo**（従来） | `.gsd-lite`             | `.`（今いるリポジトリ）             |
 
 （既存マイルストーンの場所は `gsd-lite-loop.sh --where` でも表示できる。以下の `$MS` / `$TARGET` は
 「ここにその値をリテラルで書く」印で、シェル変数としては使わない — Bash ツールはコール間で変数を保持しない）
@@ -164,16 +164,16 @@ PROGRESS / VERIFICATION 等）を `.gsd-lite/archive/<前回のmilestone>/` へ�
      初回の推奨は現在のホストで全フェーズ実行、既存設定があればその維持。
    - パターンと保存値（省略されるフェーズは `engine` を使用）:
 
-     | パターン | engine | phase_engines |
-     |---|---|---|
-     | すべて Claude | claude | `{}` |
-     | すべて Codex | codex | `{}` |
-     | 実装だけ Codex、ほかは Claude | claude | `{"impl":"codex"}` |
-     | レビューだけ Codex、ほかは Claude | claude | `{"verify":"codex"}` |
-     | 実装・レビューは Codex、調査・計画は Claude | claude | `{"impl":"codex","verify":"codex"}` |
-     | すべて OpenCode | opencode | `{}` |
-     | 実装だけ OpenCode、ほかは Claude | claude | `{"impl":"opencode"}` |
-     | カスタム | 現在の既定値 | research / plan / impl / verify を個別に `claude` / `codex` / `opencode` から選択 |
+     | パターン                                    | engine       | phase_engines                                                                     |
+     | ------------------------------------------- | ------------ | --------------------------------------------------------------------------------- |
+     | すべて Claude                               | claude       | `{}`                                                                              |
+     | すべて Codex                                | codex        | `{}`                                                                              |
+     | 実装だけ Codex、ほかは Claude               | claude       | `{"impl":"codex"}`                                                                |
+     | レビューだけ Codex、ほかは Claude           | claude       | `{"verify":"codex"}`                                                              |
+     | 実装・レビューは Codex、調査・計画は Claude | claude       | `{"impl":"codex","verify":"codex"}`                                               |
+     | すべて OpenCode                             | opencode     | `{}`                                                                              |
+     | 実装だけ OpenCode、ほかは Claude            | claude       | `{"impl":"opencode"}`                                                             |
+     | カスタム                                    | 現在の既定値 | research / plan / impl / verify を個別に `claude` / `codex` / `opencode` から選択 |
 
    - プリセット選択時は `phase_engines` を表の値で**置き換える**。
      前回の割り当てを残さない。現在の設定を維持する場合だけ変更しない。
@@ -199,6 +199,7 @@ PROGRESS / VERIFICATION 等）を `.gsd-lite/archive/<前回のmilestone>/` へ�
      Codex / OpenCode ホストのテンプレートに allowlist がない場合は
 
      `~/.claude/gsd-lite/templates/settings.allowlist.json` を使う。
+
    - どちらのホストでも、必要な CLI が PATH 上にあり、認証・権限が準備済みか確認する。
      `GSD_LITE_ENGINE` が設定されていれば**全フェーズを上書きする**ので、
      選択と違う場合はその変数を外した起動コマンドを使う（黙って無視しない）。
@@ -256,6 +257,7 @@ PROGRESS / VERIFICATION 等）を `.gsd-lite/archive/<前回のmilestone>/` へ�
 ## 起動後の中断・再開の案内
 
 起動時には次の操作も案内する:
+
 - 別ターミナルの `gsd-lite-loop.sh --stop` で現在のタスク終了後の中断を依頼できる。
 - `gsd-lite-loop.sh --status` で依頼・稼働状態を確認する。
 - 再開は `gsd-lite-loop.sh`。排他取得後に前回のフラグを消し、保存された次のタスクから続ける。

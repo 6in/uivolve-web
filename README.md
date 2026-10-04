@@ -46,6 +46,7 @@ Rustを変更したら`bun run build:wasm`を実行する。フロントエン�
 - 「KANBAN」でカードを列間でドラッグ移動し、同じ列内で並べ替える。DOM／Canvasのどちらから操作しても反映され、Rhaiが移動を拒否すると元の位置を保つ。Alt＋方向キーとWebMCPでも移動できる。[記述・操作契約](docs/kanban.md)を参照。
 
 - 「ダイアログ」で、Rhaiの`alert / confirm / prompt`からテーマに合わせた独自モーダルを表示する。標準アイコン6種類・任意画像URL・絵文字・非表示を指定できる。WASMが同じ依頼を両側の表示領域内に構成し、各レンダラーで描画する。どちらで回答しても完了handlerを1回呼ぶ。空文字でのOKとキャンセルを区別し、画面切替時は破棄する。[呼び出し方と拡張方法](docs/dialogs.md)を参照。
+- OPFSファイルのGET受信・POST/PUT本文・multipart送信を試すには`bun run demo:transfer`を起動し、[ファイル転送サンプルと契約](docs/opfs-file-transfer.md)を参照。DOM/Canvas共通で受信進捗と中止を扱う。
 - 「OPFS・ファイル操作」で、日本語のテキスト・バイナリの読み書き、フォルダー作成、一覧、存在・サイズ確認、削除を試せる。ツールバーの「通信優先＋保存版」で同じ版のYAML/Rhai/Descriptorをキャッシュし、通信障害時に復元する。[ファイル・キャッシュ契約](docs/files-cache-rpc.md)を参照。
 - 「Protobuf・Unary RPC」で、ConnectとgRPC-Webのバイナリ通信を比較する。別ターミナルで`bun run demo:rpc`を起動する。ダウンロードしたDescriptorをWASMで解釈し、64bit整数・bytesも扱う。[RPCの使い方](docs/files-cache-rpc.md)を参照。
 
@@ -72,7 +73,7 @@ Rustを変更したら`bun run build:wasm`を実行する。フロントエン�
 - 「uivolve コンポーネントギャラリー」画面でツールバー、分割ボタン、入力グループ、カレンダー、ページ操作、アコーディオン、通知、入力ダイアログ、コード/HTMLソース編集、差分、Markdown、図形、チャート、Git/ネットワーク/フロー図、会話とログ、画像・動画・iframeを試せる。重い部品は基本機能の対応で、差分・制限は[追加部品の契約](docs/uivolve-gallery.md)を参照。
 - WebMCP対応ブラウザへ5つの共通ツールを登録。表示中の部品・状態参照、画面切替、WASMイベント実行をDOM／Canvas共通で扱う。未対応ブラウザでは通常UIを維持する。仕様・操作例・ブラウザの中断通知の制限は[WebMCP契約](docs/webmcp.md)を参照。
 - 任意のHTTP / HTTPSパッケージURLの読み込み。別オリジンは配信側のCORS許可が必要。
-- HTTP取得の認証なし／JWT（Bearer）切替。画面・Rhai・テーマに共通設定を使い、JWTの送信先を指定できる。任意でリフレッシュトークンによる期限前・401時の更新と1回の再試行を行う。CORSモードとデモサーバーのAuthorizationプリフライト対応は既定で有効。使い方・ホストAPI・配信側の設定は[JWT・CORS契約](docs/authentication.md)。
+- HTTP取得の認証なし／JWT（Bearer）切替。画面・Rhai・テーマに共通設定を使い、JWTの送信先を指定できる。任意でリフレッシュトークンによる期限前・401時の更新と1回の再試行を行う。OPFS転送3方式は送信後の自動再送を行わない。CORSモードとデモサーバーのAuthorizationプリフライト対応は既定で有効。使い方・ホストAPI・配信側の設定は[JWT・CORS契約](docs/authentication.md)。
 - DSL・Rhaiの編集、WASM内での再コンパイル。失敗した変更は現在の画面を置き換えない。
 - CanvasのTab移動とEnter / Space操作。編集中はブラウザのinput / textarea / selectを利用。スライダーはドラッグと矢印/Home/Endで操作できる。
 - 同じスナップショットの60回再描画。値はDOM更新・Canvas描画命令のCPU時間であり、GPU完了・FPS・総合性能の比較ではない。DOMは既存部品を更新し、Canvasは面を描き直す。
@@ -131,7 +132,7 @@ DOM版はネイティブ入力・ボタンを使用する。Canvas版はキー�
 
 このDSLはuivolveの宣言的な部品・配置という考えを踏まえた小さな試験用フォーマット。uivolve / ExtJSとの完全互換はない。
 
-スクリプトは同期実行。宣言したHTTP GET、HTTPアダプターのGET/POST/PUT/PATCH/DELETE/HEADとUnary RPC、保存・ファイル操作の依頼と完了handlerを提供し、非同期I/Oはホストが担当する。Streaming、`async/await`、タイマー、モジュールimportは未実装。配信キャッシュは公開ソース用で、完全なオフライン起動は提供しない。操作数上限などは応答性のための制限であり、第三者コードを安全に実行するための隔離環境を保証しない。
+スクリプトは同期実行。宣言したHTTP GET、HTTPアダプターのGET/POST/PUT/PATCH/DELETE/HEADとUnary RPC、保存・ファイル操作の依頼と完了handlerを提供し、非同期I/Oはホストが担当する。OPFSのHTTP受信はホストでストリーム保存する。RhaiのStreaming、`async/await`、タイマー、モジュールimportは未実装。配信キャッシュは公開ソース用で、完全なオフライン起動は提供しない。操作数上限などは応答性のための制限であり、第三者コードを安全に実行するための隔離環境を保証しない。
 
 次の比較では、HTTP取得の拡張、大量データ・仮想スクロール、IMEの実機検証、アクセシビリティ、GPU描画を順に検証できる。
 

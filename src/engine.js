@@ -5,6 +5,7 @@ const clockOperations = new Set([
   "load",
   "event",
   "host_result",
+  "host_progress",
   "http_result",
   "storage_result",
   "file_result",
@@ -87,6 +88,9 @@ export class WasmEngine {
   }
   dispatch(target, payload = {}) {
     return this.call({ op: "event", target, payload });
+  }
+  progressHost(id, data) {
+    return this.call({ op: "host_progress", id, data });
   }
   completeHost(id, response) {
     return this.call({ ...response, op: "host_result", id });

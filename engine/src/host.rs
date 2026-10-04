@@ -17,9 +17,9 @@ fn empty_options() -> Value {
     json!({})
 }
 
-pub struct Intent {
-    operation: String,
-    args: Value,
+pub enum Intent {
+    Call { operation: String, args: Value },
+    Cancel { operation: String },
 }
 
 #[derive(Default)]
@@ -37,20 +37,31 @@ impl Requests {
             "host_call",
             move |operation: ImmutableString, args: Map| -> Result<(), Box<EvalAltResult>> {
                 let mut queue = queue.borrow_mut();
-                if queue.len() >= 8 {
+                if queue
+                    .iter()
+                    .filter(|intent| matches!(intent, Intent::Call { .. }))
+                    .count()
+                    >= 8
+                {
                     return Err("At most 8 host calls per handler".into());
                 }
                 let args: Value = rhai::serde::from_dynamic(&args.into())?;
                 if serde_json::to_vec(&args).map_err(|e| e.to_string())?.len() > 100_000 {
                     return Err("Host arguments exceed 100 KB".into());
                 }
-                queue.push(Intent {
+                queue.push(Intent::Call {
                     operation: operation.to_string(),
                     args,
                 });
                 Ok(())
             },
         );
+        let queue = self.queue.clone();
+        engine.register_fn("host_cancel", move |operation: ImmutableString| {
+            queue.borrow_mut().push(Intent::Cancel {
+                operation: operation.to_string(),
+            });
+        });
     }
 
     pub fn validate(
@@ -73,6 +84,14 @@ impl Requests {
             {
                 return Err(format!("Invalid host operation: {name}"));
             }
+            if let Some(handler) = definition.options.get("progressHandler") {
+                if !handler
+                    .as_str()
+                    .is_some_and(|name| functions.contains(name))
+                {
+                    return Err(format!("Host operation {name}: undefined progress handler"));
+                }
+            }
             if !functions.contains(&definition.handler) {
                 return Err(format!(
                     "Host operation {name}: undefined handler {}",
@@ -89,12 +108,20 @@ impl Requests {
 
     pub fn prepare(&self, definitions: &HashMap<String, Operation>) -> Result<Vec<Intent>, String> {
         let intents = std::mem::take(&mut *self.queue.borrow_mut());
-        if self.pending.len() + intents.len() > 8 {
+        if self.pending.len()
+            + intents
+                .iter()
+                .filter(|intent| matches!(intent, Intent::Call { .. }))
+                .count()
+            > 8
+        {
             return Err("At most 8 pending host calls".into());
         }
         for intent in &intents {
-            if !definitions.contains_key(&intent.operation) {
-                return Err(format!("Unknown host operation: {}", intent.operation));
+            if let Intent::Call { operation, .. } = intent {
+                if !definitions.contains_key(operation) {
+                    return Err(format!("Unknown host operation: {operation}"));
+                }
             }
         }
         Ok(intents)
@@ -102,13 +129,47 @@ impl Requests {
 
     pub fn commit(&mut self, intents: Vec<Intent>) {
         for intent in intents {
-            self.sequence += 1;
-            self.pending.insert(self.sequence, intent.operation.clone());
-            self.ready.push(json!({
-                "kind":"host", "v":1, "id":self.sequence,
-                "operation":intent.operation, "args":intent.args,
-            }));
+            match intent {
+                Intent::Cancel { operation } => {
+                    if self.pending.values().any(|name| name == &operation) {
+                        self.ready
+                            .push(json!({"kind":"host_cancel", "v":1, "operation":operation}));
+                    }
+                }
+                Intent::Call { operation, args } => {
+                    self.sequence += 1;
+                    self.pending.insert(self.sequence, operation.clone());
+                    self.ready.push(json!({
+                        "kind":"host", "v":1, "id":self.sequence,
+                        "operation":operation, "args":args,
+                    }));
+                }
+            }
         }
+    }
+
+    pub fn progress(&self, id: u64, response: &Value) -> Result<String, String> {
+        let operation = self
+            .pending
+            .get(&id)
+            .ok_or("Unknown or completed host call")?;
+        let object = response.as_object().ok_or("Invalid host progress")?;
+        let transferred = response["transferred"]
+            .as_u64()
+            .filter(|value| *value <= 9_007_199_254_740_991);
+        let total = &response["total"];
+        if object.len() != 3
+            || !object.contains_key("total")
+            || response["operation"].as_str() != Some(operation.as_str())
+            || transferred.is_none()
+            || !(total.is_null()
+                || total.as_u64().is_some_and(|value| {
+                    value <= 9_007_199_254_740_991 && value >= transferred.unwrap()
+                }))
+        {
+            return Err("Invalid host progress".into());
+        }
+        Ok(operation.clone())
     }
 
     pub fn consume(&mut self, id: u64) -> Result<String, String> {
@@ -159,4 +220,45 @@ pub fn validate_result(response: &Value) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cancel_is_independent_and_progress_keeps_pending() {
+        let mut requests = Requests::default();
+        requests.commit(vec![
+            Intent::Call {
+                operation: "download".into(),
+                args: json!({}),
+            },
+            Intent::Call {
+                operation: "other".into(),
+                args: json!({}),
+            },
+            Intent::Cancel {
+                operation: "download".into(),
+            },
+            Intent::Cancel {
+                operation: "unknown".into(),
+            },
+        ]);
+        let effects = requests.take();
+        assert_eq!(effects.len(), 3);
+        assert_eq!(effects[2]["kind"], "host_cancel");
+        let progress = json!({"operation":"download", "transferred":0, "total":null});
+        assert_eq!(requests.progress(1, &progress).unwrap(), "download");
+        assert!(requests.progress(2, &progress).is_err());
+        assert!(requests
+            .progress(
+                1,
+                &json!({"operation":"download", "transferred":2, "total":1})
+            )
+            .is_err());
+        assert_eq!(requests.consume(1).unwrap(), "download");
+        assert!(requests.progress(1, &progress).is_err());
+        assert_eq!(requests.consume(2).unwrap(), "other");
+    }
 }

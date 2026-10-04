@@ -9,3 +9,5 @@
 - http_getのdataはJSON本体、host_callのdata.bodyはHTTP本文。errorも従来は文字列、新APIはcode/message/outcome等のオブジェクト。handlerを機械的に流用しない。
 - 不正な動的引数や通信失敗は完了handlerで扱う。Rhaiのtry/catchだけに依存しない。loadingは両分岐で解除し、更新結果がcommitted/unknownなら自動再送しない。
 - [アダプター設計書](../../../docs/host-adapters-design.md)のWebSocket・デバイス・DB例は将来案。現在のHTTP契約と混ぜてコード生成しない。
+- OPFSへGET保存するならhttp.download、OPFSのFile本文をPOST/PUT送信するならhttp.upload、文字列と複数ファイルを送信するならhttp.multipart。[転送契約](../../../docs/opfs-file-transfer.md)のYAML/Rhaiと起動設定を使う。本体をJSON/stateへ入れず、一般JSON/Rhai/Worker上限は維持する。
+- 転送は401後も自動再送しない。host_cancel(name)は同名の進行中操作すべてへの中止要求で、外部更新の巻き戻しではない。downloadのみprogressHandlerで受信進捗を扱い、アップロードは送信中・完了・失敗を表示する。アップロードbyte進捗を作らない。

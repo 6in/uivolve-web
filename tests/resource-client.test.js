@@ -9,6 +9,121 @@ const create = (fetcher = vi.fn(async () => new Response("ok"))) => ({
   client: new ResourceClient({ baseUrl, fetch: fetcher }),
   fetcher,
 });
+
+it("sends transfer Blob/File/FormData unchanged through the shared JWT/CORS policy", async () => {
+  const { client, fetcher } = create();
+  client.setAuthentication({ mode: "jwt", token });
+  const form = new FormData();
+  form.append("file", new Blob(["csv"]), "日本語.csv");
+  const bodies = [new Blob([new Uint8Array(1_010_001)]), new File(["csv"], "data.csv"), form];
+  const signal = new AbortController().signal;
+  await client.transferRequest("download", { signal });
+  for (const body of bodies) {
+    for (const method of ["POST", "PUT"]) {
+      await client.transferRequest("upload", { method, body, signal });
+      const [url, options] = fetcher.mock.lastCall;
+      expect(url.href).toBe(`${baseUrl}upload`);
+      expect(options.body).toBe(body);
+      expect(options.headers.get("Authorization")).toBe(`Bearer ${token}`);
+      expect(options).toMatchObject({
+        method,
+        signal,
+        mode: "cors",
+        credentials: "omit",
+        cache: "no-store",
+        redirect: "error",
+      });
+      await expect(client.fetch("upload", { method, body })).rejects.toThrow(/body/);
+    }
+  }
+  await expect(
+    client.fetch("upload", { method: "POST", body: new Uint8Array(1_010_001) }),
+  ).rejects.toThrow(/body/);
+  expect(fetcher).toHaveBeenCalledTimes(7);
+});
+
+it("rejects invalid transfer bodies, headers and origins before sending or obtaining a token", async () => {
+  const { client, fetcher } = create();
+  const getToken = vi.fn(() => token);
+  client.setAuthentication({ mode: "jwt", getToken });
+  for (const options of [
+    { method: "PATCH", body: new Blob() },
+    { method: "GET", body: new Blob() },
+    { method: "POST" },
+    { method: "PUT", body: new Uint8Array() },
+    { method: "POST", body: "text" },
+    { method: "POST", body: {} },
+    { headers: { authorization: token } },
+  ])
+    await expect(client.transferRequest("upload", options)).rejects.toMatchObject({
+      outcome: "not-started",
+    });
+  for (const url of [
+    "https://foreign.example/upload",
+    "https://user:secret@ui.example/upload",
+    "file:///private",
+  ])
+    await expect(client.transferRequest(url)).rejects.toMatchObject({ outcome: "not-started" });
+  expect(getToken).not.toHaveBeenCalled();
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+it("distinguishes pre-send provider failures from post-send network failures without exposing secrets", async () => {
+  const { client, fetcher } = create();
+  client.setAuthentication({
+    mode: "jwt",
+    getToken: () => {
+      throw new Error(token);
+    },
+  });
+  const before = await client.transferRequest("download").catch((error) => error);
+  expect(before.outcome).toBe("not-started");
+  expect(before.message).not.toContain(token);
+  expect(fetcher).not.toHaveBeenCalled();
+  client.setAuthentication({ mode: "jwt", token });
+  fetcher.mockRejectedValue(new Error(token));
+  const after = await client
+    .transferRequest("upload", { method: "POST", body: new Blob() })
+    .catch((error) => error);
+  expect(after).toMatchObject({ code: "NETWORK", outcome: "unknown" });
+  expect(after.message).not.toContain(token);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
+
+it("discards old authentication before and after transfer dispatch and sanitizes abort reasons", async () => {
+  const { client, fetcher } = create();
+  let complete;
+  client.setAuthentication({
+    mode: "jwt",
+    getToken: () =>
+      new Promise((resolve) => {
+        complete = resolve;
+      }),
+  });
+  const before = client.transferRequest("download");
+  client.setAuthentication({ mode: "none" });
+  complete(token);
+  await expect(before).rejects.toMatchObject({ outcome: "not-started" });
+  expect(fetcher).not.toHaveBeenCalled();
+  fetcher.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        complete = resolve;
+      }),
+  );
+  const after = client.transferRequest("upload", { method: "PUT", body: new Blob() });
+  client.setAuthentication({ mode: "jwt", token });
+  complete(new Response("old"));
+  await expect(after).rejects.toMatchObject({ outcome: "unknown" });
+  const controller = new AbortController();
+  controller.abort(new Error(token));
+  const aborted = await client
+    .transferRequest("download", { signal: controller.signal })
+    .catch((error) => error);
+  expect(aborted.outcome).toBe("not-started");
+  expect(aborted.message).not.toContain(token);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
 let wasm;
 beforeAll(async () => {
   wasm = await readFile(new URL("../public/engine.wasm", import.meta.url));

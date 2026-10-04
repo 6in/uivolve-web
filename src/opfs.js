@@ -32,21 +32,40 @@ function lockCapability() {
   }
 }
 const active = new Set();
-export async function withFileLock(key, action, { signal, locks = lockCapability() } = {}) {
-  signal?.throwIfAborted();
-  const run = async () => {
+export function fileLockKey(scope, volume) {
+  if (!safeName(scope) || !safeName(volume)) throw new Error("ファイル領域が不正です");
+  return `uivolve-web:file:${scope}:${volume}`;
+}
+function busy() {
+  return Object.assign(new Error("前のファイル操作が終了していません"), { code: "BUSY" });
+}
+export async function withFileLocks(keys, action, { signal, locks = lockCapability() } = {}) {
+  const ordered = [...new Set(keys)].sort();
+  const acquire = async (index) => {
     signal?.throwIfAborted();
-    if (active.has(key)) throw new Error("前のファイル操作が終了していません");
-    active.add(key);
-    try {
-      return await action();
-    } finally {
-      active.delete(key);
-    }
+    if (index === ordered.length) return action();
+    const key = ordered[index];
+    const run = async () => {
+      signal?.throwIfAborted();
+      if (active.has(key)) throw busy();
+      active.add(key);
+      try {
+        return await acquire(index + 1);
+      } finally {
+        active.delete(key);
+      }
+    };
+    return locks?.request
+      ? locks.request(key, { mode: "exclusive", ifAvailable: true }, (lock) => {
+          if (!lock) throw busy();
+          return run();
+        })
+      : run();
   };
-  return locks?.request
-    ? locks.request(key, { mode: "exclusive", ...(signal ? { signal } : {}) }, run)
-    : run();
+  return acquire(0);
+}
+export function withFileLock(key, action, options = {}) {
+  return withFileLocks([key], action, options);
 }
 
 // Shared host adapter for page volumes and the loader's separate cache namespace.
@@ -67,6 +86,29 @@ export class OpfsDirectory {
     }
     signal?.throwIfAborted();
     return handle;
+  }
+  async fileHandle(path, { create = false, signal } = {}) {
+    const parts = relativePath(path);
+    const name = parts.pop();
+    let directory = await this.directory([], { create, signal });
+    for (const part of parts) {
+      signal?.throwIfAborted();
+      directory = await directory.getDirectoryHandle(part);
+    }
+    signal?.throwIfAborted();
+    const handle = await directory.getFileHandle(name, { create });
+    signal?.throwIfAborted();
+    return handle;
+  }
+  async file(path, options = {}) {
+    const handle = await this.fileHandle(path, options);
+    const file = await handle.getFile();
+    options.signal?.throwIfAborted();
+    return file;
+  }
+  async writable(path, options = {}) {
+    const handle = await this.fileHandle(path, { ...options, create: true });
+    return handle.createWritable();
   }
   async read(path, { signal } = {}) {
     const parts = relativePath(path);

@@ -1,6 +1,18 @@
 // Faithful small host boundary: directory traversal, type errors and writes committed on close.
 export function memoryOpfs() {
-  const controls = { beforeClose: async () => {} };
+  const controls = Object.fromEntries(
+    [
+      "GetDirectory",
+      "GetDirectoryHandle",
+      "GetFileHandle",
+      "GetFile",
+      "CreateWritable",
+      "Write",
+      "Close",
+      "Abort",
+      "Remove",
+    ].map((stage) => [`before${stage}`, async () => {}]),
+  );
   const missing = () => new DOMException("missing", "NotFoundError");
   function directory() {
     const children = new Map();
@@ -8,6 +20,7 @@ export function memoryOpfs() {
       kind: "directory",
       children,
       async getDirectoryHandle(name, { create = false } = {}) {
+        await controls.beforeGetDirectoryHandle(name);
         if (!children.has(name) && create) children.set(name, directory());
         const entry = children.get(name);
         if (!entry) throw missing();
@@ -15,7 +28,8 @@ export function memoryOpfs() {
         return entry;
       },
       async getFileHandle(name, { create = false } = {}) {
-        if (!children.has(name) && create) children.set(name, file());
+        await controls.beforeGetFileHandle(name);
+        if (!children.has(name) && create) children.set(name, file(name));
         const entry = children.get(name);
         if (!entry) throw missing();
         if (entry.kind !== "file") throw new DOMException("type", "TypeMismatchError");
@@ -25,6 +39,7 @@ export function memoryOpfs() {
         yield* children.entries();
       },
       async removeEntry(name, { recursive = false } = {}) {
+        await controls.beforeRemove(name);
         const entry = children.get(name);
         if (!entry) throw missing();
         if (entry.kind === "directory" && entry.children.size && !recursive)
@@ -33,36 +48,53 @@ export function memoryOpfs() {
       },
     };
   }
-  function file() {
+  function file(name) {
     let bytes = new Uint8Array();
     return {
       kind: "file",
       async getFile() {
-        return {
-          size: bytes.length,
-          lastModified: 123,
-          arrayBuffer: async () => bytes.slice().buffer,
-        };
+        await controls.beforeGetFile(name);
+        return new File([bytes], name, { lastModified: 123 });
       },
       async createWritable() {
-        let pending,
-          aborted = false;
+        await controls.beforeCreateWritable(name);
+        const chunks = [];
+        let ended = false;
+        const checkOpen = () => {
+          if (ended) throw new DOMException("closed", "InvalidStateError");
+        };
         return {
           async write(value) {
-            pending = value.slice();
+            checkOpen();
+            await controls.beforeWrite(value, name);
+            checkOpen();
+            chunks.push(new Uint8Array(await new Blob([value]).arrayBuffer()));
           },
           async close() {
-            await controls.beforeClose();
-            if (aborted) throw new DOMException("aborted", "AbortError");
-            bytes = pending;
+            checkOpen();
+            await controls.beforeClose(name);
+            checkOpen();
+            bytes = new Uint8Array(await new Blob(chunks).arrayBuffer());
+            ended = true;
           },
           async abort() {
-            aborted = true;
+            await controls.beforeAbort(name);
+            ended = true;
+            chunks.length = 0;
           },
         };
       },
     };
   }
   const root = directory();
-  return { storage: { getDirectory: async () => root }, root, controls };
+  return {
+    storage: {
+      getDirectory: async () => {
+        await controls.beforeGetDirectory();
+        return root;
+      },
+    },
+    root,
+    controls,
+  };
 }

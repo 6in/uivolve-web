@@ -16,3 +16,5 @@
 - 正規表現はregex_is_match/find_all/captures/replace_all、一括整数集計はsum_ints。型・サイズ上限・例外は契約で確認する。新しいRust関数にはエンジンでの登録と再ビルドが必要。
 
 日付・時計・金額・Unicode加工は[共通関数の選択](native-functions.md)。API詳細の重複一覧は置かず、機能別契約を参照する。
+
+大容量OPFSとHTTPの双方向転送は[転送契約](../../../docs/opfs-file-transfer.md)を使う。http.download/upload/multipartの引数には領域と相対パスを渡し、ファイル本体をRhai/stateへ通さない。通常filesと同じ領域は転送・cleanupが終了するまでBUSYになる。通常の全量読み書き、JSON/Rhai/Workerの上限は変わらない。host_cancelは中止要求、downloadのprogressHandlerは完了を消費しない受信進捗。アップロードbyte進捗は提供しない。

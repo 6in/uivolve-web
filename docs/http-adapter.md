@@ -6,6 +6,7 @@
 
 | 用途                                                  | 宣言 / 呼び出し                    | 成功データ                                          | エラー                       |
 | ----------------------------------------------------- | ---------------------------------- | --------------------------------------------------- | ---------------------------- |
+| OPFSとのGET受信・POST/PUT本文・multipart送信          | operations / host_call(name, args) | status/headers/body/files                           | response.errorはオブジェクト |
 | 固定URLからJSONをGET                                  | requests / http_get(name)          | response.dataが取得JSONそのもの                     | response.errorは文字列       |
 | パス変数、query、POST/PUT/PATCH/DELETE/HEAD、JSON本文 | operations / host_call(name, args) | response.data.bodyが応答本文、statusとheadersも持つ | response.errorはオブジェクト |
 
@@ -35,7 +36,7 @@ await ui.load("screens/orders.yaml");
 
 APIエンドポイントは利用者のサーバーで用意する。このライブラリは`./api/`にサーバーを生成しない。baseUrlは末尾/のHTTP(S)ディレクトリURLで、query/fragmentを付けない。相対接続URLは画面URLから解決されるため、複数画面で共有する接続は上のように絶対URLにする。
 
-createApplicationも同じresources、adapters、connectionsを受け取る。HTTPアダプターはUiRuntime/createRuntime/createApplicationで自動登録されるので、重複登録しない。connectionsはapp.jsonにも置ける。HostEffectsを単独で使う場合はhttpAdapterの明示登録が必要。サーバーなしで試す場合は[WorkerモックAPI](worker-mock-api.md)を登録する。JWTは共有ResourceClientへ設定し、画面やRhaiへトークンを渡さない。詳細は[認証契約](authentication.md)。
+createApplicationも同じresources、adapters、connectionsを受け取る。OPFS転送のホスト容量設定`transferLimit`（bytes、既定104857600）と秒単位の操作別期限は[ファイル転送契約](opfs-file-transfer.md)を参照。HTTPアダプターはUiRuntime/createRuntime/createApplicationで自動登録されるので、重複登録しない。connectionsはapp.jsonにも置ける。HostEffectsを単独で使う場合はhttpAdapterの明示登録が必要。サーバーなしで試す場合は[WorkerモックAPI](worker-mock-api.md)を登録する。JWTは共有ResourceClientへ設定し、画面やRhaiへトークンを渡さない。詳細は[認証契約](authentication.md)。
 
 ## 画面を宣言する（screens/orders.yaml）
 
@@ -109,18 +110,18 @@ fn updated(state, response) {
 
 ## メソッド・応答・上限
 
-| 項目            | 契約                                                                                     |
-| --------------- | ---------------------------------------------------------------------------------------- |
-| method          | GET、POST、PUT、PATCH、DELETE、HEAD。既定GET。大文字                                     |
-| body            | JSON互換値。GET/HEADでは指定不可。text、bytes、multipart送信は未対応                     |
-| response        | json、text、empty。既定json。bytesは未対応                                               |
-| headers         | options.headers。接続allowedHeadersで許可された固定ヘッダーだけ。既定accept/content-type |
-| responseHeaders | 公開する応答ヘッダー名の配列。CORSで非公開のヘッダーはnull                               |
-| 操作宣言        | 最大64件。操作名と接続名は英数字・ハイフン・アンダースコア1〜80文字                      |
-| 呼び出し        | 1回のhandler最大8件、同時pending最大8件。同名の複数呼び出しも各idで管理                  |
-| 容量            | args全体100,000 UTF-8バイト、JSON本文100,000バイト、path宣言2,048文字                    |
-| 応答            | 本文900,000バイト、完了JSON全体1,000,000バイトまで                                       |
-| 期限            | HostEffects既定15秒。画面置換・disposeで中止を試み、古い世代の完了は破棄                 |
+| 項目            | 契約                                                                                                                                |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| method          | GET、POST、PUT、PATCH、DELETE、HEAD。既定GET。大文字                                                                                |
+| body            | JSON互換値。GET/HEADでは指定不可。http.requestのtext/bytes/multipart本文は未対応。ファイルは[転送専用action](opfs-file-transfer.md) |
+| response        | json、text、empty。既定json。bytesは未対応                                                                                          |
+| headers         | options.headers。接続allowedHeadersで許可された固定ヘッダーだけ。既定accept/content-type                                            |
+| responseHeaders | 公開する応答ヘッダー名の配列。CORSで非公開のヘッダーはnull                                                                          |
+| 操作宣言        | 最大64件。操作名と接続名は英数字・ハイフン・アンダースコア1〜80文字                                                                 |
+| 呼び出し        | 1回のhandler最大8件、同時pending最大8件。同名の複数呼び出しも各idで管理                                                             |
+| 容量            | args全体100,000 UTF-8バイト、JSON本文100,000バイト、path宣言2,048文字                                                               |
+| 応答            | 本文900,000バイト、完了JSON全体1,000,000バイトまで                                                                                  |
+| 期限            | HostEffects既定15秒。画面置換・disposeで中止を試み、古い世代の完了は破棄                                                            |
 
 authorization/cookie/host/sec-*は画面指定不可。set-cookie/authorizationは応答ヘッダー公開不可。JWTやCookieはホストの認証設定に従う。別オリジンのPATCHなどではサーバーが使用メソッドとContent-TypeをCORSで許可する必要がある。
 

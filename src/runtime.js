@@ -79,9 +79,13 @@ export class UiRuntime {
     };
     this.hostEffects = new HostEffects({
       ...shared,
-      adapters: [httpAdapter({ resources: this.resources }), ...(options.adapters ?? [])],
+      adapters: [
+        httpAdapter({ resources: this.resources, transferLimit: options.transferLimit }),
+        ...(options.adapters ?? []),
+      ],
       connections: options.connections ?? {},
       complete: complete("completeHost"),
+      progress: complete("progressHost"),
     });
     const surfaces = options.surfaces ?? [
       { element: options.element, renderer: options.renderer ?? "dom" },
@@ -214,7 +218,9 @@ export class UiRuntime {
       this.fileEffects.run(effects.filter((effect) => effect.kind === "file")),
       this.rpcEffects.run(effects.filter((effect) => effect.kind === "rpc")),
       this.pageEffects.run(effects.filter((effect) => effect.kind === "navigate")),
-      this.hostEffects.run(effects.filter((effect) => effect.kind === "host")),
+      this.hostEffects.run(
+        effects.filter((effect) => effect.kind === "host" || effect.kind === "host_cancel"),
+      ),
     ]).catch((error) => this.reportError(error));
     this.pending.add(task);
     void task.finally(() => this.pending.delete(task));
@@ -272,7 +278,10 @@ export class UiRuntime {
     const clock = engine.readClock();
     screen = prepareScreen(screen, source, clock);
     const start = performance.now();
-    const hostOperations = this.hostEffects.prepare(screen.operations, source);
+    const hostOperations = this.hostEffects.prepare(screen.operations, source, {
+      scope: screen.id,
+      files: screen.files ?? {},
+    });
     const result = engine.load(screen, script, descriptors, { clock });
     const duration = performance.now() - start;
     this.engine = engine;
