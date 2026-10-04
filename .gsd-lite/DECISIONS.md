@@ -42,3 +42,7 @@
 
 - ユーザーが2026-10-04に承認したため、再開時は `GSD_LITE_CODEX_SANDBOX=danger-full-access` を指定する。workspace-writeでは既存試験のlocalhost bindがEPERMとなり、approval_policy=neverの無人ターンでは解除できない。ファイルシステムのsandbox制限が外れることを説明したうえで承認された。
 - プロジェクトローカルの6スキルと管理文書をvp fmtで整形し、指示内容は維持する。
+
+## 実装ターンの修正上限
+
+- ユーザー指定により、プロジェクトローカルのCodex用gsd-lite-implスキルの1ターン内の立て直し上限を5回に変更する。並列作業からの統合修正も同じ5回に合算する。ループのretry_maxは変更しない。

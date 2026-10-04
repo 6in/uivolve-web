@@ -19,8 +19,8 @@
     "path": "."
   },
   "milestone": "opfs-file-transfer",
-  "phase": "blocked",
-  "next_command": "BLOCKED",
+  "phase": "impl",
+  "next_command": "/gsd-lite-impl",
   "branch": {
     "name": "gsd-lite/opfs-file-transfer",
     "base": "main"
@@ -41,5 +41,5 @@
     "verify": "claude-fable-5-1",
     "reflect": "claude-fable-5-1"
   },
-  "updated_at": "2026-10-05T00:13:37+09:00"
+  "updated_at": "2026-10-05T08:22:42+09:00"
 }

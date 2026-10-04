@@ -120,3 +120,10 @@
 - 想定外: 初回ブラウザ検査中の整形がVite再読込を発生させ、cleanup例外が元の失敗を隠した。再検査ではViteがnew URL("./", import.meta.url)の末尾/を落とし、YAML参照がHTML fallbackになった。URL修正後、認証fixtureの成功ケースがHTTP_401となった。2タブ排他試験は認証で停止したため未実行、PLANの全検証コマンドは未完走。
 - やり直し: 2 回（1: 再読込後のcleanupで元の例外を隠さないようにし、サンプル起動エラーを明示。2: Vite変換を実測してサンプルbaseUrlをlocation.href基準へ修正）。上限に達したため認証ケースの追加修正は行っていない。
 - 次への注意: BLOCKED.md参照。次ターンはT11差分を引き継ぎ、認証fixtureと試験tokenの一致を確認してからブラウザ試験・PLAN全検査を実行する。Vite実行中に整形しない。試験runnerはChromium実行ファイルをTRANSFER_BROWSER_PATHまたは/usr/bin/chromium-browserから選択し、存在しない環境ではPlaywrightの既定browserを使い、起動不能は非0。runnerにverify:transferからの既存接続がある。T12には着手しない。
+
+## 対話セッション — T11認証修正と再開
+
+- やったこと: ブラウザ試験の成功tokenをサーバーfixtureのtransfer-fixtureへ一致させた。verify:transfer全体が成功（JS612件、Rust15件、check、docs、build、Chromium152のDOM/Canvas・100 MiB・認証/CORS・2タブ排他）。
+- 想定外: なし。
+- やり直し: 0 回。
+- 次への注意: ユーザー指定によりプロジェクトローカルのimplスキルの修正上限を2回から5回へ変更（並列作業の合算上限も5回）。T11差分は未コミットの続きとして次ターンで取り込む。T11未完了とturn15を維持し、danger-full-accessで再開する。BLOCKED.mdの認証不一致は解消済み。
