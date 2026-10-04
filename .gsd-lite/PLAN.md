@@ -73,7 +73,7 @@ bun run build
   - 依存: T5
   - 並列サブ作業: なし
 
-- [ ] T7: 本文/multipart送信と応答outcome
+- [x] T7: 本文/multipart送信と応答outcome
   - 完了基準: Fileを本文、FormData.appendをparts順で使用し全量JS読み込みなし。POST/PUT、複数ファイル、同名項目、Unicode filename、空文字、既定filename/Content-Typeを照合。合計容量は重複file partも加算し超過を送信前拒否。大小文字を問わずmultipartトップContent-Type手動指定拒否。json/text/empty、status/許可headers/filesを返す。送信後切断=unknown、2xx後JSON/UTF-8/容量解析失敗=committed、非2xxのbodyをcancelし既存HTTP結果契約に整合。lockは応答処理終了まで保持。
   - 対象: src/adapters/http.js、tests/opfs-file-transfer.test.js
   - 依存: T6

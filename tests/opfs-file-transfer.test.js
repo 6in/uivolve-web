@@ -168,9 +168,11 @@ it("rejects malformed transfer args before fetch or OPFS access", async () => {
   }
 });
 
-it("accepts 32 ordered parts, eight file references and the exact UTF-8 args limit without opening OPFS", async () => {
-  const { adapter, operation, connection, context, args, getDirectory } =
-    transferValidation("http.multipart");
+it("accepts 32 ordered parts, eight file references and the exact UTF-8 args limit", async () => {
+  const { adapter, operation, connection, context, args, fs } = transferValidation(
+    "http.multipart",
+    { response: "empty" },
+  );
   adapter.validate(operation, connection, new URL("https://example.test/"));
   args.parts = [
     ...Array.from({ length: 8 }, () => ({
@@ -181,19 +183,24 @@ it("accepts 32 ordered parts, eight file references and the exact UTF-8 args lim
     })),
     ...Array.from({ length: 24 }, () => ({ name: "same", value: "" })),
   ];
-  // Execution is connected in T6/T7; reaching UNSUPPORTED proves validation accepted the boundary.
-  await expect(adapter.execute(operation, args, context)).rejects.toMatchObject({
-    code: "UNSUPPORTED",
+  const reference = new FileClient({ storage: fs.storage }).transferFile(
+    "transfer",
+    { readable: { access: "readwrite" } },
+    "readable",
+    "a",
+    { write: true },
+  );
+  const writer = await reference.writable();
+  await writer.close();
+  await expect(adapter.execute(operation, args, context)).resolves.toMatchObject({
+    files: Array.from({ length: 8 }, () => ({ volume: "readable", path: "a", size: 0 })),
   });
   args.parts = [{ name: "value", value: "あ" }];
   const size = new TextEncoder().encode(JSON.stringify(args)).length;
   args.parts[0].value += "a".repeat(100_000 - size);
-  await expect(adapter.execute(operation, args, context)).rejects.toMatchObject({
-    code: "UNSUPPORTED",
-  });
+  await expect(adapter.execute(operation, args, context)).resolves.toMatchObject({ files: [] });
   args.parts[0].value += "a";
   await expect(adapter.execute(operation, args, context)).rejects.toMatchObject({ code: "LIMIT" });
-  expect(getDirectory).not.toHaveBeenCalled();
 });
 
 it("validates host transferLimit and snapshots file declarations in prepared context", async () => {
@@ -823,4 +830,151 @@ it("waits for cancellation during a successful close without deleting committed 
   expect(done).toHaveBeenCalledWith(
     expect.objectContaining({ files: [{ ...f.args.file, size: 1 }] }),
   );
+});
+
+async function uploadFixture(action = "http.upload", options = {}, limit = 4) {
+  const f = transferValidation(action, options, limit);
+  f.adapter.validate(f.operation, f.connection, new URL("https://example.test/"));
+  const client = new FileClient({ storage: f.fs.storage });
+  const seed = async (volume, path, value) => {
+    const reference = client.transferFile(f.context.scope, f.context.files, volume, path, {
+      write: true,
+    });
+    const writer = await reference.writable();
+    await writer.write(value);
+    await writer.close();
+  };
+  await seed("writable", "日本語.csv", "abc");
+  f.resources.transferRequest.mockResolvedValue(
+    new Response('{"saved":true}', { headers: { "x-result": "yes", "x-secret": "hidden" } }),
+  );
+  return { ...f, client, seed, run: () => f.adapter.execute(f.operation, f.args, f.context) };
+}
+
+it("sends File bodies for POST/PUT and returns bounded json/text/empty metadata", async () => {
+  for (const method of ["POST", "PUT"]) {
+    for (const response of ["json", "text", "empty"]) {
+      const f = await uploadFixture("http.upload", {
+        method,
+        response,
+        responseHeaders: ["x-result"],
+      });
+      const result = await f.run();
+      const request = f.resources.transferRequest.mock.calls[0][1];
+      expect(request.method).toBe(method);
+      expect(request.body).toBeInstanceOf(File);
+      expect(request.body.name).toBe("日本語.csv");
+      expect(request.body.size).toBe(3);
+      expect(request.body.type).toBe("");
+      expect(request.headers.has("content-type")).toBe(false);
+      expect(result).toEqual({
+        status: 200,
+        headers: { "x-result": "yes" },
+        body:
+          response === "empty" ? null : response === "text" ? '{"saved":true}' : { saved: true },
+        files: [{ ...f.args.file, size: 3 }],
+      });
+    }
+  }
+});
+
+it("appends ordered multipart values and files with default and explicit filenames/types", async () => {
+  for (const method of ["POST", "PUT"]) {
+    const f = await uploadFixture("http.multipart", { method }, 6);
+    f.args.parts = [
+      { name: "same", value: "" },
+      { name: "same", file: { volume: "writable", path: "日本語.csv" } },
+      { name: "same", value: "日本語" },
+      {
+        name: "other",
+        file: { volume: "writable", path: "日本語.csv" },
+        filename: "別名.csv",
+        contentType: "text/csv",
+      },
+    ];
+    const result = await f.run();
+    const request = f.resources.transferRequest.mock.calls[0][1];
+    const entries = [...request.body.entries()];
+    expect(entries.map(([name]) => name)).toEqual(["same", "same", "same", "other"]);
+    expect(entries[0][1]).toBe("");
+    expect(entries[2][1]).toBe("日本語");
+    expect(entries[1][1].name).toBe("日本語.csv");
+    expect(entries[1][1].type).toBe("");
+    expect(entries[3][1].name).toBe("別名.csv");
+    expect(entries[3][1].type).toBe("text/csv");
+    expect(request.headers.has("content-type")).toBe(false);
+    expect(result.files).toHaveLength(2);
+  }
+});
+
+it("counts repeated file parts and refuses excess or missing files before sending", async () => {
+  const f = await uploadFixture("http.multipart", {}, 5);
+  f.args.parts = Array.from({ length: 2 }, () => ({
+    name: "f",
+    file: { volume: "writable", path: "日本語.csv" },
+  }));
+  await expect(f.run()).rejects.toMatchObject({ code: "LIMIT", outcome: "not-started" });
+  f.args.parts = [{ name: "f", file: { volume: "writable", path: "missing" } }];
+  await expect(f.run()).rejects.toMatchObject({ code: "STORAGE", outcome: "not-started" });
+  expect(f.resources.transferRequest).not.toHaveBeenCalled();
+});
+
+it("preserves send outcomes and cancels non-success bodies", async () => {
+  const f = await uploadFixture();
+  f.resources.transferRequest.mockRejectedValueOnce(new Error("secret"));
+  await expect(f.run()).rejects.toMatchObject({ code: "NETWORK", outcome: "unknown" });
+  f.resources.transferRequest.mockRejectedValueOnce(
+    Object.assign(new Error("secret"), { outcome: "not-started" }),
+  );
+  await expect(f.run()).rejects.toMatchObject({ outcome: "not-started" });
+  const cancel = vi.fn(async () => {});
+  f.resources.transferRequest.mockResolvedValueOnce({ ok: false, status: 403, body: { cancel } });
+  await expect(f.run()).rejects.toMatchObject({ code: "HTTP_403", outcome: "unknown" });
+  expect(cancel).toHaveBeenCalledOnce();
+  for (const body of ["invalid json", new Uint8Array([255]), "x".repeat(900001)]) {
+    f.resources.transferRequest.mockResolvedValueOnce(new Response(body));
+    await expect(f.run()).rejects.toMatchObject({ code: "INVALID_RESPONSE", outcome: "committed" });
+  }
+  expect(f.resources.transferRequest).toHaveBeenCalledTimes(6);
+});
+
+it("keeps the volume locked through response parsing without reading file bytes in JS", async () => {
+  const f = await uploadFixture();
+  const arrayBuffer = vi.spyOn(Blob.prototype, "arrayBuffer");
+  const text = vi.spyOn(Blob.prototype, "text");
+  let release;
+  f.resources.transferRequest.mockResolvedValue(
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          release = () => {
+            controller.enqueue(new TextEncoder().encode("{}"));
+            controller.close();
+          };
+        },
+      }),
+    ),
+  );
+  const pending = f.run();
+  await vi.waitFor(() => expect(f.resources.transferRequest).toHaveBeenCalledOnce());
+  await expect(
+    f.client.execute(f.context.scope, {
+      volume: "writable",
+      path: "日本語.csv",
+      operation: "read_text",
+    }),
+  ).rejects.toMatchObject({ code: "BUSY" });
+  expect(arrayBuffer).not.toHaveBeenCalled();
+  expect(text).not.toHaveBeenCalled();
+  release();
+  await pending;
+  expect(
+    await f.client.execute(f.context.scope, {
+      volume: "writable",
+      path: "日本語.csv",
+      operation: "read_text",
+    }),
+  ).toBe("abc");
+  arrayBuffer.mockRestore();
+  text.mockRestore();
 });

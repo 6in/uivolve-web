@@ -222,8 +222,99 @@ export function httpAdapter({ resources, transferLimit = 104_857_600, files = ne
               }),
             { signal, locks: files.locks },
           );
-        // T7 connects upload and multipart execution.
-        throw hostError("UNSUPPORTED", "HTTP転送処理は未実装です");
+        return withFileLocks(
+          prepared.references.map((reference) => reference.key),
+          async () => {
+            signal.throwIfAborted();
+            const selected = [];
+            let size = 0;
+            for (const reference of prepared.references) {
+              let file;
+              try {
+                file = await reference.file({ signal });
+              } catch {
+                throw hostError("STORAGE", "OPFSファイルを取得できません", "not-started");
+              }
+              signal.throwIfAborted();
+              if (file.size > transferLimit - size)
+                throw hostError("LIMIT", "HTTP転送が容量上限を超えています", "not-started");
+              size += file.size;
+              selected.push(file);
+            }
+            const multipart = operation.action === "http.multipart";
+            let body = selected[0];
+            const metadata = [];
+            if (multipart) {
+              body = new FormData();
+              let index = 0;
+              for (const part of args.parts) {
+                if (Object.hasOwn(part, "file")) {
+                  const file = selected[index++];
+                  body.append(
+                    part.name,
+                    part.contentType === undefined
+                      ? file
+                      : file.slice(0, file.size, part.contentType),
+                    part.filename ?? file.name,
+                  );
+                  metadata.push({ ...part.file, size: file.size });
+                } else body.append(part.name, part.value);
+              }
+            } else metadata.push({ ...args.file, size: body.size });
+            const options = operation.options;
+            let response;
+            try {
+              response = await resources.transferRequest(prepared.url, {
+                method: options.method,
+                headers: new Headers(options.headers),
+                body,
+                signal,
+                allowHttpErrors: true,
+              });
+            } catch (error) {
+              throw hostError(
+                "NETWORK",
+                "HTTP通信・認証に失敗しました",
+                error.outcome ?? "unknown",
+              );
+            }
+            if (!response.ok) {
+              await response.body?.cancel().catch(() => {});
+              throw hostError(
+                `HTTP_${response.status}`,
+                `HTTP ${response.status}: リクエストに失敗しました`,
+                "unknown",
+              );
+            }
+            let payload = null;
+            try {
+              if ([204, 205].includes(response.status) || options.response === "empty") {
+                await response.body?.cancel().catch(() => {});
+              } else {
+                const bytes = await readLimitedBytes(response, { signal, limit: 900_000 });
+                const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+                payload = options.response === "text" ? text : JSON.parse(text);
+              }
+            } catch {
+              throw hostError("INVALID_RESPONSE", "HTTP応答のサイズ・形式が不正です", "committed");
+            }
+            const data = {
+              status: response.status,
+              headers: Object.fromEntries(
+                (options.responseHeaders ?? []).map((key) => [key, response.headers.get(key)]),
+              ),
+              body: payload,
+              files: metadata,
+            };
+            if (
+              new TextEncoder().encode(JSON.stringify({ ok: true, data, error: null })).length >
+              1_000_000
+            )
+              throw hostError("LIMIT", "HTTP応答が1 MBを超えています", "committed");
+            return data;
+          },
+          { signal, locks: files.locks },
+        );
       }
       checkKeys(args, ["path", "query", "body"]);
       const options = operation.options;
