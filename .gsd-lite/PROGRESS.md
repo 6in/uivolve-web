@@ -106,3 +106,10 @@
 - 想定外: なし。
 - やり直し: 0 回。
 - 次への注意: T10の差分は検証済みの未コミット変更として維持。次のimplターンでT10の続きとして取り込み完了コミットする。turnは13のまま、T10のチェックは未完了。BLOCKED.mdのCSV型不一致は解消済み。ユーザーの指示により、既存のdanger-full-access設定で再開する。
+
+## turn 14 — impl — T10 テストサーバーとDOM/Canvasサンプル
+
+- やったこと: 前ターンと対話セッションのT10差分を確認し、続きとして再検証して完了コミットした。localhost転送サーバーのGET/POST/PUT/multipart・hash/size・遅延/容量/認証/不正応答、共通YAML/RhaiのCSV加工と複数ファイル送信、ホストで100 MiBをchunk生成するサンプルを確認。対象78件、全JS612件、Rust15件、WASM生成、check（警告0）、docs:check（412リンク）、build成功。既存テスト期待値変更なし。
+- 想定外: 最初のloop推定パスが存在せず、PATH上のgsd-lite-loop.shで作業場所を解決した。未コミット差分は申し送りに記録されたT10の続きで、追加の実装修正は不要だった。
+- やり直し: 0 回（実装・検証の立て直しなし。loopパス修正1回）。
+- 次への注意: 次はT11のみ。loopはPATH上のgsd-lite-loop.shを使用。DOM/Canvas入口はexamples/opfs-file-transfer/index.htmlのrendererクエリ、独立転送サーバーはbun run demo:transfer（4177）。実ブラウザ検証とverify:transferへの組込みは未実装のため、最終判定runnerは未実行。通常HTTP/既存CRUDサーバーは変更していない。
