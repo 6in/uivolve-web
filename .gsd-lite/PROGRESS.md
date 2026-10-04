@@ -141,3 +141,10 @@
 - 想定外: 最初に推定したloopパスが存在せずPATH上のgsd-lite-loop.shで解決。追加のAI参照入口リンクのpatchに一致しない削除行が含まれたため、リンク追加だけへ修正して適用した。統合レビューで中止通知の説明を実処理/cleanup終了後に合わせた。
 - やり直し: 0 回（実装・検証の立て直しなし。loopパス修正1回、patch修正1回）。
 - 次への注意: 全タスク完了、次はgsd-lite-verify。実装ターンではマージしない。loopはPATH上のgsd-lite-loop.shを使用する。BLOCKED.mdのT11停止理由は解消済みの履歴。verify:transferは実ブラウザまで成功済みで、文書例も自動検査対象。Vite実行中に整形しない。
+
+## turn 18 — verify — 指摘1件、implへ差し戻し
+
+- やったこと: main...HEAD全体を要件・完了基準と照合し、コード/セキュリティの読み取り専用並列レビュー、初回堅牢性格子と文書追従を確認。bun run verify:transfer成功（JS613件、Rust15件、check、445文書リンク、build、実Chromium152のDOM/Canvas・100 MiB・CORS/認証・2タブ排他）。本文uploadの既定Content-Type欠落をnative Requestで再現し、VERIFICATIONとPLANのF1に記録した。
+- 想定外: loopの推定パス.gsd-lite/gsd-lite-loop.shは存在せず、PATH上のgsd-lite-loop.shで解決。全試験が成功しても、upload試験がContent-Type欠落を期待しており受け入れ基準違反を検出していなかった。
+- やり直し: 0 回（検証の再実行・実装修正なし。loopパス修正1回）。
+- 次への注意: 次ターンはF1のみ実装。本文upload POST/PUTの既定/明示Content-Typeとmultipartのブラウザ生成boundaryを受信側まで確認し、誤った既存期待値変更を記録する。次のverifyは初回格子とF1差分の回帰を行う。loopはPATH上を使用。BLOCKED.mdは解消済みの履歴であり今回BLOCKEDではない。マージは未実施。
