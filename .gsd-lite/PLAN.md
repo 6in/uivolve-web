@@ -55,7 +55,7 @@ bun run build
   - 依存: T1
   - 並列サブ作業: なし（共通lockとhandle境界の同一ファイル）。
 
-- [ ] T4: 認証付きFile/FormData専用送信経路
+- [x] T4: 認証付きFile/FormData専用送信経路
   - 完了基準: 一般fetchのUint8Array制限を維持し、転送専用の検証済みBlob/File/FormData経路を追加。既存URL/JWT/CORS/許可origin経路を共有し転送は3方式ともretryAuthentication=false。401/403/切断で送信1回、事前provider/refresh失敗はnot-started、送信後不明はunknownを区別できる。認証更新で古いpolicyを使わずトークンをstate/エラーへ漏らさない。ResourceClient/refresh既存試験も通る。
   - 対象: src/resource-client.js、tests/resource-client.test.js、tests/resource-refresh.test.js、tests/opfs-file-transfer.test.js
   - 依存: T1

@@ -29,6 +29,65 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it("never replays any transfer after 401/403 or a disconnect even when retry is requested", async () => {
+  for (const options of [
+    {},
+    { method: "POST", body: new Blob(["file"]) },
+    { method: "PUT", body: new FormData() },
+  ]) {
+    for (const status of [401, 403, null]) {
+      const fetcher = vi.fn(async () => {
+        if (status === null) throw new Error(RT);
+        return new Response(null, { status });
+      });
+      const client = create(fetcher);
+      if (status === null)
+        await expect(
+          client.transferRequest("transfer", {
+            ...options,
+            retryAuthentication: true,
+            allowHttpErrors: true,
+          }),
+        ).rejects.toMatchObject({ outcome: "unknown", code: "NETWORK" });
+      else {
+        const response = await client.transferRequest("transfer", {
+          ...options,
+          retryAuthentication: true,
+          allowHttpErrors: true,
+        });
+        expect(response.status).toBe(status);
+      }
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(fetcher.mock.lastCall[0].href).toBe(`${BASE}transfer`);
+    }
+  }
+});
+
+it("refreshes expired credentials before transfer dispatch, but failed refresh means not-started", async () => {
+  const clock = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+  for (const fail of [false, true]) {
+    const fetcher = vi.fn(async (url) => {
+      if (url.href !== ENDPOINT) return new Response("ok");
+      if (fail) throw new Error(RT);
+      return json({ accessToken: NEXT, expiresIn: 3600 });
+    });
+    clock.mockReturnValue(1_000_000);
+    const client = create(fetcher, { expiresIn: 60 });
+    clock.mockReturnValue(1_031_000);
+    const pending = client.transferRequest("transfer", { method: "POST", body: new Blob() });
+    if (fail) {
+      const error = await pending.catch((error) => error);
+      expect(error.outcome).toBe("not-started");
+      expect(error.message).not.toContain(RT);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    } else {
+      expect((await pending).ok).toBe(true);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(fetcher.mock.lastCall[1].headers.get("Authorization")).toBe(`Bearer ${NEXT}`);
+    }
+  }
+});
+
 it("refreshes a 401 once and sends the refresh token only to the explicit POST endpoint", async () => {
   const fetcher = vi.fn(async (url, options) =>
     options.method === "POST"

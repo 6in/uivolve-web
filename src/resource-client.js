@@ -71,7 +71,37 @@ export class ResourceClient {
     if (policy !== this.#policy) throw new Error("認証設定が変更されたため取得を中止しました");
   }
 
-  async fetch(
+  async fetch(value, options = {}) {
+    const { body } = options;
+    if (body !== undefined && (!(body instanceof Uint8Array) || body.length > 1_010_000))
+      throw new Error("HTTP bodyのサイズ・形式が不正です");
+    return this.#fetchResource(value, options);
+  }
+
+  // Only the host transfer adapter uses this path; bytes never enter Rhai/state.
+  async transferRequest(value, options = {}) {
+    const attempt = { started: false };
+    try {
+      const { body, method = "GET" } = options;
+      if (
+        !["GET", "POST", "PUT"].includes(method) ||
+        (method === "GET"
+          ? body !== undefined
+          : !(body instanceof Blob || body instanceof FormData))
+      )
+        throw new Error("転送のHTTPメソッド・bodyが不正です");
+      return await this.#fetchResource(value, { ...options, retryAuthentication: false }, attempt);
+    } catch (error) {
+      // Abort reasons and injected fetch/provider errors may contain credentials.
+      throw Object.assign(new Error("HTTP転送に失敗しました"), {
+        name: error?.name === "AbortError" ? "AbortError" : "Error",
+        ...(error?.code === "NETWORK" ? { code: "NETWORK" } : {}),
+        outcome: attempt.started ? "unknown" : "not-started",
+      });
+    }
+  }
+
+  async #fetchResource(
     value,
     {
       signal,
@@ -81,6 +111,7 @@ export class ResourceClient {
       retryAuthentication = method === "GET",
       allowHttpErrors = false,
     } = {},
+    attempt,
   ) {
     if (
       !["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"].includes(method) ||
@@ -90,8 +121,6 @@ export class ResourceClient {
     const extraHeaders = new Headers(headers);
     if (extraHeaders.has("Authorization"))
       throw new Error("認証ヘッダーは認証設定から付与してください");
-    if (body !== undefined && (!(body instanceof Uint8Array) || body.length > 1_010_000))
-      throw new Error("HTTP bodyのサイズ・形式が不正です");
     const options = { method, headers: extraHeaders, body };
     const url = httpUrl(value, this.#base);
     const policy = this.#policy;
@@ -116,7 +145,7 @@ export class ResourceClient {
       this.#check(policy, signal);
       credential.token = bearerToken(credential.token);
     }
-    let response = await this.#request(url, policy, credential?.token, signal, options);
+    let response = await this.#request(url, policy, credential?.token, signal, options, attempt);
     if (response.status === 401 && policy.session && retryAuthentication) {
       await response.body?.cancel().catch(() => {});
       try {
@@ -153,12 +182,13 @@ export class ResourceClient {
     return this.getAuthentication();
   }
 
-  async #request(url, policy, token, signal, options) {
+  async #request(url, policy, token, signal, options, attempt) {
     const headers = new Headers(options.headers);
     if (token !== undefined) headers.set("Authorization", `Bearer ${token}`);
     const authenticated = policy.mode === "jwt";
     let response;
     try {
+      if (attempt) attempt.started = true;
       response = await this.#fetch(url, {
         method: options.method,
         ...(options.body !== undefined ? { body: options.body } : {}),
