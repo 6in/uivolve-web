@@ -38,3 +38,13 @@
 ## 次の遷移
 
 verify_roundを0から1へ更新し、phase=impl / next_command=/gsd-lite-implへ差し戻す。修正上限3以内。BLOCKEDではない。次のverifyは本格子の回帰とF1修正差分を確認する。
+
+## turn 20 — 回帰検証結果
+
+判定: 合格。前回の初回堅牢性格子とF1修正差分を確認し、新規指摘なし。本文uploadはPOST/PUTとも既定application/octet-streamを送信し、明示Content-Typeを保持する。multipartは既定file partの型とブラウザ生成boundary・項目順序を維持する。空typeの実OPFS Fileをサーバー受信ヘッダー・size/hashまで照合した。PROGRESSの期待値変更は合意した既定値への修正として妥当。
+
+- クリーンな作業ツリーからmain...HEADの全体と前回検証後の差分を確認。入力検証、宣言権限、URL/origin、認証再送禁止、秘密情報除去、確定境界とcleanup/ロック保持について前回結果の回帰を確認。新しい例外クラスの探索は行っていない。
+- bun run verify:transfer成功: WASM生成、JS614件/29ファイル、Rust15件、check（207ファイル整形・90ファイルlint、警告0）、445文書リンク/56文書、build。Chromium152.0.7977.64でDOM/Canvas、100 MiB GET/File/FormData、CORS/認証、上書き/容量/中止、2タブWeb Locksと解放が成功。
+- 文書追従チェックリストの数値・未対応記述を再検索し、一般HTTP/Rhai/files/Workerおよび過去計画の制限と転送の制限が区別されていることを確認。git diff --check main...HEAD成功。
+- 残留リスクは初回記録のとおり（Web Locks未対応環境の排他範囲、ブラウザ内部buffer、サーバー巻き戻し、別ブラウザ未実測）。
+- origin未設定のためmainへローカルマージする。成功後はreflectへ遷移する。
