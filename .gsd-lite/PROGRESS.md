@@ -1,5 +1,12 @@
 # Progress
 
+## turn 4 — impl — T1 転送試験の基盤と最終判定runner
+
+- やったこと: 前ターンのT1実装4ファイルを確認し、指定検査をすべて再実行してコミットした。基盤/runner14件、全JS528件、Rust13件、WASM生成、check、docs:check（412リンク）、buildが成功。T1を完了にし、停止記録を解消済みに更新した。
+- 想定外: 最初に推定したloopパスが存在せず、PATH上のgsd-lite-loop.shで作業場所を解決した。既存テスト期待値の変更はなし。
+- やり直し: 1 回（loop呼び出しパスの修正）。実装・検証の立て直しは0回。
+- 次への注意: 次はT2のみ実装する。loopはPATH上のgsd-lite-loop.shを使う。T11のブラウザrunnerは未作成で、verify:transferは欠如を非0として扱う。前回のlocalhost/書式障害は指定全検査の成功で解消を確認した。
+
 ## turn 3 — impl — T1 転送試験の基盤と最終判定runner（blocked）
 
 - やったこと: OPFS mockのchunk追記、File snapshot、close確定/abort破棄、段階別失敗/gateと14件の基盤・runner試験を実装。順次検査と失敗伝搬/中断cleanupを行うverify:transferを登録。コードは検証未合格のため未コミットで保持した。

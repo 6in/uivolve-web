@@ -1,5 +1,7 @@
 # BLOCKED — T1 転送試験の基盤と最終判定runner
 
+- 解消済み（turn 4）: danger-full-access環境で指定検査をすべて再実行し、全JS528件、Rust13件、check、docs:check、buildが成功した。T1はコミット済み。以下はturn 3の停止履歴。
+
 - 状況: T1の実装は作業ツリーに保持し、PLANは未完了のまま。スキル手順3に従い検証未合格のコードはコミットしない。
 - 検証: 新規基盤/runner試験14件、Rust13件、build:wasm、docs:check、buildは成功。全JSは503件成功、files-cache-rpcの25件はサーバー起動で `listen EPERM: operation not permitted 127.0.0.1` となり未実行。対象試験と全試験で同じ環境制約を確認した。
 - 追加障害: `bun run check` は既存の .agents/skills/gsd-lite-*/SKILL.md 6件と .gsd-lite/{PLAN.md,PLAN.template.md,PROGRESS.md,RESEARCH.md,state.json} の11件の書式で失敗。T1対象4ファイルは整形済み。
