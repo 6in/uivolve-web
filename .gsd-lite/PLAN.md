@@ -67,7 +67,7 @@ bun run build
   - 依存: T2、T3、T4
   - 並列サブ作業: なし（準備contextの受け渡しが依存）。
 
-- [ ] T6: downloadのストリーム保存と原子的確定
+- [x] T6: downloadのストリーム保存と原子的確定
   - 完了基準: 2xxのみreader.read→容量加算→writer.writeを逐次awaitし全量blob/arrayBuffer/textを使わない。既定上書き拒否/許可、親不足、0 bytes、limit-1/limit/limit+1、Content-Length有/無/不正/虚偽、gzip復号後超過を検証し超過chunkを保存しない。close前の通信/OPFS失敗・中止では旧bytes保持、新規未確定entryのみ削除。createWritable/read/write/close/abort/remove失敗をError/DOMException全体として扱い、代表と列挙外の例外を注入。reader.cancel/writer.abort/cleanupを待ち、close成功後の取消で確定fileを消さない。成功dataはstatus/headers/body:null/files。
   - 対象: src/adapters/http.js、src/opfs.js、tests/opfs-file-transfer.test.js（必要なら内部転送helperを新規分離）
   - 依存: T5

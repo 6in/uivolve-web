@@ -2,6 +2,8 @@ import { readLimitedBytes } from "../resource-client.js";
 import { httpUrl } from "../http-policy.js";
 import { hostError } from "../host-effects.js";
 import { FileClient } from "../file-client.js";
+import { downloadFile } from "./http-download.js";
+import { withFileLocks } from "../opfs.js";
 
 const methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"];
 const formats = ["json", "text", "empty"];
@@ -198,8 +200,29 @@ export function httpAdapter({ resources, transferLimit = 104_857_600, files = ne
     },
     async execute(operation, args, { signal, connection, scope, files: declarations }) {
       if (transfers.includes(operation.action)) {
-        transferArguments(operation, args, connection, { scope, files: declarations }, files);
-        // T6/T7 connect execution after this pure argument boundary.
+        const prepared = transferArguments(
+          operation,
+          args,
+          connection,
+          { scope, files: declarations },
+          files,
+        );
+        if (operation.action === "http.download")
+          return withFileLocks(
+            prepared.references.map((reference) => reference.key),
+            () =>
+              downloadFile({
+                resources,
+                url: prepared.url,
+                reference: prepared.references[0],
+                file: args.file,
+                options: operation.options,
+                signal,
+                limit: transferLimit,
+              }),
+            { signal, locks: files.locks },
+          );
+        // T7 connects upload and multipart execution.
         throw hostError("UNSUPPORTED", "HTTP転送処理は未実装です");
       }
       checkKeys(args, ["path", "query", "body"]);

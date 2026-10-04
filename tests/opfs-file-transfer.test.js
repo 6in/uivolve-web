@@ -4,11 +4,18 @@ import { httpAdapter } from "../src/adapters/http.js";
 import { FileClient } from "../src/file-client.js";
 import { HostEffects } from "../src/host-effects.js";
 
-function transferValidation(action = "http.download", options = {}) {
+function transferValidation(action = "http.download", options = {}, transferLimit = 104_857_600) {
   const fs = memoryOpfs();
   const getDirectory = vi.spyOn(fs.storage, "getDirectory");
-  const resources = { fetch: vi.fn(), transferRequest: vi.fn() };
-  const adapter = httpAdapter({ resources, files: new FileClient({ storage: fs.storage }) });
+  const resources = {
+    fetch: vi.fn(),
+    transferRequest: vi.fn(async () => new Response(null, { status: 200 })),
+  };
+  const adapter = httpAdapter({
+    resources,
+    transferLimit,
+    files: new FileClient({ storage: fs.storage }),
+  });
   const operation = { action, options: { path: "items/{id}", ...options } };
   const connection = { adapter: "http", baseUrl: "https://example.test/api/" };
   const context = {
@@ -22,7 +29,7 @@ function transferValidation(action = "http.download", options = {}) {
     path: { id: "one" },
     ...(action === "http.multipart" ? { parts: [{ name: "file", file }] } : { file }),
   };
-  return { adapter, operation, connection, context, args, resources, getDirectory };
+  return { adapter, operation, connection, context, args, resources, getDirectory, fs };
 }
 
 it("registers transfer actions and validates declaration methods, deadlines and download-only options", () => {
@@ -226,7 +233,7 @@ it("validates host transferLimit and snapshots file declarations in prepared con
   ]);
   expect(complete).toHaveBeenCalledWith(
     1,
-    expect.objectContaining({ error: expect.objectContaining({ code: "UNSUPPORTED" }) }),
+    expect.objectContaining({ ok: true, data: expect.objectContaining({ body: null }) }),
   );
   effects.dispose();
 });
@@ -488,5 +495,332 @@ it("limits transfer handles by declaration/path/parents and shares ordinary file
       await client.execute("transfer", { volume: "input", path: "", operation: "stat" });
     },
     { locks: null },
+  );
+});
+
+async function downloadFixture(options = {}, limit = 4) {
+  const setup = transferValidation("http.download", options, limit);
+  setup.adapter.validate(setup.operation, setup.connection, new URL("https://example.test/"));
+  const reference = new FileClient({ storage: setup.fs.storage }).transferFile(
+    setup.context.scope,
+    setup.context.files,
+    setup.args.file.volume,
+    setup.args.file.path,
+    { write: true },
+  );
+  const controller = new AbortController();
+  setup.context.signal = controller.signal;
+  return {
+    ...setup,
+    reference,
+    controller,
+    run: () => setup.adapter.execute(setup.operation, setup.args, setup.context),
+    seed: async () => {
+      const writer = await reference.writable();
+      await writer.write("old");
+      await writer.close();
+    },
+    stream: (chunks, headers = {}, status = 200) => {
+      const read = vi.fn(async () =>
+        chunks.length ? { value: new Uint8Array(chunks.shift()), done: false } : { done: true },
+      );
+      const cancel = vi.fn(async () => {});
+      const releaseLock = vi.fn();
+      const response = {
+        ok: status >= 200 && status < 300,
+        status,
+        headers: new Headers(headers),
+        body: { getReader: () => ({ read, cancel, releaseLock }) },
+        blob: vi.fn(() => {
+          throw new Error("whole body");
+        }),
+        arrayBuffer: vi.fn(() => {
+          throw new Error("whole body");
+        }),
+        text: vi.fn(() => {
+          throw new Error("whole body");
+        }),
+      };
+      setup.resources.transferRequest.mockResolvedValue(response);
+      return { read, cancel, releaseLock, response };
+    },
+  };
+}
+
+it.each([0, 3, 4, 5])("streams %s decoded bytes with an exact capacity boundary", async (size) => {
+  const f = await downloadFixture();
+  const chunks = size ? [Array.from({ length: Math.min(size, 3) }, () => 65)] : [];
+  if (size > 3) chunks.push(Array.from({ length: size - 3 }, () => 66));
+  const stream = f.stream(chunks);
+  const writes = vi.fn();
+  f.fs.controls.beforeWrite = writes;
+  if (size > 4) {
+    await expect(f.run()).rejects.toMatchObject({ code: "LIMIT", outcome: "failed" });
+    expect(writes).toHaveBeenCalledTimes(1);
+    await expect(f.reference.file()).rejects.toMatchObject({ name: "NotFoundError" });
+    expect(stream.cancel).toHaveBeenCalledOnce();
+  } else {
+    await expect(f.run()).resolves.toEqual({
+      status: 200,
+      headers: {},
+      body: null,
+      files: [{ ...f.args.file, size }],
+    });
+    expect((await f.reference.file()).size).toBe(size);
+  }
+  expect(stream.response.blob).not.toHaveBeenCalled();
+  expect(stream.response.arrayBuffer).not.toHaveBeenCalled();
+  expect(stream.response.text).not.toHaveBeenCalled();
+});
+
+it.each([
+  [{}, true],
+  [{ "content-length": "4" }, true],
+  [{ "content-length": "bad" }, true],
+  [{ "content-length": "1" }, true],
+  [{ "content-length": "5" }, false],
+  [{ "content-length": "99", "content-encoding": "gzip" }, true],
+])("uses decoded capacity regardless of response headers %j", async (headers, accepted) => {
+  const f = await downloadFixture();
+  const stream = f.stream(
+    [
+      [1, 2],
+      [3, 4],
+    ],
+    headers,
+  );
+  if (accepted) await expect(f.run()).resolves.toMatchObject({ files: [{ size: 4 }] });
+  else {
+    await expect(f.run()).rejects.toMatchObject({ code: "LIMIT" });
+    expect(stream.read).not.toHaveBeenCalled();
+  }
+});
+
+it("rejects gzip decoded overflow and preserves the previous file", async () => {
+  const f = await downloadFixture({ overwrite: true });
+  await f.seed();
+  f.stream(
+    [
+      [1, 2, 3],
+      [4, 5],
+    ],
+    { "content-length": "2", "content-encoding": "gzip" },
+  );
+  await expect(f.run()).rejects.toMatchObject({ code: "LIMIT" });
+  expect(await (await f.reference.file()).text()).toBe("old");
+});
+
+it("rejects overwrite by default, allows atomic replacement and requires existing parents", async () => {
+  const f = await downloadFixture();
+  await f.seed();
+  await expect(f.run()).rejects.toMatchObject({ code: "ALREADY_EXISTS", outcome: "not-started" });
+  expect(f.resources.transferRequest).not.toHaveBeenCalled();
+  f.operation.options.overwrite = true;
+  f.stream([[65, 66]], { "x-result": "yes" });
+  f.operation.options.responseHeaders = ["x-result"];
+  await expect(f.run()).resolves.toMatchObject({ headers: { "x-result": "yes" } });
+  expect(await (await f.reference.file()).text()).toBe("AB");
+  f.args.file.path = "missing/data";
+  await expect(f.run()).rejects.toMatchObject({ code: "STORAGE" });
+});
+
+it.each([400, 401, 403, 500])("cancels non-2xx %s without creating a file", async (status) => {
+  const f = await downloadFixture();
+  const stream = f.stream([], {}, status);
+  await expect(f.run()).rejects.toMatchObject({ code: `HTTP_${status}` });
+  expect(stream.cancel).toHaveBeenCalledOnce();
+  expect(stream.read).not.toHaveBeenCalled();
+  await expect(f.reference.file()).rejects.toMatchObject({ name: "NotFoundError" });
+});
+
+it.each(["CreateWritable", "Write", "Close"])(
+  "handles any %s exception and rolls back old/new files",
+  async (stage) => {
+    for (const existing of [false, true]) {
+      for (const error of [
+        new Error("host failure"),
+        new DOMException("failure", "QuotaExceededError"),
+        new DOMException("failure", "UnexpectedError"),
+      ]) {
+        const f = await downloadFixture({ overwrite: true });
+        if (existing) await f.seed();
+        f.stream([[1], [2]]);
+        f.fs.controls[`before${stage}`] = async () => {
+          throw error;
+        };
+        await expect(f.run()).rejects.toMatchObject({ code: "STORAGE", outcome: "failed" });
+        if (existing) expect(await (await f.reference.file()).text()).toBe("old");
+        else await expect(f.reference.file()).rejects.toMatchObject({ name: "NotFoundError" });
+      }
+    }
+  },
+);
+
+it("handles reader failures without publishing bytes", async () => {
+  const f = await downloadFixture({ overwrite: true });
+  await f.seed();
+  const stream = f.stream([[1]]);
+  stream.read.mockRejectedValueOnce(new DOMException("read", "UnexpectedError"));
+  await expect(f.run()).rejects.toMatchObject({ code: "NETWORK" });
+  expect(stream.cancel).toHaveBeenCalledOnce();
+  expect(await (await f.reference.file()).text()).toBe("old");
+});
+
+it.each(["Abort", "Remove"])(
+  "reports %s cleanup failure after attempting all cleanup",
+  async (stage) => {
+    const f = await downloadFixture();
+    const stream = f.stream([[1], [2, 3, 4, 5]]);
+    const abort = vi.fn(async () => {});
+    const remove = vi.fn(async () => {});
+    f.fs.controls.beforeAbort = abort;
+    f.fs.controls.beforeRemove = remove;
+    f.fs.controls[`before${stage}`].mockRejectedValueOnce(new Error("cleanup"));
+    await expect(f.run()).rejects.toMatchObject({ code: "CLEANUP", outcome: "failed" });
+    expect(abort).toHaveBeenCalledOnce();
+    expect(remove).toHaveBeenCalledOnce();
+    expect(stream.cancel).toHaveBeenCalledOnce();
+  },
+);
+
+it("awaits reader cancellation, writer abort and removal while holding the lock", async () => {
+  const f = await downloadFixture();
+  const stream = f.stream([[1], [2, 3, 4, 5]]);
+  const gates = [];
+  for (const stage of [stream.cancel, "beforeAbort", "beforeRemove"]) {
+    const wait = () => new Promise((resolve) => gates.push(resolve));
+    if (typeof stage === "string") f.fs.controls[stage] = wait;
+    else stage.mockImplementation(wait);
+  }
+  const done = vi.fn();
+  const pending = f.run().catch(done);
+  for (let i = 0; i < 3; i++) {
+    await vi.waitFor(() => expect(gates).toHaveLength(i + 1));
+    await expect(f.run()).rejects.toMatchObject({ code: "BUSY" });
+    expect(done).not.toHaveBeenCalled();
+    gates[i]();
+  }
+  await pending;
+  expect(done).toHaveBeenCalledWith(expect.objectContaining({ code: "LIMIT" }));
+});
+
+it.each(["Write", "Close"])(
+  "waits for %s on cancellation and respects close commit",
+  async (stage) => {
+    const f = await downloadFixture({ overwrite: true });
+    await f.seed();
+    f.stream([[65]]);
+    let release;
+    f.fs.controls[`before${stage}`] = () =>
+      new Promise((resolve) => {
+        release = resolve;
+      });
+    const pending = f.run();
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    f.controller.abort();
+    await expect(f.run()).rejects.toBeDefined();
+    release();
+    if (stage === "Close") {
+      await expect(pending).resolves.toMatchObject({ files: [{ size: 1 }] });
+      expect(await (await f.reference.file()).text()).toBe("A");
+    } else {
+      await expect(pending).rejects.toMatchObject({ code: "CANCELLED" });
+      expect(await (await f.reference.file()).text()).toBe("old");
+    }
+  },
+);
+
+it("cancels a pending reader and removes only the new uncommitted entry", async () => {
+  const f = await downloadFixture();
+  const stream = f.stream([]);
+  let finish;
+  stream.read.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  stream.cancel.mockImplementation(async () => {
+    finish({ done: true });
+  });
+  const pending = f.run();
+  await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+  f.controller.abort();
+  await expect(pending).rejects.toMatchObject({ code: "CANCELLED" });
+  expect(stream.cancel).toHaveBeenCalledOnce();
+  await expect(f.reference.file()).rejects.toMatchObject({ name: "NotFoundError" });
+});
+
+it("awaits each write before reading another chunk", async () => {
+  const f = await downloadFixture();
+  const stream = f.stream([[1], [2]]);
+  let release;
+  f.fs.controls.beforeWrite = () =>
+    new Promise((resolve) => {
+      release = resolve;
+    });
+  const pending = f.run();
+  await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+  expect(stream.read).toHaveBeenCalledTimes(1);
+  f.fs.controls.beforeWrite = async () => {};
+  release();
+  await pending;
+  expect(stream.read).toHaveBeenCalledTimes(3);
+});
+
+it("retains the old file on fetch failure and checks host exceptions before fetch", async () => {
+  const f = await downloadFixture({ overwrite: true });
+  await f.seed();
+  f.resources.transferRequest.mockRejectedValueOnce(new Error("secret"));
+  await expect(f.run()).rejects.toMatchObject({
+    code: "NETWORK",
+    message: "HTTP通信・認証に失敗しました",
+  });
+  expect(await (await f.reference.file()).text()).toBe("old");
+  f.resources.transferRequest.mockClear();
+  f.fs.controls.beforeGetFileHandle = async () => {
+    throw new DOMException("host", "UnexpectedError");
+  };
+  await expect(f.run()).rejects.toMatchObject({ code: "STORAGE" });
+  expect(f.resources.transferRequest).not.toHaveBeenCalled();
+});
+
+it("reports reader cancel errors and still aborts and removes the new file", async () => {
+  const f = await downloadFixture();
+  const stream = f.stream([[1], [2, 3, 4, 5]]);
+  stream.cancel.mockRejectedValueOnce(new Error("cancel"));
+  const aborted = vi.fn();
+  f.fs.controls.beforeAbort = aborted;
+  await expect(f.run()).rejects.toMatchObject({ code: "CLEANUP" });
+  expect(aborted).toHaveBeenCalledOnce();
+  await expect(f.reference.file()).rejects.toMatchObject({ name: "NotFoundError" });
+});
+
+it("waits for cancellation during a successful close without deleting committed bytes", async () => {
+  const f = await downloadFixture();
+  const stream = f.stream([[65]]);
+  let close;
+  let cancel;
+  f.fs.controls.beforeClose = () =>
+    new Promise((resolve) => {
+      close = resolve;
+    });
+  stream.cancel.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        cancel = resolve;
+      }),
+  );
+  const done = vi.fn();
+  const pending = f.run().then(done);
+  await vi.waitFor(() => expect(close).toBeTypeOf("function"));
+  f.controller.abort();
+  close();
+  await vi.waitFor(async () => expect(await (await f.reference.file()).text()).toBe("A"));
+  expect(done).not.toHaveBeenCalled();
+  cancel();
+  await pending;
+  expect(done).toHaveBeenCalledWith(
+    expect.objectContaining({ files: [{ ...f.args.file, size: 1 }] }),
   );
 });
