@@ -97,3 +97,5 @@ WebMCPも人の入力と同じWASMイベントを実行する。ツールの登�
 Rhaiは同期実行で、操作数などの制限を持つ。非同期HTTP GET・Unary RPC・ブラウザ保存・ファイル操作・ダイアログは依頼・完了handlerの契約で扱う。HTTP・JSON保存・ファイル・RPC・ダイアログすべての準備とバッファ容量の確認が通ってからstateとeffectsを確定する。HTTPは従来のkind省略、追加操作はkind=storage/file/rpcでホストへ振り分ける。kind=dialogは発行通知で、表示はSceneの構成を両レンダラーが描画する。完了handlerもstateSchemaの検証を通る。汎用POST・タイマー・GPU描画・サーバー同期は未対応。現段階の制限は[README](../README.md)と部品別の契約に記載する。
 
 `alert / confirm / prompt`はWASMがFIFO・入力下書き・回答・レイアウトを管理し、既存windowと同じmodal層の部品としてSceneへ構成する。DOMは領域内のDOM、CanvasはCanvasへ描画する。両側は同じ1件の依頼を共有し、回答は通常のeventから最新stateの完了handlerへ届く。WebMCPも表示中の入力・ボタンを通常のui_dispatchで操作でき、背景はBLOCKEDになる。独自ホスト用のdialog_result ABIも維持する。
+
+日付計算はRustのextensions/date.rs、時計の採取はホストのsrc/clock.js。Rhaiを実行するABI操作にclockを渡し、Runtimeの実行スコープで保持する。画面loadではinitとdatepicker.todayへ同じサンプルを使う。[日付・時計の契約](date-functions.md)を参照。

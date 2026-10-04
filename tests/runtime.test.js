@@ -8,6 +8,61 @@ import { validateAppConfig } from "../src/application.js";
 import { createUiTools } from "../src/ui-tools.js";
 import { readPageRoute } from "../src/page-router.js";
 
+it("uses one sampled clock for datepicker.today and init while preserving explicit today", async () => {
+  let nowMs = Date.parse("2026-10-04T23:59:59.999+09:00");
+  const clockProvider = vi.fn(() => ({ nowMs: nowMs++, tzOffsetMinutes: 540 }));
+  const runtime = await host({ clockProvider });
+  const screen = {
+    ...definition,
+    ui: {
+      xtype: "container",
+      items: [
+        { xtype: "datepicker", itemId: "autoCalendar", bind: "selected", pageBind: "month" },
+        {
+          xtype: "datepicker",
+          itemId: "fixedCalendar",
+          bind: "fixedSelected",
+          pageBind: "fixedMonth",
+          today: "2024-02-29",
+        },
+        { xtype: "button", itemId: "check", handler: "check" },
+      ],
+    },
+    state: { selected: "", month: "2026-10", fixedSelected: "", fixedMonth: "2024-02" },
+  };
+  runtime.compile(
+    screen,
+    "fn init(s){s.today=date_today();s} fn check(s,e){s.today=date_today();s}",
+    "pages/home.yaml",
+  );
+  expect(clockProvider).toHaveBeenCalledTimes(1);
+  expect(runtime.state.today).toBe("2026-10-04");
+  expect(runtime.screen.ui.items[0].today).toBe("2026-10-04");
+  expect(runtime.screen.ui.items[1].today).toBe("2024-02-29");
+  runtime.dispatch("check");
+  expect(runtime.state.today).toBe("2026-10-05");
+  expect(runtime.screen.ui.items[0].today).toBe("2026-10-04");
+  expect(clockProvider).toHaveBeenCalledTimes(2);
+});
+
+it("retains the clock provider on WASM refresh and preserves the active screen on an invalid clock", async () => {
+  const clockProvider = () => ({
+    nowMs: Date.parse("2026-10-04T00:00:00+09:00"),
+    tzOffsetMinutes: 540,
+  });
+  const runtime = await host({ clockProvider });
+  await runtime.load("pages/home.yaml");
+  const realFetch = runtime.resources.fetch.bind(runtime.resources);
+  runtime.resources.fetch = (url, options) =>
+    url.pathname.endsWith(".wasm") ? Promise.resolve(new Response(bytes)) : realFetch(url, options);
+  await runtime.load("pages/home.yaml", { refreshEngine: true });
+  expect(runtime.engine.clockProvider).toBe(clockProvider);
+  const previous = runtime.snapshot();
+  runtime.engine.clockProvider = () => ({ nowMs: 0, tzOffsetMinutes: 1000 });
+  expect(() => runtime.compile(definition, script, "pages/home.yaml")).toThrow(/clock/);
+  expect(runtime.snapshot()).toEqual(previous);
+});
+
 // Adapters are verified in-browser. These tests exercise the shared host with real WASM.
 vi.mock("../src/dom-renderer.js", () => ({
   DomRenderer: class {

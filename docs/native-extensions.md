@@ -10,6 +10,8 @@ let total = sum_ints([10, 20, 30]);
 
 実行例は「Rust拡張・正規表現」画面、URLは`?screen=native-extensions`。[画面JSON](../public/screens/native-extensions.json)と[Rhai](../public/screens/native-extensions.rhai)で正規表現・置換を試し、「整数の一括集計」タブでは数値入力をまとめてRustへ渡せる。これらのページ固有の処理をRustへ埋め込む必要はない。
 
+[日付・時計の共通関数](date-functions.md)も利用できる。日時は文字列、時計はホストから実行単位で供給する。
+
 ## 現在の共通関数
 
 | Rhaiの呼び出し                                  | 結果                                                                                                                     |
@@ -43,7 +45,7 @@ try {
 
 ## Rust関数を追加する
 
-共通の登録窓口は[engine/src/extensions/mod.rs](../engine/src/extensions/mod.rs)の`register(engine)`。新しいRustモジュールで関数を実装し、そこからRhaiの`Engine::register_fn`へ登録する。Rhaiの[登録API](https://rhai.rs/book/rust/functions.html)と[失敗を返す関数](https://rhai.rs/book/rust/fallible.html)を利用している。
+共通の登録窓口は[engine/src/extensions/mod.rs](../engine/src/extensions/mod.rs)の`register(engine)`。新しいRustモジュールで関数を実装し、`register_with_context(engine, context)`から呼び出す。互換用の`register(engine)`も維持している。Rhaiの`Engine::register_fn`へ登録する。Rhaiの[登録API](https://rhai.rs/book/rust/functions.html)と[失敗を返す関数](https://rhai.rs/book/rust/fallible.html)を利用している。
 
 たとえば`engine/src/extensions/pricing.rs`を作る。
 
@@ -86,7 +88,7 @@ let runtime = Runtime::load_with_extensions(package, script, |engine| {
 })?;
 ```
 
-通常のブラウザ向けABIは`Runtime::load`を使い、共通登録窓口の関数を公開する。Rust側の機能追加では**エンジンのWASM再ビルドと再配信**が必要。登録済み関数を利用する画面JSON・RhaiはHTTPで差し替えられる。任意のRustシンボルを名前で呼ぶ機構、ブラウザからのネイティブ関数の後付け読み込み、ページ単位のRustコンパイルは実装していない。
+通常のブラウザ向けABIは`Runtime::load_with_clock`を使い、共通登録窓口の関数を公開する。Rust側の機能追加では**エンジンのWASM再ビルドと再配信**が必要。登録済み関数を利用する画面JSON・RhaiはHTTPで差し替えられる。任意のRustシンボルを名前で呼ぶ機構、ブラウザからのネイティブ関数の後付け読み込み、ページ単位のRustコンパイルは実装していない。
 
 ## 実装と確認の基準
 

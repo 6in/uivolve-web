@@ -1038,32 +1038,12 @@ fn document(
     out.push(w);
 }
 fn month(v: &str) -> Option<(i32, i32)> {
-    let (y, m) = v.split_once('-')?;
-    if y.len() != 4 || m.len() != 2 || !y.bytes().chain(m.bytes()).all(|c| c.is_ascii_digit()) {
-        return None;
-    }
-    let y = y.parse().ok()?;
-    let m = m.parse().ok()?;
-    if (1..=9999).contains(&y) && (1..=12).contains(&m) {
-        Some((y, m))
-    } else {
-        None
-    }
+    crate::extensions::date::parse_month(v).map(|(year, month)| (year, month as i32))
 }
 fn date(v: &str) -> Option<(i32, i32, i32)> {
-    if v.len() != 10 {
-        return None;
-    }
-    let (y, m) = month(v.get(..7)?)?;
-    if !v.get(8..)?.bytes().all(|c| c.is_ascii_digit()) {
-        return None;
-    }
-    let day = v.get(8..)?.parse().ok()?;
-    if v.as_bytes()[7] != b'-' || day < 1 || day > days(y, m) {
-        None
-    } else {
-        Some((y, m, day))
-    }
+    use chrono::Datelike;
+    let date = crate::extensions::date::parse_date(v).ok()?;
+    Some((date.year(), date.month() as i32, date.day() as i32))
 }
 fn calendar_dates(yr: i32, m: i32) -> Vec<String> {
     (0..42)
@@ -1090,20 +1070,9 @@ fn calendar_dates(yr: i32, m: i32) -> Vec<String> {
         .collect()
 }
 fn days(y: i32, m: i32) -> i32 {
-    match m {
-        2 => {
-            if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
-                29
-            } else {
-                28
-            }
-        }
-        4 | 6 | 9 | 11 => 30,
-        _ => 31,
-    }
+    crate::extensions::date::days_in_month(y, m as u32) as i32
 }
 fn weekday(y: i32, m: i32, d: i32) -> i32 {
-    let offsets = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
-    let y = if m < 3 { y - 1 } else { y };
-    (y + y / 4 - y / 100 + y / 400 + offsets[(m - 1) as usize] + d) % 7
+    // Callers validate the calendar month before rendering.
+    crate::extensions::date::weekday(y, m as u32, d as u32).unwrap_or(0) as i32
 }

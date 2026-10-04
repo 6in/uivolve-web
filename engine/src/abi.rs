@@ -8,6 +8,10 @@ thread_local! {
 }
 
 fn execute(request: Value) -> Result<Value, String> {
+    let clock: Option<crate::extensions::Clock> = request
+        .get("clock")
+        .map(|value| serde_json::from_value(value.clone()).map_err(|e| e.to_string()))
+        .transpose()?;
     match request.get("op").and_then(Value::as_str).unwrap_or("") {
         "theme" => {
             if let Some(value) = request.get("theme") {
@@ -32,7 +36,7 @@ fn execute(request: Value) -> Result<Value, String> {
                     descriptors.insert(name.clone(),crate::buffers::take(id)?);
                 }
             }
-            let mut runtime = Runtime::load_with_descriptors(package, script, descriptors, |_| {})?;
+            let mut runtime = Runtime::load_with_clock(package, script, descriptors, clock, |_| {})?;
             let result = result(&mut runtime)?;
             RUNTIME.with(|r| *r.borrow_mut() = Some(runtime));
             Ok(result)
@@ -44,8 +48,10 @@ fn execute(request: Value) -> Result<Value, String> {
                 .get("target")
                 .and_then(Value::as_str)
                 .ok_or("Missing target")?;
-            runtime.dispatch(target, request.get("payload").cloned().unwrap_or(json!({})))?;
-            result(runtime)
+            runtime.with_clock(clock, |runtime| {
+                runtime.dispatch(target, request.get("payload").cloned().unwrap_or(json!({})))?;
+                result(runtime)
+            })
         }),
         "http_result" | "storage_result" | "file_result" | "rpc_result" | "dialog_result" => RUNTIME.with(|r| {
             let mut slot = r.borrow_mut();
@@ -56,6 +62,7 @@ fn execute(request: Value) -> Result<Value, String> {
             let error = request.get("error").and_then(Value::as_str).unwrap_or("");
             if error.len() > 2048 { return Err(format!("{channel} error exceeds 2048 bytes")); }
             let response=json!({"ok":ok,"data":request.get("data").cloned().unwrap_or(Value::Null),"error":error});
+            runtime.with_clock(clock, |runtime| {
             if request["op"]=="storage_result" {runtime.complete_storage(id,response)?;}
             else if request["op"]=="dialog_result" {runtime.complete_dialog(id,response)?;}
             else if request["op"]=="file_result" || request["op"]=="rpc_result" {
@@ -65,6 +72,7 @@ fn execute(request: Value) -> Result<Value, String> {
                 else {runtime.complete_rpc(id,response,buffer)?;}
             } else {runtime.complete_http(id,response)?;}
             result(runtime)
+            })
         }),
         "host_result" => RUNTIME.with(|r| {
             let mut slot = r.borrow_mut();
@@ -75,8 +83,10 @@ fn execute(request: Value) -> Result<Value, String> {
                 "data": request.get("data").cloned().unwrap_or(Value::Null),
                 "error": request.get("error").cloned().unwrap_or(Value::Null),
             });
-            runtime.complete_host(id, response)?;
-            result(runtime)
+            runtime.with_clock(clock, |runtime| {
+                runtime.complete_host(id, response)?;
+                result(runtime)
+            })
         }),
         "layout" => RUNTIME.with(|r| {
             let slot = r.borrow();

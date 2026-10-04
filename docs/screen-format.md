@@ -124,7 +124,7 @@ WASMはイベント値の型、maxLength、数値の範囲、日付の実在、�
 
 ハンドラは更新された状態を返した後にコミットされる。例外や上限超過では、そのイベントによる状態変更をコミットしない。新しい画面の読み込みは、コンパイルとinitが成功してから現在の画面を置き換える。
 
-Rhaiは同期実行。トップレベルの任意の`requests`にHTTP GETのURLと受け取りhandlerを宣言し、`http_get(name)`で非同期取得をホストへ依頼できる。完了時は`handler(state, response) → state`を実行する。`response`は`ok / data / error`を持つ。JSONは画面URLから解決し、既存ResourceClientのCORS・認証設定を使う。制限・失敗・画面切替の扱いは[HTTPグリッドのチュートリアル](tutorial-http-grid.md)を参照。宣言したUnary RPCは`rpc_call`で呼べる。汎用HTTP POST・`async/await`・タイマー・モジュールimport・時刻APIは提供しない。
+Rhaiは同期実行。トップレベルの任意の`requests`にHTTP GETのURLと受け取りhandlerを宣言し、`http_get(name)`で非同期取得をホストへ依頼できる。完了時は`handler(state, response) → state`を実行する。`response`は`ok / data / error`を持つ。JSONは画面URLから解決し、既存ResourceClientのCORS・認証設定を使う。制限・失敗・画面切替の扱いは[HTTPグリッドのチュートリアル](tutorial-http-grid.md)を参照。宣言したUnary RPCは`rpc_call`で呼べる。汎用HTTP POST・`async/await`・タイマー・モジュールimportは提供しない。
 
 ## 診断と制限
 
@@ -139,3 +139,5 @@ Rhaiは同期実行。トップレベルの任意の`requests`にHTTP GETのURL�
 - Rhaiのバージョンと実際の有効機能は`engine/Cargo.toml` / `engine/Cargo.lock`を参照。
 
 基準の実行可能なサンプルは`public/screens/orders.*`、`public/screens/tasks.*`、`public/screens/components.*`、`public/screens/uivolve-forms.*`、`public/screens/grid-lab.*`、`public/screens/uivolve-gallery.*`、`public/screens/layout-lab.*`。変更したパッケージは、ブラウザの「URLから読み込む」または「変更を適用」でWASMに通して検証する。エンジンへ新しい部品を追加する場合は[部品開発ガイド](component-development.md)を参照する。
+
+日付・時計の共通関数は[日付・時計の契約](date-functions.md)を参照。Date/DateTimeは文字列としてstateへ保存する。

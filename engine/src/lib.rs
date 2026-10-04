@@ -364,6 +364,7 @@ pub struct Runtime {
     ui: Node,
     functions: HashSet<String>,
     engine: Engine,
+    extension_context: extensions::ExtensionContext,
     ast: AST,
     state: Dynamic,
     http: http::Requests,
@@ -390,11 +391,23 @@ impl Runtime {
         Self::load_with_descriptors(package, script, HashMap::new(), register)
     }
     pub fn load_with_descriptors(
-        mut package: Package,
+        package: Package,
         script: &str,
         descriptors: HashMap<String, Vec<u8>>,
         register: impl FnOnce(&mut Engine),
     ) -> Result<Self, String> {
+        Self::load_with_clock(package, script, descriptors, None, register)
+    }
+
+    pub fn load_with_clock(
+        mut package: Package,
+        script: &str,
+        descriptors: HashMap<String, Vec<u8>>,
+        clock: Option<extensions::Clock>,
+        register: impl FnOnce(&mut Engine),
+    ) -> Result<Self, String> {
+        let extension_context = extensions::ExtensionContext::default();
+        let _clock_guard = extension_context.enter(clock)?;
         if package.version != 1 {
             return Err("Unsupported package version (expected 1)".into());
         }
@@ -422,7 +435,7 @@ impl Runtime {
             return Err("A window must be inside a container or panel".into());
         }
         let mut engine = Engine::new();
-        extensions::register(&mut engine);
+        extensions::register_with_context(&mut engine, &extension_context);
         let mut http = http::Requests::default();
         http.register(&mut engine);
         let mut host = host::Requests::default();
@@ -559,6 +572,7 @@ impl Runtime {
             ui,
             functions,
             engine,
+            extension_context,
             ast,
             state,
             http,
@@ -570,6 +584,15 @@ impl Runtime {
             pages,
             revision: 0,
         })
+    }
+
+    pub fn with_clock<T>(
+        &mut self,
+        clock: Option<extensions::Clock>,
+        execute: impl FnOnce(&mut Self) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let _clock_guard = self.extension_context.enter(clock)?;
+        execute(self)
     }
 
     pub fn dispatch(&mut self, target: &str, mut payload: Value) -> Result<(), String> {

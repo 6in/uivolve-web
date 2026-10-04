@@ -1,0 +1,41 @@
+version: 1
+id: date-lab
+title: 日付・時計・期限計算
+script: date-lab.rhai
+state:
+  today: ""
+  now: ""
+  base: ""
+  addDays: 7
+  due: ""
+  dueLabel: ""
+  nextMonth: ""
+  monthEnd: ""
+  notice: ""
+ui:
+  xtype: container
+  layout: vbox
+  items:
+    - { xtype: label, text: 日付・時計・期限計算, variant: heading }
+    - { xtype: displayfield, fieldLabel: 今日, bind: today }
+    - { xtype: displayfield, fieldLabel: ホストの現在日時, bind: now }
+    - { xtype: button, itemId: refreshClock, text: 現在日時を更新, handler: refresh }
+    - { xtype: datefield, itemId: baseDate, fieldLabel: 基準日, bind: base }
+    - {
+        xtype: numberfield,
+        itemId: addDays,
+        fieldLabel: 加算する日数,
+        bind: addDays,
+        minValue: -36500,
+        maxValue: 36500,
+      }
+    - { xtype: button, itemId: calculate, text: 期限を計算, handler: calculate }
+    - { xtype: displayfield, fieldLabel: 期限, bind: dueLabel }
+    - { xtype: displayfield, fieldLabel: 1か月後（月末に丸める）, bind: nextMonth }
+    - { xtype: displayfield, fieldLabel: 基準月の末日, bind: monthEnd }
+    - { xtype: label, bind: notice }
+    - {
+        xtype: label,
+        text: 時計は操作ごとに固定されます。タイムゾーンは固定UTCオフセットで、夏時間・営業日・祝日計算は行いません。,
+        variant: muted,
+      }

@@ -42,6 +42,20 @@ const screen = {
 };
 const script = "fn init(s) { s } fn add(s,e) { s.count+=1; s }";
 
+it("accepts old clockless requests and validates raw clocks in WASM before state changes", () => {
+  expect(raw(JSON.stringify({ op: "load", package: screen, script })).ok).toBe(true);
+  expect(raw(JSON.stringify({ op: "event", target: "add", payload: {} })).data.state.count).toBe(1);
+  for (const clock of [
+    { nowMs: 0.1, tzOffsetMinutes: 540 },
+    { nowMs: 0, tzOffsetMinutes: 841 },
+    { nowMs: 253402300800000, tzOffsetMinutes: 0 },
+    { nowMs: 0, tzOffsetMinutes: 0, typo: true },
+  ]) {
+    expect(raw(JSON.stringify({ op: "event", target: "add", clock })).ok).toBe(false);
+  }
+  expect(raw(JSON.stringify({ op: "event", target: "add" })).data.state.count).toBe(2);
+});
+
 it("exports the existing raw ABI without requiring browser imports", () => {
   expect(WebAssembly.Module.imports(module_)).toEqual([]);
   for (const name of ["input_alloc", "input_free", "request", "response_len"])

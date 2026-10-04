@@ -96,6 +96,13 @@ export const SCREEN_CATALOG = Object.freeze(
       file: "rpc-lab.yaml",
     },
     {
+      id: "date-lab",
+      title: "日付・時計・期限計算",
+      category: "network",
+      description: "日付の検証・期限・月末計算とホストの時計",
+      file: "date-lab.yaml",
+    },
+    {
       id: "native-extensions",
       title: "Rust拡張・正規表現",
       category: "network",

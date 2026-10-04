@@ -25,3 +25,5 @@ description: uivolve-webのRust/WASMエンジン、部品、レイアウト、DS
 - JSON/YAMLは同じDSL検証へ通す。未知属性を拒否し、configを任意属性の逃げ道にしない。stateSchemaは初期化・通常イベント・非同期完了の確定前に適用する。
 - 新しい操作はDOM、Canvas、widget-contract、WebMCPとWASMの可視性・型・actionを揃える。レンダラーだけでstateを変更しない。
 - 契約変更と実行例を同じ変更で更新し、以前の画面パッケージへの影響を明記する。既存の他者の編集を含めず、作業単位でローカルコミットする。pushはユーザーの指示に従う。
+
+時計の変更では[日付・時計の契約](../../docs/date-functions.md)を維持する。clockは実行スコープだけに保持し、失敗時も解除する。initとdatepicker.todayは同じサンプルを共有する。
