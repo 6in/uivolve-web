@@ -978,3 +978,26 @@ it("keeps the volume locked through response parsing without reading file bytes 
   arrayBuffer.mockRestore();
   text.mockRestore();
 });
+
+it.each([
+  [{ "content-length": "4" }, [4, 4]],
+  [{}, [null, null]],
+  [{ "content-length": "bad" }, [null, null]],
+  [{ "content-length": "4", "content-encoding": "gzip" }, [null, null]],
+  [{ "content-length": "1" }, [null, null]],
+])("reports stored download bytes with trustworthy totals %j", async (headers, totals) => {
+  const fixture = await downloadFixture();
+  fixture.context.progress = vi.fn();
+  fixture.stream(
+    [
+      [65, 66],
+      [67, 68],
+    ],
+    headers,
+  );
+  await fixture.run();
+  expect(fixture.context.progress.mock.calls.map(([data]) => data)).toEqual([
+    { transferred: 2, total: totals[0] },
+    { transferred: 4, total: totals[1] },
+  ]);
+});

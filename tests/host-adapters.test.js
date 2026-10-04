@@ -381,3 +381,136 @@ it("validates progress handlers and applies progress transactionally with latest
     expect(engine.completeHost(id, ok({})).state.calls).toBe(1);
   }
 });
+
+function transferHost(execute, options = {}) {
+  const complete = vi.fn();
+  const progress = vi.fn();
+  const onError = vi.fn();
+  const effects = new HostEffects({
+    adapters: [{ name: "http", actions: ["http.download"], validate() {}, execute }],
+    connections: { api: { adapter: "http" } },
+    complete,
+    progress,
+    onError,
+    ...options,
+  });
+  const prepared = effects.prepare(
+    {
+      receive: {
+        connection: "api",
+        action: "http.download",
+        options: { progressHandler: "progress", timeout: 1 },
+      },
+      other: { connection: "api", action: "http.download", options: {} },
+    },
+    source,
+  );
+  effects.reset(prepared);
+  return { effects, complete, progress, onError, prepared };
+}
+const transferEffect = (id, operation = "receive") => ({
+  kind: "host",
+  v: 1,
+  id,
+  operation,
+  args: {},
+});
+
+it("cancels every matching operation and awaits actual cleanup while other names continue", async () => {
+  const pending = [];
+  const current = transferHost(
+    (operation, args, context) =>
+      new Promise((resolve, reject) => {
+        pending.push({ resolve, reject, context });
+      }),
+  );
+  const running = current.effects.run([
+    transferEffect(1),
+    transferEffect(2),
+    transferEffect(3, "other"),
+  ]);
+  await current.effects.run([{ kind: "host_cancel", v: 1, operation: "receive" }]);
+  expect(pending.map((p) => p.context.signal.aborted)).toEqual([true, true, false]);
+  expect(current.complete).not.toHaveBeenCalled();
+  pending[0].reject(Object.assign(new Error("cancelled"), { outcome: "failed" }));
+  pending[1].resolve({ files: [] });
+  pending[2].resolve({ files: [] });
+  await running;
+  expect(current.complete).toHaveBeenCalledTimes(3);
+  expect(current.complete.mock.calls.find(([id]) => id === 1)[1].error).toMatchObject({
+    code: "CANCELLED",
+    outcome: "failed",
+  });
+  expect(current.complete.mock.calls.find(([id]) => id === 2)[1].error).toMatchObject({
+    code: "CANCELLED",
+    outcome: "committed",
+  });
+  expect(current.complete.mock.calls.find(([id]) => id === 3)[1].ok).toBe(true);
+});
+
+it("uses transfer seconds, throttles progress and cancels queued notifications on termination", async () => {
+  vi.useFakeTimers();
+  try {
+    let context, reject;
+    const current = transferHost(
+      (op, args, value) => {
+        context = value;
+        return new Promise((resolve, fail) => {
+          reject = fail;
+        });
+      },
+      {
+        progress: vi.fn(() => {
+          throw new Error("handler");
+        }),
+      },
+    );
+    const running = current.effects.run([transferEffect(1)]);
+    context.progress({ transferred: 1, total: null });
+    await Promise.resolve();
+    expect(current.onError).toHaveBeenCalledTimes(1);
+    context.progress({ transferred: 2, total: null });
+    context.progress({ transferred: 3, total: null });
+    await vi.advanceTimersByTimeAsync(99);
+    expect(current.onError).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(current.onError).toHaveBeenCalledTimes(2);
+    context.progress({ transferred: 4, total: null });
+    await vi.advanceTimersByTimeAsync(900);
+    expect(context.signal.aborted).toBe(true);
+    reject(Object.assign(new Error("timeout"), { outcome: "failed" }));
+    await running;
+    expect(current.complete.mock.calls[0][1].error.code).toBe("TIMEOUT");
+    const count = current.onError.mock.calls.length;
+    context.progress({ transferred: 5, total: null });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(current.onError).toHaveBeenCalledTimes(count);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("discards old generation progress and completion and preserves committed result validation failures", async () => {
+  let context, resolve;
+  const current = transferHost((op, args, value) => {
+    context = value;
+    return new Promise((done) => {
+      resolve = done;
+    });
+  });
+  const running = current.effects.run([transferEffect(1)]);
+  context.progress({ transferred: 1, total: null });
+  current.effects.reset(current.prepared);
+  resolve({ files: [] });
+  await running;
+  expect(current.complete).not.toHaveBeenCalled();
+  expect(current.progress).not.toHaveBeenCalled();
+  const cyclic = {};
+  cyclic.self = cyclic;
+  const invalid = transferHost(async () => cyclic);
+  await invalid.effects.run([transferEffect(1)]);
+  expect(invalid.complete.mock.calls[0][1].error).toMatchObject({
+    code: "INVALID_RESULT",
+    outcome: "committed",
+  });
+});

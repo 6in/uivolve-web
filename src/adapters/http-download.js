@@ -1,6 +1,15 @@
 import { hostError } from "../host-effects.js";
 
-export async function downloadFile({ resources, url, reference, file, options, signal, limit }) {
+export async function downloadFile({
+  resources,
+  url,
+  reference,
+  file,
+  options,
+  signal,
+  progress,
+  limit,
+}) {
   let created = false;
   let committed = false;
   let writer;
@@ -63,6 +72,12 @@ export async function downloadFile({ resources, url, reference, file, options, s
     signal.throwIfAborted();
     writer = await handle.createWritable();
     signal.throwIfAborted();
+    const total =
+      !response.headers.has("content-encoding") &&
+      /^\d+$/.test(length ?? "") &&
+      Number.isSafeInteger(Number(length))
+        ? Number(length)
+        : null;
     let size = 0;
     while (reader) {
       let chunk;
@@ -78,6 +93,7 @@ export async function downloadFile({ resources, url, reference, file, options, s
       size += chunk.value.byteLength;
       await writer.write(chunk.value);
       signal.throwIfAborted();
+      progress?.({ transferred: size, total: total !== null && size <= total ? total : null });
     }
     signal.throwIfAborted();
     await writer.close();

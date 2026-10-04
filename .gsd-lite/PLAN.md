@@ -79,7 +79,7 @@ bun run build
   - 依存: T6
   - 並列サブ作業: なし（action共有応答処理）。
 
-- [ ] T8: 配送の中止・期限・進捗・世代を接続
+- [x] T8: 配送の中止・期限・進捗・世代を接続
   - 完了基準: operation名/generation/実処理promiseを保持し同名全cancel・別名継続。転送既定120秒/options.timeoutを適用し既存一般host既定15秒を維持。header待ち/reader待ち/write待ち/応答解析待ちのTIMEOUT/CANCELLEDと完了一回を検証。reset/disposeで中止し旧世代の完了/進捗を破棄。受信進捗operation/transferred/totalは単調・100ms以上間隔、信頼できないtotal=null。予約通知を終端/世代変更で取消し、handler例外をonErrorへ報告して転送継続。pendingを消費せず最終JSON検査でもcommittedを保持。
   - 対象: src/host-effects.js、src/runtime.js、tests/host-adapters.test.js、tests/runtime.test.js、tests/opfs-file-transfer.test.js
   - 依存: T2、T7

@@ -30,7 +30,15 @@ export class HostEffects {
   #delivery = Promise.resolve();
   #disposed = false;
 
-  constructor({ adapters = [], connections = {}, complete, onError, runNext, timeout = 15_000 }) {
+  constructor({
+    adapters = [],
+    connections = {},
+    complete,
+    progress,
+    onError,
+    runNext,
+    timeout = 15_000,
+  }) {
     for (const adapter of adapters) {
       if (
         !safeName.test(adapter.name) ||
@@ -44,6 +52,7 @@ export class HostEffects {
     }
     this.#connections = structuredClone(connections);
     this.complete = complete;
+    this.progress = progress;
     this.onError = onError ?? (() => {});
     this.runNext = runNext ?? ((effects) => this.run(effects));
     if (!Number.isFinite(timeout) || timeout < 1 || timeout > 300_000)
@@ -81,7 +90,10 @@ export class HostEffects {
 
   reset(prepared = new Map()) {
     this.#generation++;
-    for (const controller of this.#active.values()) controller.abort();
+    for (const active of this.#active.values()) {
+      active.stopProgress();
+      active.controller.abort();
+    }
     this.#active.clear();
     this.#lastId = 0;
     this.#operations = prepared;
@@ -93,6 +105,15 @@ export class HostEffects {
   }
 
   async #request(effect) {
+    if (effect.kind === "host_cancel" && effect.v === 1 && safeName.test(effect.operation)) {
+      for (const active of this.#active.values()) {
+        if (active.operation === effect.operation) {
+          active.stopProgress();
+          active.controller.abort();
+        }
+      }
+      return;
+    }
     if (
       effect.kind !== "host" ||
       effect.v !== 1 ||
@@ -106,51 +127,124 @@ export class HostEffects {
     this.#lastId = effect.id;
     const generation = this.#generation;
     const controller = new AbortController();
-    this.#active.set(effect.id, controller);
+    let progressTimer;
+    let latestProgress;
+    let lastProgress = -Infinity;
+    let transferred = 0;
+    let ended = false;
+    const stopProgress = () => {
+      ended = true;
+      clearTimeout(progressTimer);
+    };
+    const notify = () => {
+      progressTimer = undefined;
+      if (ended || controller.signal.aborted) return;
+      lastProgress = performance.now();
+      const data = latestProgress;
+      const delivery = this.#delivery.then(() => {
+        if (ended || this.#disposed || generation !== this.#generation) return;
+        try {
+          return this.progress?.(effect.id, data);
+        } catch (error) {
+          this.onError(error);
+        }
+      });
+      this.#delivery = delivery.catch(() => {});
+      void delivery
+        .then((next) => {
+          if (next && generation === this.#generation && !this.#disposed)
+            return this.runNext(next.effects ?? []);
+        })
+        .catch(this.onError);
+    };
+    const progress = (data) => {
+      if (ended || controller.signal.aborted || !resolved?.operation.options.progressHandler)
+        return;
+      if (!Number.isSafeInteger(data.transferred) || data.transferred < transferred) return;
+      transferred = data.transferred;
+      latestProgress = { operation: effect.operation, transferred, total: data.total };
+      if (progressTimer === undefined) {
+        const delay = Math.max(0, 100 - (performance.now() - lastProgress));
+        if (delay === 0) notify();
+        else progressTimer = setTimeout(notify, delay);
+      }
+    };
+    const active = { controller, operation: effect.operation, stopProgress, promise: null };
+    this.#active.set(effect.id, active);
     let timer;
     let response;
     const resolved = this.#operations.get(effect.operation);
+    const transfer =
+      resolved?.connection.adapter === "http" &&
+      ["http.download", "http.upload", "http.multipart"].includes(resolved.operation.action);
+    let actual;
+    let cancellation;
     try {
       if (!resolved) throw hostError("UNSUPPORTED", "ホスト操作が登録されていません");
       if (this.#active.size > 8) throw hostError("LIMIT", "同時ホスト操作は8件までです");
       const timeout = new Promise((_, reject) => {
-        timer = setTimeout(() => {
-          reject(hostError("TIMEOUT", "ホスト操作がタイムアウトしました", "unknown"));
-          controller.abort();
-        }, this.timeout);
+        timer = setTimeout(
+          () => {
+            cancellation = hostError("TIMEOUT", "ホスト操作がタイムアウトしました", "unknown");
+            reject(cancellation);
+            controller.abort();
+          },
+          transfer ? (resolved.operation.options.timeout ?? 120) * 1000 : this.timeout,
+        );
         controller.signal.addEventListener(
           "abort",
           () => {
-            reject(hostError("CANCELLED", "ホスト操作が中止されました", "unknown"));
+            stopProgress();
+            cancellation ??= hostError("CANCELLED", "ホスト操作が中止されました", "unknown");
+            reject(cancellation);
           },
           { once: true },
         );
       });
-      const data = await Promise.race([
+      actual = Promise.resolve(
         resolved.adapter.execute(
           structuredClone(resolved.operation),
           structuredClone(effect.args),
           {
             ...structuredClone(resolved.context),
             signal: controller.signal,
+            progress,
             connection: structuredClone(resolved.connection),
           },
         ),
-        timeout,
-      ]);
+      );
+      active.promise = actual;
+      const data = await Promise.race([actual, timeout]);
       response = { ok: true, data: data ?? null, error: null };
       let serialized;
       try {
         serialized = JSON.stringify(response);
       } catch {
-        throw hostError("INVALID_RESULT", "ホスト応答をJSONへ変換できません", "unknown");
+        throw hostError(
+          "INVALID_RESULT",
+          "ホスト応答をJSONへ変換できません",
+          transfer ? "committed" : "unknown",
+        );
       }
       if (new TextEncoder().encode(serialized).length > 1_000_000)
-        throw hostError("LIMIT", "ホスト応答が1 MBを超えています", "unknown");
+        throw hostError(
+          "LIMIT",
+          "ホスト応答が1 MBを超えています",
+          transfer ? "committed" : "unknown",
+        );
       response = JSON.parse(serialized);
     } catch (error) {
-      response = failure(error);
+      if (transfer && cancellation && actual) {
+        try {
+          await actual;
+          cancellation.outcome = "committed";
+        } catch (settled) {
+          cancellation.outcome = settled.outcome ?? "unknown";
+        }
+      }
+      response = failure(transfer && cancellation ? cancellation : error);
     } finally {
+      stopProgress();
       clearTimeout(timer);
       if (generation === this.#generation) this.#active.delete(effect.id);
     }

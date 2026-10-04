@@ -198,7 +198,7 @@ export function httpAdapter({ resources, transferLimit = 104_857_600, files = ne
       )
         throw hostError("INVALID_ARGUMENT", "HTTP responseHeadersが不正です");
     },
-    async execute(operation, args, { signal, connection, scope, files: declarations }) {
+    async execute(operation, args, { signal, progress, connection, scope, files: declarations }) {
       if (transfers.includes(operation.action)) {
         const prepared = transferArguments(
           operation,
@@ -218,6 +218,7 @@ export function httpAdapter({ resources, transferLimit = 104_857_600, files = ne
                 file: args.file,
                 options: operation.options,
                 signal,
+                progress,
                 limit: transferLimit,
               }),
             { signal, locks: files.locks },
