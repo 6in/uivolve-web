@@ -48,3 +48,10 @@
 - 想定外: 差分レビューでdirectory全体の公開では指定パス/読み取り権限を迂回できるため、パスをclosureに固定したtransferFileへ変更。fileのoptionsからcreateを渡さず、読み取り用参照にはmutable handle/writable/removeを許可しない。
 - やり直し: 0 回（検証失敗なし。境界レビュー修正後に全テスト、最終の軽微な権限制約修正後に対象19件/checkを再確認）。
 - 次への注意: 次はT4のみ。transferFile(scope, declarations, volume, path, {write})はkey/file/handle/writable/removeを返す。uploadはfileのみ、downloadはwrite=trueで利用し、withFileLocks(keys, action, {signal, locks})で処理とcleanup全体を囲む（取得メソッド単独ではロックしない）。handleはmutableなためwrite=true限定。cacheのnamespaceは別のままで既存files/cache試験が成功。T11未完成のためverify:transferはまだ最終合格用に実行しない。
+
+## turn 7 — impl — T4 認証付きFile/FormData専用送信経路
+
+- やったこと: ResourceClient.transferRequestを追加しGET/POST/PUTとBlob/File/FormDataを検証、既存URL/JWT/CORS/許可origin経路を共有した。retryAuthentication=falseを強制し、送信前失敗はnot-started、送信後失敗はunknown、秘密を含む例外は固定メッセージへ置換する。一般fetchのUint8Array/1,010,000 bytes上限を維持。対象50件、全JS542件、Rust15件、WASM生成、check、docs:check（412リンク）、buildが成功。既存テスト期待値の変更なし。
+- 想定外: 最初に推定したloopパスが存在せず、PATH上のgsd-lite-loop.shで作業場所を解決した。
+- やり直し: 1 回（loop呼び出しパスの修正）。実装・検証の立て直しは0回。
+- 次への注意: 次はT5のみ。loopはPATH上のgsd-lite-loop.shを使う。転送はtransferRequest(url, {method, body, headers, signal, allowHttpErrors:true})を使用し、非2xxの処理はadapterで行う。GETはbodyなし、POST/PUTはBlob（File含む）またはFormDataのみ。認証の事前refreshは許容するが401後の再送は常に無効。容量/parts/接続範囲/ヘッダーの転送固有検証はT5/T7で行う。T11未完成のためverify:transferはまだ最終合格用に実行しない。
