@@ -79,7 +79,10 @@ export class UiRuntime {
     };
     this.hostEffects = new HostEffects({
       ...shared,
-      adapters: [httpAdapter({ resources: this.resources }), ...(options.adapters ?? [])],
+      adapters: [
+        httpAdapter({ resources: this.resources, transferLimit: options.transferLimit }),
+        ...(options.adapters ?? []),
+      ],
       connections: options.connections ?? {},
       complete: complete("completeHost"),
     });
@@ -272,7 +275,10 @@ export class UiRuntime {
     const clock = engine.readClock();
     screen = prepareScreen(screen, source, clock);
     const start = performance.now();
-    const hostOperations = this.hostEffects.prepare(screen.operations, source);
+    const hostOperations = this.hostEffects.prepare(screen.operations, source, {
+      scope: screen.id,
+      files: screen.files ?? {},
+    });
     const result = engine.load(screen, script, descriptors, { clock });
     const duration = performance.now() - start;
     this.engine = engine;

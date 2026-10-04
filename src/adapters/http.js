@@ -1,10 +1,67 @@
 import { readLimitedBytes } from "../resource-client.js";
 import { httpUrl } from "../http-policy.js";
 import { hostError } from "../host-effects.js";
+import { FileClient } from "../file-client.js";
 
 const methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"];
 const formats = ["json", "text", "empty"];
 const optionsKeys = ["method", "path", "response", "headers", "responseHeaders"];
+const transfers = ["http.download", "http.upload", "http.multipart"];
+
+function transferArguments(operation, args, connection, { scope, files }, client) {
+  const multipart = operation.action === "http.multipart";
+  checkKeys(args, ["path", "query", multipart ? "parts" : "file"]);
+  let size;
+  try {
+    size = new TextEncoder().encode(JSON.stringify(args)).length;
+  } catch {
+    throw hostError("INVALID_ARGUMENT", "HTTP引数をJSONへ変換できません");
+  }
+  if (size > 100_000) throw hostError("LIMIT", "HTTP引数が100 KBを超えています");
+  const url = requestUrl(
+    new URL(connection.baseUrl),
+    operation.options.path ?? "",
+    args.path,
+    args.query,
+  );
+  const file = (value) => {
+    checkKeys(value, ["volume", "path"]);
+    try {
+      return client.transferFile(scope, files, value.volume, value.path, {
+        write: operation.action === "http.download",
+      });
+    } catch {
+      throw hostError("INVALID_ARGUMENT", "HTTP fileの領域・権限・パスが不正です");
+    }
+  };
+  if (!multipart) return { url, references: [file(args.file)] };
+  if (!Array.isArray(args.parts) || args.parts.length > 32)
+    throw hostError("INVALID_ARGUMENT", "HTTP partsは32項目以内の配列が必要です");
+  let count = 0;
+  const references = [];
+  for (const part of args.parts) {
+    checkKeys(part, ["name", "file", "filename", "contentType", "value"]);
+    if (typeof part.name !== "string")
+      throw hostError("INVALID_ARGUMENT", "HTTP part nameは文字列が必要です");
+    if (Object.hasOwn(part, "file")) {
+      if (
+        Object.hasOwn(part, "value") ||
+        (part.filename !== undefined && typeof part.filename !== "string") ||
+        (part.contentType !== undefined && typeof part.contentType !== "string")
+      )
+        throw hostError("INVALID_ARGUMENT", "HTTP file partが不正です");
+      if (++count > 8) throw hostError("INVALID_ARGUMENT", "HTTP filesは8件までです");
+      references.push(file(part.file));
+    } else if (
+      typeof part.value !== "string" ||
+      Object.hasOwn(part, "filename") ||
+      Object.hasOwn(part, "contentType")
+    ) {
+      throw hostError("INVALID_ARGUMENT", "HTTP value partは文字列のみ指定できます");
+    }
+  }
+  return { url, references };
+}
 
 function object(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -53,14 +110,43 @@ function requestUrl(base, path, params = {}, query = {}) {
   return url;
 }
 
-export function httpAdapter({ resources }) {
+export function httpAdapter({ resources, transferLimit = 104_857_600, files = new FileClient() }) {
+  if (!Number.isSafeInteger(transferLimit) || transferLimit < 1)
+    throw new Error("transferLimitには正の安全整数が必要です");
   return {
     name: "http",
-    actions: ["http.request"],
+    actions: ["http.request", ...transfers],
+    transferLimit,
     validate(operation, connection, source) {
       checkKeys(connection, ["adapter", "baseUrl", "allowedHeaders"]);
-      checkKeys(operation.options, optionsKeys);
+      const transfer = transfers.includes(operation.action);
+      const download = operation.action === "http.download";
+      checkKeys(
+        operation.options,
+        transfer
+          ? [...optionsKeys, "timeout", ...(download ? ["overwrite", "progressHandler"] : [])]
+          : optionsKeys,
+      );
       const options = operation.options;
+      if (transfer) {
+        if (options.method === undefined) options.method = download ? "GET" : "POST";
+        if (options.timeout === undefined) options.timeout = 120;
+        if (
+          !(download ? options.method === "GET" : ["POST", "PUT"].includes(options.method)) ||
+          !Number.isFinite(options.timeout) ||
+          options.timeout < 1 ||
+          options.timeout > 300 ||
+          (options.response !== undefined && !formats.includes(options.response)) ||
+          (options.overwrite !== undefined && typeof options.overwrite !== "boolean") ||
+          (options.progressHandler !== undefined &&
+            (typeof options.progressHandler !== "string" ||
+              !/^[A-Za-z_][A-Za-z0-9_]*$/.test(options.progressHandler)))
+        )
+          throw hostError(
+            "INVALID_ARGUMENT",
+            "HTTP転送のmethod・timeout・overwrite・progressHandlerが不正です",
+          );
+      }
       if (
         !methods.includes(options.method ?? "GET") ||
         !formats.includes(options.response ?? "json")
@@ -72,6 +158,8 @@ export function httpAdapter({ resources }) {
       if (!base.pathname.endsWith("/") || base.search || base.hash)
         throw hostError("INVALID_ARGUMENT", "HTTP baseUrlは末尾/のディレクトリURLが必要です");
       connection.baseUrl = base.href;
+      if (options.path !== undefined && typeof options.path !== "string")
+        throw hostError("INVALID_ARGUMENT", "HTTP pathは文字列が必要です");
       const dummy = Object.fromEntries(
         Array.from((options.path ?? "").matchAll(/\{([A-Za-z0-9_-]+)\}/g), (m) => [m[1], "value"]),
       );
@@ -83,6 +171,14 @@ export function httpAdapter({ resources }) {
       if (options.headers !== undefined && !object(options.headers))
         throw hostError("INVALID_ARGUMENT", "HTTP headersが不正です");
       const headers = new Headers(options.headers);
+      if (
+        transfer &&
+        options.headers &&
+        Object.values(options.headers).some((value) => typeof value !== "string")
+      )
+        throw hostError("INVALID_ARGUMENT", "HTTP headersは文字列が必要です");
+      if (operation.action === "http.multipart" && headers.has("content-type"))
+        throw hostError("INVALID_ARGUMENT", "multipart Content-Typeはブラウザが生成します");
       for (const [key] of headers) {
         if (
           !allowSet.has(key) ||
@@ -100,7 +196,12 @@ export function httpAdapter({ resources }) {
       )
         throw hostError("INVALID_ARGUMENT", "HTTP responseHeadersが不正です");
     },
-    async execute(operation, args, { signal, connection }) {
+    async execute(operation, args, { signal, connection, scope, files: declarations }) {
+      if (transfers.includes(operation.action)) {
+        transferArguments(operation, args, connection, { scope, files: declarations }, files);
+        // T6/T7 connect execution after this pure argument boundary.
+        throw hostError("UNSUPPORTED", "HTTP転送処理は未実装です");
+      }
       checkKeys(args, ["path", "query", "body"]);
       const options = operation.options;
       const method = options.method ?? "GET";

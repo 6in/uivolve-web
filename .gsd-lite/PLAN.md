@@ -61,7 +61,7 @@ bun run build
   - 依存: T1
   - 並列サブ作業: なし
 
-- [ ] T5: HTTP転送宣言・引数・ホスト設定の純粋検証
+- [x] T5: HTTP転送宣言・引数・ホスト設定の純粋検証
   - 完了基準: http.download/upload/multipart登録。download=GET、upload/multipart=POST/PUTのみ。未知属性、型不正、未宣言volume、read領域download、パス/URL範囲/headers迂回をfetch/OPFS作成前に拒否。fileとpartsは要件の形、valueはstringのみ、file/value両方を拒否。parts32/33、files8/9、UTF-8 args上限を検証。overwriteはdownloadのみ、期限1/120/300秒と範囲外、ホスト容量設定の正の安全整数/既定値を試験。http.request既存契約を維持。
   - 対象: src/adapters/http.js、src/runtime.js、src/application.js、tests/opfs-file-transfer.test.js、tests/host-adapters.test.js、tests/distribution.test.js
   - 依存: T2、T3、T4

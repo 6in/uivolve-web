@@ -52,7 +52,7 @@ export class HostEffects {
   }
 
   // Pure validation, before engine.load replaces the active WASM state.
-  prepare(definitions = {}, baseUrl) {
+  prepare(definitions = {}, baseUrl, context = {}) {
     const prepared = new Map();
     if (
       !definitions ||
@@ -72,8 +72,9 @@ export class HostEffects {
       if (!adapter || !adapter.actions.includes(operation.action))
         throw new Error(`Unsupported host operation: ${name}`);
       operation.options ??= {};
-      adapter.validate(operation, connection, new URL(baseUrl));
-      prepared.set(name, { operation, connection, adapter });
+      const snapshot = structuredClone(context);
+      adapter.validate(operation, connection, new URL(baseUrl), snapshot);
+      prepared.set(name, { operation, connection, adapter, context: snapshot });
     }
     return prepared;
   }
@@ -130,6 +131,7 @@ export class HostEffects {
           structuredClone(resolved.operation),
           structuredClone(effect.args),
           {
+            ...structuredClone(resolved.context),
             signal: controller.signal,
             connection: structuredClone(resolved.connection),
           },

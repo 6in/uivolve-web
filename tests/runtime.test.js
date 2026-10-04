@@ -4,7 +4,7 @@ import { WasmEngine } from "../src/engine.js";
 import { parsePackage } from "../src/package-format.js";
 import { ResourceClient } from "../src/resource-client.js";
 import { UiRuntime } from "../src/runtime.js";
-import { validateAppConfig } from "../src/application.js";
+import { createApplication, validateAppConfig } from "../src/application.js";
 import { createUiTools } from "../src/ui-tools.js";
 import { readPageRoute } from "../src/page-router.js";
 
@@ -147,6 +147,54 @@ async function host(options = {}) {
   await runtime.start();
   return runtime;
 }
+
+it("passes host transferLimit and screen file context before replacing the active engine state", async () => {
+  const runtime = await host({
+    transferLimit: 2048,
+    connections: { api: { adapter: "http", baseUrl: "https://example.test/api/" } },
+  });
+  const prepare = vi.spyOn(runtime.hostEffects, "prepare");
+  const screen = {
+    ...definition,
+    files: { disk: { backend: "opfs", access: "readwrite", handler: "received" } },
+    operations: {
+      download: { connection: "api", action: "http.download", handler: "received", options: {} },
+    },
+  };
+  runtime.compile(screen, script + " fn received(s,r){s}", "pages/home.yaml");
+  expect(prepare.mock.calls[0][2]).toEqual({ scope: screen.id, files: screen.files });
+  expect(prepare.mock.results[0].value.get("download").adapter.transferLimit).toBe(2048);
+  const previous = runtime.snapshot();
+  const load = vi.spyOn(runtime.engine, "load");
+  screen.operations.download.options.method = "POST";
+  expect(() =>
+    runtime.compile(screen, script + " fn received(s,r){s}", "pages/home.yaml"),
+  ).toThrow();
+  expect(load).not.toHaveBeenCalled();
+  expect(runtime.snapshot()).toEqual(previous);
+});
+
+it("forwards createApplication transferLimit as host configuration and rejects invalid values", async () => {
+  const resources = {
+    text: vi.fn(async () =>
+      JSON.stringify({
+        version: 1,
+        renderer: "dom",
+        initialPage: "home",
+        pages: [{ id: "home", url: "home.yaml" }],
+      }),
+    ),
+    fetch: vi.fn(),
+  };
+  await expect(
+    createApplication({
+      configUrl: "https://example.test/app/app.json",
+      resources,
+      transferLimit: 0,
+    }),
+  ).rejects.toThrow(/transferLimit/);
+  expect(resources.fetch).not.toHaveBeenCalled();
+});
 
 it("uses the same host and state for one or both rendering adapters without demo elements", async () => {
   const runtime = await host();
