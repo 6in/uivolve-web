@@ -156,3 +156,10 @@
 - やり直し: 5 回（受信fixture追加に伴うserver期待更新、File由来型に依存しない既定値へ修正、文書例期待更新、空type fixtureを拡張子なしへ変更、multipart受信型を生MIMEヘッダーで検証）。loopパス修正1回。
 - 既存テスト期待値変更: tests/opfs-file-transfer.test.jsの本文送信content-type欠落期待をapplication/octet-streamに、multipart既定partの空typeをapplication/octet-streamに変更。tests/documented-transfer.test.jsのsource.csv空type期待も同じ既定値へ変更。要件の既定Content-Typeに合わせるため。tests/transfer-server.test.jsの本文2箇所にcontentType:null、multipartにboundary一致を追加（fixture応答への受信ヘッダー追加に追従、直接Uint8Array/stream送信の挙動は維持）。
 - 次への注意: F1完了、次はgsd-lite-verifyのみ。loopはPATH上を使用。multipartの受信型はBun解析後のFile.typeではなく生MIMEヘッダーで照合する。空type OPFS fixtureは拡張子なし。実装ターンではマージしない。
+
+## turn 20 — verify — 合格、mainへローカルマージ
+
+- やったこと: 初回堅牢性格子とF1修正差分の回帰、コード・セキュリティ・文書追従を確認。bun run verify:transfer成功（JS614件、Rust15件、check、445リンク、build、実Chromium152のDOM/Canvas・100 MiB・CORS/認証・2タブ排他・Content-Type受信照合）。検証結果をコミット後、origin未設定のためmainへno-ffマージ成功。
+- 想定外: 最初に推定した.gsd-lite/gsd-lite-loop.shは存在せずPATH上のgsd-lite-loop.shで解決。mainにはgithub/mainの追跡設定があるが、スキルの分岐対象originは未設定。
+- やり直し: 0 回（検証・実装修正なし。loopパス修正1回）。
+- 次への注意: 次はgsd-lite-reflectのみ。phase=reflect、next_command=/gsd-lite-reflect、turn=20。main上で状態をコミットし、マイルストーンブランチは保持。loopはPATH上を使用。BLOCKED.mdは解消済みの履歴。
