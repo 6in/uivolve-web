@@ -78,3 +78,10 @@
 - やり直し: 1 回（checkの管理ファイル整形不一致を修正）。loopパス修正1回。実装テスト失敗なし。
 - 既存テスト期待値変更: tests/opfs-file-transfer.test.jsの32parts/8files/UTF-8 args境界試験でUNSUPPORTEDを成功data.filesへ変更。T7で実送信に接続されたため、空OPFSファイルとresponse:emptyを用意した。副作用前の不正入力拒否は既存試験を維持。
 - 次への注意: 次はT8のみ。loopはPATH上のgsd-lite-loop.shを使用。upload/multipartはhttp.jsでwithFileLocks内にFile取得から応答解析まで保持する。配送のcancel/期限/世代/最終結果検査はT8。checkは管理ファイルも対象とするため状態更新後に整形する。T11未完成のためverify:transferは未実行。
+
+## turn 11 — impl — T8 配送の中止・期限・進捗・世代を接続
+
+- やったこと: HostEffectsにoperation名/generation/実処理promiseを保持し、host_cancelの同名全中止、転送既定120秒/options.timeout秒、一般host既定15秒、reset/dispose時の中止と旧世代通知破棄を接続。転送中止後は実処理/cleanupのsettleを待ち、close成功や2xx応答後のcommittedを維持する。downloadの保存済みbytes進捗を100ms以上間隔でprogressHostへ配送し、予約通知を終端で取消、handler失敗はonErrorへ報告して継続する。全JS591件、Rust15件、転送63件、WASM生成、check（警告0）、docs:check（412リンク）、build成功。
+- 想定外: 最初のloop推定パスが存在せずPATH上へ修正。adapter.executeをmicrotaskへ移した初回実装が既存の同期開始契約を壊し、reset試験のresolveが未設定となった。同期executeとPromise.resolveの構造へ戻した。対象一覧外のhttp-download.js/http.jsも進捗contextの接続に必要だった。checkの例外変数代入警告は代入を除去して解消した。既存テスト期待値変更なし。
+- やり直し: 1 回（既存試験失敗を受けadapter同期開始を復元し、対象/全検査が成功）。loopパス修正1回。警告修正後も全検査を再確認。
+- 次への注意: 次はT9のみ。loopはPATH上のgsd-lite-loop.sh。転送の期限/中止結果はcleanupを含む実処理settle後に一度配送するため、ロックはそれまで保持される。中止中close成功はCANCELLED/TIMEOUTのoutcome=committed。進捗はwrite成功後のbytes、符号化/不正/欠落/超過したContent-Lengthはtotal=null。実WASM進捗契約と既存runtime試験も成功。T9で実WASMからのwrite/close/abort gateと通常files競合の交差試験を追加する。T11未完成のためverify:transferは未実行。
