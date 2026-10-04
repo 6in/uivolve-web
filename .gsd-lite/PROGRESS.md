@@ -134,3 +134,10 @@
 - 想定外: 初回にリポジトリ直下のloopを指定したが存在せず、PATH上のgsd-lite-loop.shで作業場所を解決した。実装修正は不要だった。
 - やり直し: 0 回（実装・検証の立て直しなし。loopパス修正1回）。
 - 次への注意: 次はT12のみ。loopはPATH上のgsd-lite-loop.shを使用。verify:transferは実ブラウザを含めて成功済み。Vite実行中に整形しない。BLOCKED.mdのT11停止理由は解消済み。文書とskillsの追従先照合・文書例試験はT12で実施する。
+
+## turn 17 — impl — T12 現行契約文書と最終判定
+
+- やったこと: 現行OPFS転送契約と実行可能なYAML/Rhai例を追加し、入口文書・認証・ABI・設計履歴・skillsを追従更新。文書例を実WASMで実行し、download/upload/multipart、受信進捗、中止と旧ファイル保持を確認。追従先チェックリストの数値rgを全件レビューし、一般HTTP/JSON/Rhai/files/RPC/Workerと過去計画の上限を区別した。skills:bundleは両スキル127ファイルを生成し、追跡差分なし。bun run verify:transferがクリーンな試験開始から成功（WASM生成、JS613件、Rust15件、check警告0、docs:checkの445リンク/56文書、build）。localhostの実Chromium152.0.7977.64でDOM/CanvasのCSV・multipart・進捗・中止・画面置換、100 MiB GET/File/FormDataのsize/hash・全量JS読込禁止、CORS/認証/上書き/容量、2タブWeb Locks競合と解放が成功。既存テスト期待値変更なし。
+- 想定外: 最初に推定したloopパスが存在せずPATH上のgsd-lite-loop.shで解決。追加のAI参照入口リンクのpatchに一致しない削除行が含まれたため、リンク追加だけへ修正して適用した。統合レビューで中止通知の説明を実処理/cleanup終了後に合わせた。
+- やり直し: 0 回（実装・検証の立て直しなし。loopパス修正1回、patch修正1回）。
+- 次への注意: 全タスク完了、次はgsd-lite-verify。実装ターンではマージしない。loopはPATH上のgsd-lite-loop.shを使用する。BLOCKED.mdのT11停止理由は解消済みの履歴。verify:transferは実ブラウザまで成功済みで、文書例も自動検査対象。Vite実行中に整形しない。
