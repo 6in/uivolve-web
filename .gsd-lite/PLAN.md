@@ -37,7 +37,7 @@ bun run build
 
 ## Tasks
 
-- [ ] T1: 転送試験の基盤と最終判定runner
+- [x] T1: 転送試験の基盤と最終判定runner
   - 完了基準: OPFS mockが複数chunkを追記し、getFileがFile互換、close確定/abort破棄、0 bytesと段階別失敗・gateを表現する。既存files testsが通る。verify:transferが子検査の失敗を伝搬し、未完成のブラウザ試験を成功扱いにしない。初期runner試験で順序/非0/cleanupを検証。
   - 対象: tests/helpers/opfs.js、tests/opfs-file-transfer.test.js（新規）、scripts/verify-transfer.mjs（新規）、package.json
   - 依存: なし
