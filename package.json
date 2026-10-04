@@ -11,6 +11,7 @@
     "dev": "bun run build:wasm && vp dev",
     "preview": "vp preview",
     "demo:rpc": "bun scripts/rpc-server.mjs",
+    "demo:http": "bun scripts/http-server.mjs",
     "measure:rpc": "bun scripts/measure-rpc.mjs",
     "publish:packages": "bun scripts/publish-packages.mjs",
     "test:rust": "cargo test --manifest-path engine/Cargo.toml",

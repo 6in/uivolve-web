@@ -6,6 +6,8 @@ import { applyTheme } from "./theme.js";
 import { ResourceClient } from "./resource-client.js";
 import { ApplicationLoader } from "./application-loader.js";
 import { HttpEffects } from "./http-effects.js";
+import { HostEffects } from "./host-effects.js";
+import { httpAdapter } from "./adapters/http.js";
 import { StorageEffects } from "./storage-effects.js";
 import { FileClient } from "./file-client.js";
 import { RpcClient } from "./rpc-client.js";
@@ -58,6 +60,24 @@ export class UiRuntime {
     this.loadSequence = 0;
     this.frame = 0;
     this.surfaces = [];
+    const complete = (method) => (id, response) => {
+      this.assertActive();
+      const result = this.engine[method](id, response);
+      this.updateState(result);
+      this.options.onError?.(null);
+      this.render();
+      return result;
+    };
+    const shared = {
+      runNext: (effects) => this.runEffects(effects),
+      onError: (error) => this.reportError(error),
+    };
+    this.hostEffects = new HostEffects({
+      ...shared,
+      adapters: [httpAdapter({ resources: this.resources }), ...(options.adapters ?? [])],
+      connections: options.connections ?? {},
+      complete: complete("completeHost"),
+    });
     const surfaces = options.surfaces ?? [
       { element: options.element, renderer: options.renderer ?? "dom" },
     ];
@@ -110,18 +130,6 @@ export class UiRuntime {
       this.dispose();
       throw error;
     }
-    const complete = (method) => (id, response) => {
-      this.assertActive();
-      const result = this.engine[method](id, response);
-      this.updateState(result);
-      this.options.onError?.(null);
-      this.render();
-      return result;
-    };
-    const shared = {
-      runNext: (effects) => this.runEffects(effects),
-      onError: (error) => this.reportError(error),
-    };
     this.httpEffects = new HttpEffects({
       ...shared,
       resources: this.resources,
@@ -200,6 +208,7 @@ export class UiRuntime {
       this.fileEffects.run(effects.filter((effect) => effect.kind === "file")),
       this.rpcEffects.run(effects.filter((effect) => effect.kind === "rpc")),
       this.pageEffects.run(effects.filter((effect) => effect.kind === "navigate")),
+      this.hostEffects.run(effects.filter((effect) => effect.kind === "host")),
     ]).catch((error) => this.reportError(error));
     this.pending.add(task);
     void task.finally(() => this.pending.delete(task));
@@ -256,6 +265,7 @@ export class UiRuntime {
       throw new Error("HTTP / HTTPSのURLを指定してください");
     screen = prepareScreen(screen, source);
     const start = performance.now();
+    const hostOperations = this.hostEffects.prepare(screen.operations, source);
     const result = engine.load(screen, script, descriptors);
     const duration = performance.now() - start;
     this.engine = engine;
@@ -264,6 +274,7 @@ export class UiRuntime {
     this.descriptors = descriptors;
     this.screenToken = crypto.randomUUID();
     this.packageUrl = source;
+    this.hostEffects.reset(hostOperations);
     this.httpEffects.reset(source);
     this.storageEffects.reset(screen.id);
     this.fileEffects.reset(screen.id);
@@ -360,6 +371,7 @@ export class UiRuntime {
     this.disposed = true;
     this.lifecycle.abort();
     this.loadController?.abort();
+    this.hostEffects?.dispose();
     for (const effect of [
       this.httpEffects,
       this.storageEffects,

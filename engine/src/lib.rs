@@ -16,6 +16,7 @@ mod figures;
 mod files;
 pub use files::FileBytes;
 mod grid;
+mod host;
 mod http;
 mod kanban;
 mod layouts;
@@ -38,6 +39,8 @@ pub struct Package {
     pub ui: Node,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub requests: HashMap<String, http::Request>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub operations: HashMap<String, host::Operation>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub pages: HashMap<String, pages::Definition>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
@@ -364,6 +367,7 @@ pub struct Runtime {
     ast: AST,
     state: Dynamic,
     http: http::Requests,
+    host: host::Requests,
     storage: storage::Requests,
     files: files::Requests,
     rpc: rpc::Requests,
@@ -421,6 +425,8 @@ impl Runtime {
         extensions::register(&mut engine);
         let mut http = http::Requests::default();
         http.register(&mut engine);
+        let mut host = host::Requests::default();
+        host.register(&mut engine);
         let mut storage = storage::Requests::default();
         storage.register(&mut engine);
         let mut files = files::Requests::default();
@@ -447,6 +453,7 @@ impl Runtime {
             return Err("Script must define init(state)".into());
         }
         validate_handlers(&initial_ui, &functions)?;
+        host::Requests::validate(&package.operations, &functions)?;
         if package.requests.len() > 8 {
             return Err("At most 8 HTTP request definitions".into());
         }
@@ -530,6 +537,7 @@ impl Runtime {
         let state = rhai::serde::to_dynamic(initial).map_err(|e| e.to_string())?;
         check_state(&state)?;
         let names = http.prepare(&package.requests)?;
+        let host_intents = host.prepare(&package.operations)?;
         let intents = storage.prepare(&package.storage)?;
         let file_intents = files.prepare(&package.files)?;
         let rpc_intents = rpc.prepare()?;
@@ -541,6 +549,7 @@ impl Runtime {
         let (rpc_bytes, rpc_count) = rpc::Requests::size(&rpc_intents);
         buffers::capacity(file_bytes + rpc_bytes, file_count + rpc_count)?;
         http.commit(names, &package.requests);
+        host.commit(host_intents);
         storage.commit(intents, &package.storage);
         files.commit(file_intents);
         rpc.commit(rpc_intents, &package.rpc);
@@ -553,6 +562,7 @@ impl Runtime {
             ast,
             state,
             http,
+            host,
             storage,
             files,
             rpc,
@@ -565,6 +575,7 @@ impl Runtime {
     pub fn dispatch(&mut self, target: &str, mut payload: Value) -> Result<(), String> {
         self.pages.clear();
         self.http.clear();
+        self.host.clear();
         self.storage.clear();
         self.files.clear();
         self.rpc.clear();
@@ -684,10 +695,35 @@ impl Runtime {
         self.commit_state(next)
     }
 
+    pub fn complete_host(&mut self, id: u64, response: Value) -> Result<(), String> {
+        host::validate_result(&response)?;
+        let name = self.host.consume(id)?;
+        self.pages.clear();
+        self.http.clear();
+        self.host.clear();
+        self.storage.clear();
+        self.files.clear();
+        self.rpc.clear();
+        self.dialogs.clear();
+        let handler = &self.package.operations[&name].handler;
+        let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
+        let next = self
+            .engine
+            .call_fn(
+                &mut Scope::new(),
+                &self.ast,
+                handler,
+                (self.state.clone(), response),
+            )
+            .map_err(|e| format!("{} / host {} / {}: {e}", self.package.script, name, handler))?;
+        self.commit_state(next)
+    }
+
     pub fn complete_http(&mut self, id: u64, response: Value) -> Result<(), String> {
         self.pages.clear();
         let name = self.http.consume(id)?;
         self.http.clear();
+        self.host.clear();
         self.storage.clear();
         self.files.clear();
         self.rpc.clear();
@@ -711,6 +747,7 @@ impl Runtime {
         self.pages.clear();
         let (name, operation) = self.storage.consume(id)?;
         self.http.clear();
+        self.host.clear();
         self.storage.clear();
         self.files.clear();
         self.rpc.clear();
@@ -743,6 +780,7 @@ impl Runtime {
         buffer: Option<u32>,
     ) -> Result<(), String> {
         self.http.clear();
+        self.host.clear();
         self.pages.clear();
         self.storage.clear();
         self.files.clear();
@@ -773,6 +811,7 @@ impl Runtime {
     ) -> Result<(), String> {
         self.pages.clear();
         self.http.clear();
+        self.host.clear();
         self.storage.clear();
         self.files.clear();
         self.rpc.clear();
@@ -794,6 +833,7 @@ impl Runtime {
     pub fn complete_dialog(&mut self, id: u64, mut response: Value) -> Result<(), String> {
         self.pages.clear();
         self.http.clear();
+        self.host.clear();
         self.storage.clear();
         self.files.clear();
         self.rpc.clear();
@@ -829,6 +869,7 @@ impl Runtime {
             .chain(self.rpc.take())
             .chain(self.dialogs.take())
             .chain(self.pages.take())
+            .chain(self.host.take())
             .collect()
     }
 
@@ -855,6 +896,7 @@ impl Runtime {
         next = rhai::serde::to_dynamic(candidate).map_err(|e| e.to_string())?;
         check_state(&next)?;
         let names = self.http.prepare(&self.package.requests)?;
+        let host_intents = self.host.prepare(&self.package.operations)?;
         let intents = self.storage.prepare(&self.package.storage)?;
         let file_intents = self.files.prepare(&self.package.files)?;
         let rpc_intents = self.rpc.prepare()?;
@@ -865,7 +907,8 @@ impl Runtime {
                 || !intents.is_empty()
                 || !file_intents.is_empty()
                 || !rpc_intents.is_empty()
-                || !dialog_intents.is_empty())
+                || !dialog_intents.is_empty()
+                || !host_intents.is_empty())
         {
             return Err(
                 "Navigation cannot be combined with other effects in the same handler".into(),
@@ -877,6 +920,7 @@ impl Runtime {
         self.state = next;
         self.ui = ui;
         self.http.commit(names, &self.package.requests);
+        self.host.commit(host_intents);
         self.storage.commit(intents, &self.package.storage);
         self.files.commit(file_intents);
         self.rpc.commit(rpc_intents, &self.package.rpc);
