@@ -97,7 +97,7 @@ bun run build
   - 依存: T9
   - 並列サブ作業: A: サーバーと試験（scripts/transfer-server.mjs、tests/transfer-server.test.js）。B: サンプル（examples/opfs-file-transfer/）。親がpackage.json登録と結合確認。
 
-- [ ] T11: 再実行可能な実ブラウザ検証
+- [x] T11: 再実行可能な実ブラウザ検証
   - 完了基準: localhost実OPFS/File/FormDataを使いDOM/Canvas両方で一連のCSV操作を実行。100 MiB級のGET/本文/multipartをsize/hash照合し全量JS読込禁止を確認。CORS preflight/Authorization/Expose-Headers、上書き/容量/中止/画面切替、2タブWeb LocksのA+B/B+A競合と解放を自動検証。ブラウザ/サーバー/OPFS試験namespaceを終了時cleanup。実行不能は非0、mockだけで合格しない。runnerに組み込み。
   - 対象: scripts/test-transfer-browser.mjs、tests/browser/opfs-file-transfer.mjs、scripts/verify-transfer.mjs、package.json（必要なブラウザ開発依存）、examples/opfs-file-transfer/の試験入口
   - 依存: T10

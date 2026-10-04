@@ -23,7 +23,8 @@
     "skills:bundle": "bun scripts/bundle-skills.mjs",
     "skills:release": "bun scripts/release-skills.mjs",
     "pages:prepare": "bun scripts/prepare-pages.mjs",
-    "fmt": "vp fmt && cargo fmt --manifest-path engine/Cargo.toml"
+    "fmt": "vp fmt && cargo fmt --manifest-path engine/Cargo.toml",
+    "test:transfer:browser": "bun scripts/test-transfer-browser.mjs"
   },
   "dependencies": {
     "yaml": "^2.9.1"
@@ -32,6 +33,7 @@
     "@bufbuild/protobuf": "^2.16.0",
     "@connectrpc/connect": "^2.2.0",
     "@connectrpc/connect-node": "^2.2.0",
+    "playwright": "^1.63.0",
     "vite-plus": "1.0.0"
   },
   "overrides": {
