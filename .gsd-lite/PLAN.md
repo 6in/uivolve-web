@@ -49,7 +49,7 @@ bun run build
   - 依存: T1
   - 並列サブ作業: なし（ABIとengine登録が依存）。
 
-- [ ] T3: 共有領域ロックと転送用handle境界
+- [x] T3: 共有領域ロックと転送用handle境界
   - 完了基準: 通常filesと転送が同じscope/volumeキーを使用。複数領域を重複除去/固定順で非待機取得し競合はBUSY。A+B/B+A/A+A/第2領域競合で処理未開始と取得済み解放を確認。Web LocksはifAvailableを使用しsignalをrequest optionsへ併用しない。fallbackも同じ規約、実promiseのsettleまで保持。限定handle/File/writable取得はrelativePath、宣言権限、親事前mkdirを守り、既存全量read/write上限を変更しない。
   - 対象: src/opfs.js、src/file-client.js、tests/opfs-file-transfer.test.js、tests/files-cache-rpc.test.js
   - 依存: T1

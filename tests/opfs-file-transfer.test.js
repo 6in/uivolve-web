@@ -138,3 +138,125 @@ it("terminates and waits for the active child when interrupted", async () => {
   expect(spawnProcess).toHaveBeenCalledOnce();
   expect(signals.eventNames()).toEqual([]);
 });
+
+async function lockFixture(web) {
+  const { withFileLocks } = await import("../src/opfs.js");
+  const held = new Set();
+  const calls = [];
+  const locks = web
+    ? {
+        request: async (key, options, callback) => {
+          calls.push([key, options]);
+          if (held.has(key)) return callback(null);
+          held.add(key);
+          try {
+            return await callback({ name: key });
+          } finally {
+            held.delete(key);
+          }
+        },
+      }
+    : null;
+  return {
+    run: (keys, action, options = {}) => withFileLocks(keys, action, { ...options, locks }),
+    calls,
+  };
+}
+it.each([false, true])(
+  "acquires sorted unique locks without waiting (Web Locks=%s)",
+  async (web) => {
+    const { run, calls } = await lockFixture(web);
+    let release;
+    const started = vi.fn();
+    const pending = run(
+      ["T3:B", "T3:A", "T3:A"],
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    await expect(run(["T3:A", "T3:B"], started)).rejects.toMatchObject({ code: "BUSY" });
+    expect(started).not.toHaveBeenCalled();
+    release();
+    await pending;
+    await run(["T3:A", "T3:A"], started);
+    expect(started).toHaveBeenCalledOnce();
+    if (web) {
+      expect(calls.slice(0, 2).map(([key]) => key)).toEqual(["T3:A", "T3:B"]);
+      for (const [, options] of calls)
+        expect(options).toEqual({ mode: "exclusive", ifAvailable: true });
+    }
+  },
+);
+it.each([false, true])(
+  "releases earlier locks on second-region contention and holds aborted work until settle (%s)",
+  async (web) => {
+    const { run } = await lockFixture(web);
+    let release;
+    const controller = new AbortController();
+    const pending = run(
+      ["T3:D"],
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+      { signal: controller.signal },
+    );
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    const action = vi.fn();
+    await expect(run(["T3:C", "T3:D"], action)).rejects.toMatchObject({ code: "BUSY" });
+    expect(action).not.toHaveBeenCalled();
+    await run(["T3:C"], action);
+    controller.abort();
+    await expect(run(["T3:D"], action)).rejects.toMatchObject({ code: "BUSY" });
+    release();
+    await pending;
+    await run(["T3:D"], action);
+  },
+);
+it("limits transfer handles by declaration/path/parents and shares ordinary file locks and limits", async () => {
+  const { FileClient } = await import("../src/file-client.js");
+  const { withFileLocks, fileLockKey, OpfsDirectory } = await import("../src/opfs.js");
+  const fs = memoryOpfs();
+  const client = new FileClient({ storage: fs.storage, locks: null });
+  const declarations = { work: { access: "readwrite" }, input: { access: "read" } };
+  const directory = new OpfsDirectory(["uivolve-web", "fs", "transfer", "work"], {
+    storage: fs.storage,
+  });
+  expect(() => client.transferFile("transfer", declarations, "missing", "x")).toThrow(/未宣言/);
+  expect(() =>
+    client.transferFile("transfer", declarations, "input", "x", { write: true }),
+  ).toThrow(/read-only/);
+  expect(() => client.transferFile("transfer", declarations, "work", "../x")).toThrow(/相対/);
+  await expect(
+    client.transferFile("transfer", declarations, "work", "missing/x", { write: true }).writable(),
+  ).rejects.toMatchObject({ name: "NotFoundError" });
+  await directory.mkdir("parent");
+  const transfer = client.transferFile("transfer", declarations, "work", "parent/large", {
+    write: true,
+  });
+  const writer = await transfer.writable();
+  await writer.write(new Uint8Array(1_000_001));
+  await writer.close();
+  expect((await transfer.file()).size).toBe(1_000_001);
+  await expect(directory.read("parent/large")).rejects.toThrow(/上限/);
+  await expect(directory.write("small", new Uint8Array(1_000_001))).rejects.toThrow(/上限/);
+  const readOnly = client.transferFile("transfer", declarations, "work", "parent/large");
+  expect((await readOnly.file()).size).toBe(1_000_001);
+  expect(() => readOnly.handle()).toThrow(/read-only/);
+  expect(() => readOnly.writable()).toThrow(/read-only/);
+  expect(() => readOnly.remove()).toThrow(/read-only/);
+  await withFileLocks(
+    [fileLockKey("transfer", "work")],
+    async () => {
+      for (const operation of ["read_text", "write_text", "remove"]) {
+        await expect(
+          client.execute("transfer", { volume: "work", path: "x", operation, data: "x" }),
+        ).rejects.toMatchObject({ code: "BUSY" });
+      }
+      await client.execute("transfer", { volume: "input", path: "", operation: "stat" });
+    },
+    { locks: null },
+  );
+});
