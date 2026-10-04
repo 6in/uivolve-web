@@ -74,6 +74,16 @@ fn execute(request: Value) -> Result<Value, String> {
             result(runtime)
             })
         }),
+        "host_progress" => RUNTIME.with(|r| {
+            let mut slot = r.borrow_mut();
+            let runtime = slot.as_mut().ok_or("No screen loaded")?;
+            let id = request.get("id").and_then(Value::as_u64).ok_or("Missing host request id")?;
+            let response = request.get("data").cloned().ok_or("Missing host progress data")?;
+            runtime.with_clock(clock, |runtime| {
+                runtime.progress_host(id, response)?;
+                result(runtime)
+            })
+        }),
         "host_result" => RUNTIME.with(|r| {
             let mut slot = r.borrow_mut();
             let runtime = slot.as_mut().ok_or("No screen loaded")?;

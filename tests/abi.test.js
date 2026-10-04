@@ -158,3 +158,32 @@ it("rejects failed or cancelled refreshes without changing the current runtime",
   expect(engine.layout(500)).toEqual(before);
   expect(engine.dispatch("add").state.count).toBe(1);
 });
+
+it("rejects malformed raw progress without consuming the pending call", () => {
+  const definition = {
+    ...screen,
+    operations: {
+      transfer: {
+        connection: "api",
+        action: "http.download",
+        handler: "done",
+        options: { progressHandler: "progress" },
+      },
+    },
+  };
+  engine.load(
+    definition,
+    'fn init(s){host_call("transfer", #{});s} fn add(s,e){s} fn done(s,r){s.count+=10;s} fn progress(s,p){s.count+=1;s}',
+  );
+  for (const request of [
+    { op: "host_progress" },
+    { op: "host_progress", id: 1 },
+    { op: "host_progress", id: 1, data: { operation: "other", transferred: 0, total: null } },
+  ]) {
+    expect(raw(JSON.stringify(request)).ok).toBe(false);
+  }
+  const data = { operation: "transfer", transferred: 0, total: 0 };
+  expect(raw(JSON.stringify({ op: "host_progress", id: 1, data })).data.state.count).toBe(1);
+  expect(engine.completeHost(1, { ok: true, data: null, error: null }).state.count).toBe(11);
+  expect(raw(JSON.stringify({ op: "host_progress", id: 1, data })).ok).toBe(false);
+});

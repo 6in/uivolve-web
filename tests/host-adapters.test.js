@@ -312,3 +312,72 @@ it("supports custom registered adapters and serializes delivery while child effe
   await Promise.resolve();
   expect(dispose).toHaveBeenCalledTimes(1);
 });
+
+it("emits transactional cancellation by name without consuming completion slots", () => {
+  const definition = screen();
+  definition.operations.other = { ...definition.operations.request };
+  const start = 'host_call("request", #{});host_call("request", #{});host_call("other", #{});';
+  const cancel = 'host_cancel("request");host_cancel("missing");';
+  const code = script.replace('host_call("request", #{});', start);
+  engine.load(definition, code);
+  const pending = engine.dispatch("start").effects;
+  engine.load(definition, code.replace("s.calls+=1;", cancel + "s.calls+=1;"));
+  const active = engine.dispatch("start").effects;
+  expect(engine.completeHost(active[2].id, ok({})).effects).toEqual([
+    { kind: "host_cancel", v: 1, operation: "request" },
+  ]);
+  expect(engine.completeHost(active[0].id, ok({})).state.calls).toBe(2);
+  expect(engine.completeHost(active[1].id, ok({})).effects).toBeUndefined();
+  expect(pending.map((effect) => effect.operation)).toEqual(["request", "request", "other"]);
+  for (const failure of ['throw "bad";', 's.calls="bad";', 'http_get("missing");']) {
+    engine.load(definition, code.replace("s.calls+=1;", cancel + failure + "s.calls+=1;"));
+    const effect = engine.dispatch("start").effects[2];
+    expect(() => engine.completeHost(effect.id, ok({}))).toThrow();
+    expect(engine.dispatch("edit", { value: "kept" }).effects).toBeUndefined();
+  }
+});
+
+it("validates progress handlers and applies progress transactionally with latest state", () => {
+  const definition = screen();
+  definition.operations.request.options.progressHandler = "progress";
+  for (const invalid of ["missing", 1, null]) {
+    definition.operations.request.options.progressHandler = invalid;
+    expect(() => engine.load(definition, script)).toThrow(/progress handler/);
+  }
+  definition.operations.request.options.progressHandler = "progress";
+  const code = script + " fn progress(s,p){s.calls+=1;s.result=p;s}";
+  engine.load(definition, code);
+  const effect = engine.dispatch("start").effects[0];
+  engine.dispatch("edit", { value: "latest" });
+  const data = { operation: "request", transferred: 2, total: null };
+  expect(engine.progressHost(effect.id, data).state).toMatchObject({
+    calls: 1,
+    edit: "latest",
+    result: data,
+  });
+  expect(engine.progressHost(effect.id, { ...data, transferred: 3, total: 3 }).state.calls).toBe(2);
+  for (const bad of [
+    null,
+    {},
+    { ...data, operation: "other" },
+    { ...data, transferred: -1 },
+    { ...data, transferred: 0.5 },
+    { ...data, total: 1 },
+    { ...data, total: "3" },
+    { ...data, extra: true },
+    { operation: "request", transferred: 2, extra: true },
+  ]) {
+    expect(() => engine.progressHost(effect.id, bad)).toThrow(/progress/);
+  }
+  expect(engine.completeHost(effect.id, ok({})).state.calls).toBe(3);
+  expect(() => engine.progressHost(effect.id, data)).toThrow(/Unknown or completed/);
+  for (const failure of ['throw "bad";', 's.calls="bad";', 'http_get("missing");']) {
+    engine.load(definition, script + ' fn progress(s,p){host_cancel("request");' + failure + "s}");
+    const id = engine.dispatch("start").effects[0].id;
+    const before = engine.layout(500);
+    expect(() => engine.progressHost(id, data)).toThrow();
+    expect(engine.layout(500)).toEqual(before);
+    expect(engine.dispatch("edit", { value: "kept" }).effects).toBeUndefined();
+    expect(engine.completeHost(id, ok({})).state.calls).toBe(1);
+  }
+});

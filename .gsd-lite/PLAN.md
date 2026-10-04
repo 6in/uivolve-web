@@ -43,7 +43,7 @@ bun run build
   - 依存: なし
   - 並列サブ作業: A: OPFS mockと基盤試験（tests/helpers/opfs.js、tests/opfs-file-transfer.test.js）。B: runnerとscript登録（scripts/verify-transfer.mjs、package.json）。
 
-- [ ] T2: host_cancelとpendingを消費しない進捗のengine契約
+- [x] T2: host_cancelとpendingを消費しない進捗のengine契約
   - 完了基準: host_cancel(name)をtransactional intentとして登録し、handler/state検証失敗時は中止effectも発行しない。host_callの戻り値/上限を維持。未知・終了済み操作名のcancelは安全なno-op、同名全中止/別名継続を配送側で可能にする。options.progressHandlerの存在をload前に検証。新host_progress ABIは進行中id/操作に照合し最新stateでhandlerを実行、完了pendingを保持し、終了後・不正payloadを拒否する。handler失敗でstate/effectsを確定しない。実WASMとRustで検証。
   - 対象: engine/src/host.rs、engine/src/lib.rs、engine/src/abi.rs、src/engine.js、tests/host-adapters.test.js、tests/abi.test.js
   - 依存: T1

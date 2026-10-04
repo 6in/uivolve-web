@@ -718,6 +718,37 @@ impl Runtime {
         self.commit_state(next)
     }
 
+    pub fn progress_host(&mut self, id: u64, response: Value) -> Result<(), String> {
+        let name = self.host.progress(id, &response)?;
+        let handler = self.package.operations[&name].options["progressHandler"]
+            .as_str()
+            .ok_or("Host operation has no progress handler")?
+            .to_string();
+        self.pages.clear();
+        self.http.clear();
+        self.host.clear();
+        self.storage.clear();
+        self.files.clear();
+        self.rpc.clear();
+        self.dialogs.clear();
+        let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
+        let next = self
+            .engine
+            .call_fn(
+                &mut Scope::new(),
+                &self.ast,
+                &handler,
+                (self.state.clone(), response),
+            )
+            .map_err(|e| {
+                format!(
+                    "{} / host progress {} / {}: {e}",
+                    self.package.script, name, handler
+                )
+            })?;
+        self.commit_state(next)
+    }
+
     pub fn complete_host(&mut self, id: u64, response: Value) -> Result<(), String> {
         host::validate_result(&response)?;
         let name = self.host.consume(id)?;
@@ -1631,6 +1662,33 @@ mod tests {
         serde_json::from_str(include_str!("../../public/screens/orders.json")).unwrap()
     }
     const SCRIPT: &str = include_str!("../../public/screens/orders.rhai");
+
+    #[test]
+    fn host_progress_and_cancel_roll_back_without_consuming_completion() {
+        let package: Package = serde_json::from_value(json!({
+            "version":1, "id":"host", "title":"Host", "script":"host.rhai",
+            "state":{"count":0},
+            "operations":{"download":{"connection":"api", "action":"http.download", "handler":"done", "options":{"progressHandler":"progress"}}},
+            "ui":{"xtype":"container", "items":[{"xtype":"button", "itemId":"fail", "handler":"fail"}]}
+        })).unwrap();
+        let code = "fn init(s){host_call(\"download\", #{});s} fn fail(s,e){host_cancel(\"download\");throw \"bad\";s} fn progress(s,p){host_cancel(\"download\");42} fn done(s,r){s.count+=1;s}";
+        let mut runtime = Runtime::load(package, code).unwrap();
+        let id = runtime.take_effects()[0]["id"].as_u64().unwrap();
+        assert!(runtime.dispatch("fail", json!({})).is_err());
+        assert!(runtime.take_effects().is_empty());
+        assert!(runtime
+            .progress_host(
+                id,
+                json!({"operation":"download", "transferred":0, "total":null})
+            )
+            .is_err());
+        assert!(runtime.take_effects().is_empty());
+        assert_eq!(runtime.state_json().unwrap()["count"], 0);
+        runtime
+            .complete_host(id, json!({"ok":true, "data":null, "error":null}))
+            .unwrap();
+        assert_eq!(runtime.state_json().unwrap()["count"], 1);
+    }
 
     #[test]
     fn downloaded_screen_scripts_filter_select_and_save() {
