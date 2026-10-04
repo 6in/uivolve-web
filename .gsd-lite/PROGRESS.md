@@ -99,3 +99,10 @@
 - 想定外: 最初に推定したloopパスが存在せずPATH上のgsd-lite-loop.shで解決。Bun 1.3.12はReadableStream応答のContent-Lengthを外し、空multipart Fileのnameを失うため既知長Blob fixtureとMIMEヘッダー補助を追加。初回試験はOPFS helper名が誤り、1回目修正後はfetchのRequest変換が不足。2回目修正後、Rhai replaceの戻り値がunitでfile_write_textの型不一致となった。state.turn=12/T9完了コミットはあるがPROGRESSにはturn12の追記がなく、過去記録は改変していない。
 - やり直し: 2 回（1: Bun fixture互換とOPFS helper名修正。2: fixtureへRequestを渡すfetch wrapper修正）。スキルの上限に達したため追加修正なし。
 - 次への注意: BLOCKED.mdを参照。再開時は今回の未コミット差分をT10の続きとして扱う。home.rhaiのCSV加工はローカル文字列にreplaceを適用してからfile_write_textへ渡す方式を実WASMで確認する。checkは成功したが全検証コマンドは未完走。T11の実ブラウザ試験は未実装なのでverify:transferは未実行。
+
+## 対話セッション — T10修正と再開
+
+- やったこと: home.rhaiのCSVをローカル変数へ取得し、replaceで変数を変更してからfile_write_textへ渡すよう修正。実WASMサンプルを含む全JS612件・Rust15件、check、docs:check、buildが成功。
+- 想定外: なし。
+- やり直し: 0 回。
+- 次への注意: T10の差分は検証済みの未コミット変更として維持。次のimplターンでT10の続きとして取り込み完了コミットする。turnは13のまま、T10のチェックは未完了。BLOCKED.mdのCSV型不一致は解消済み。ユーザーの指示により、既存のdanger-full-access設定で再開する。
