@@ -1,5 +1,11 @@
 # Progress
 
+## turn 3 — impl — T1 転送試験の基盤と最終判定runner（blocked）
+- やったこと: OPFS mockのchunk追記、File snapshot、close確定/abort破棄、段階別失敗/gateと14件の基盤・runner試験を実装。順次検査と失敗伝搬/中断cleanupを行うverify:transferを登録。コードは検証未合格のため未コミットで保持した。
+- 想定外: 既存files試験のlocalhost bindがEPERMで拒否された。checkは既存管理文書11件の書式で失敗。最初のloop推定パスが存在せずPATH上で解決した。
+- やり直し: 1 回（loop呼び出しパスを修正）。実装修正による検証再試行は0回。既存テスト期待値の変更はなし。
+- 次への注意: BLOCKED.md参照。localhost bind可能な環境で未コミットT1を継続して全検査を通す。既存管理文書の書式問題も解決が必要。loopはPATH上のgsd-lite-loop.sh。ブラウザ未実施を成功扱いにしない。
+
 ## turn 1 — research — OPFS転送の標準API・既存境界・異常系を調査
 - やったこと: similar_oss / official_docs / local_projectsを調査し、RESEARCH.mdへ参考パス・URL、統合変更点、容量/排他/中止/確定/進捗の検証基準を記録した。要件変更を要する重大発見はなくplanへ遷移する。
 - 想定外: 既存ResourceClientの本文は約1 MBのUint8Array限定、Web Locksは競合時待機であり、そのまま転送には使えない。lean-ctx構成ツールはapproval policyで拒否され、読み取りで継続した。最初のloopスクリプト推定パス、コード推定パスは不一致。lean-ctx readはプロジェクト外パスを拒否するため通常readでローカル参考を確認した。
