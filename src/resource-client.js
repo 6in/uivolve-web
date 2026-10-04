@@ -82,7 +82,10 @@ export class ResourceClient {
       allowHttpErrors = false,
     } = {},
   ) {
-    if (!["GET", "POST"].includes(method) || (method === "GET" && body !== undefined))
+    if (
+      !["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"].includes(method) ||
+      (["GET", "HEAD"].includes(method) && body !== undefined)
+    )
       throw new Error("未対応のHTTPメソッド・bodyです");
     const extraHeaders = new Headers(headers);
     if (extraHeaders.has("Authorization"))

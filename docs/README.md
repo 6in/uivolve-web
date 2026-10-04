@@ -18,6 +18,7 @@ uivolve-webは、uivolveの考えをWebへ実装する試作。画面定義・�
 | 保存・YAML・自然なURL・stateの型を使う             | [ブラウザ機能の契約](platform-features.md)、[対応計画](platform-features-plan.md)        |
 | OPFSのファイル操作・アプリキャッシュ・RPCを使う    | [使い方と契約](files-cache-rpc.md)、[検討と実装結果](opfs-cache-rpc-investigation.md)    |
 | 責務とデータの流れを知る                           | [アーキテクチャ](architecture.md)                                                        |
+| HTTP・デバイス・ブラウザ内SQLの拡張設計を知る      | [ホスト・アダプター設計（未実装）](host-adapters-design.md)                              |
 | JSON/YAMLとRhaiで画面を作る                        | [画面契約](screen-format.md)、[アプリ開発スキル](../skills/uivolve-web-app-dev/SKILL.md) |
 | AI向けスキルを選ぶ・外部アプリへ配布する           | [スキル案内](skills.md)、[エンジン開発スキル](../skills/uivolve-web-engine-dev/SKILL.md) |
 | 部品を追加・変更する                               | [開発への参加](../CONTRIBUTING.md)、[部品開発ガイド](component-development.md)           |

@@ -1,0 +1,76 @@
+version: 1
+id: host-http
+title: HTTP各メソッド
+script: home.rhai
+state:
+  rows: []
+  notice: 一覧取得で現在のデータを表示します。
+  loading: false
+  name: 新しい商品
+operations:
+  list:
+    connection: api
+    action: http.request
+    handler: listed
+    options: { method: GET, path: items }
+  add:
+    connection: api
+    action: http.request
+    handler: changed
+    options: { method: POST, path: items }
+  replace:
+    connection: api
+    action: http.request
+    handler: changed
+    options: { method: PUT, path: "items/{id}" }
+  patch:
+    connection: api
+    action: http.request
+    handler: changed
+    options: { method: PATCH, path: "items/{id}" }
+  remove:
+    connection: api
+    action: http.request
+    handler: changed
+    options: { method: DELETE, path: "items/{id}", response: empty }
+  head:
+    connection: api
+    action: http.request
+    handler: checked
+    options: { method: HEAD, path: items, responseHeaders: [X-Item-Count] }
+ui:
+  xtype: container
+  layout: { type: vbox, gap: 12 }
+  items:
+    - { xtype: displayfield, bind: notice, fieldLabel: 結果 }
+    - { xtype: textfield, itemId: name, bind: name, fieldLabel: 商品名 }
+    - { xtype: button, itemId: list, text: 一覧取得 GET, handler: load, disabledBind: loading }
+    - { xtype: button, itemId: add, text: 追加 POST, handler: add, disabledBind: loading }
+    - {
+        xtype: button,
+        itemId: replace,
+        text: 先頭を置換 PUT,
+        handler: replace,
+        disabledBind: loading,
+      }
+    - {
+        xtype: button,
+        itemId: patch,
+        text: 先頭の名前を変更 PATCH,
+        handler: patch,
+        disabledBind: loading,
+      }
+    - {
+        xtype: button,
+        itemId: remove,
+        text: 先頭を削除 DELETE,
+        handler: remove,
+        disabledBind: loading,
+      }
+    - { xtype: button, itemId: head, text: 件数確認 HEAD, handler: head, disabledBind: loading }
+    - xtype: grid
+      itemId: items
+      bind: rows
+      columns:
+        - { text: ID, dataIndex: id }
+        - { text: 商品名, dataIndex: name }

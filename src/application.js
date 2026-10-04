@@ -34,11 +34,29 @@ export function validateAppConfig(value, baseUrl) {
     throw new Error("webmcpには真偽値を指定してください");
   if (value.theme !== undefined && (typeof value.theme !== "string" || !value.theme))
     throw new Error("themeにはテーマURLを指定してください");
+  const connections = value.connections ?? {};
+  if (
+    !connections ||
+    typeof connections !== "object" ||
+    Array.isArray(connections) ||
+    Object.keys(connections).length > 32 ||
+    Object.entries(connections).some(
+      ([name, connection]) =>
+        !/^[A-Za-z0-9_-]{1,80}$/.test(name) ||
+        !connection ||
+        typeof connection !== "object" ||
+        Array.isArray(connection) ||
+        typeof connection.adapter !== "string" ||
+        !/^[A-Za-z0-9_-]{1,80}$/.test(connection.adapter),
+    )
+  )
+    throw new Error("connectionsには名前付きの接続設定を指定してください");
   return {
     version: 1,
     renderer: value.renderer,
     initialPage: value.initialPage,
     pages,
+    connections: structuredClone(connections),
     cacheMode,
     webmcp: value.webmcp === true,
     theme: value.theme === undefined ? undefined : httpUrl(value.theme, baseUrl).href,
@@ -57,6 +75,8 @@ export async function createApplication({
   onBusy,
   onState,
   onCache,
+  adapters,
+  connections,
 } = {}) {
   configUrl = httpUrl(configUrl, globalThis.location?.href);
   const baseUrl = new URL("./", configUrl);
@@ -97,6 +117,8 @@ export async function createApplication({
       resources,
       baseUrl,
       cacheMode: config.cacheMode,
+      adapters,
+      connections: connections ?? config.connections,
       onError,
       onBusy,
       onState,

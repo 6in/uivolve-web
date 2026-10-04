@@ -66,6 +66,18 @@ fn execute(request: Value) -> Result<Value, String> {
             } else {runtime.complete_http(id,response)?;}
             result(runtime)
         }),
+        "host_result" => RUNTIME.with(|r| {
+            let mut slot = r.borrow_mut();
+            let runtime = slot.as_mut().ok_or("No screen loaded")?;
+            let id = request.get("id").and_then(Value::as_u64).ok_or("Missing host request id")?;
+            let response = json!({
+                "ok": request.get("ok").cloned().unwrap_or(Value::Null),
+                "data": request.get("data").cloned().unwrap_or(Value::Null),
+                "error": request.get("error").cloned().unwrap_or(Value::Null),
+            });
+            runtime.complete_host(id, response)?;
+            result(runtime)
+        }),
         "layout" => RUNTIME.with(|r| {
             let slot = r.borrow();
             let runtime = slot.as_ref().ok_or("No screen loaded")?;
