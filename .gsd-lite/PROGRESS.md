@@ -1,5 +1,12 @@
 # Progress
 
+## turn 12 — impl — T9 異常・並行性の統合回帰
+
+- やったこと: 実WASM→HostEffects→HTTP→OPFSのwrite/close/abort gateとcancel/期限/画面置換の9交差試験を追加。通常read/write/removeと別WASMホストの同scope転送は実処理settleまでBUSY、成功closeはcommitted、旧世代通知は破棄されることを確認した。実runtimeで進捗handlerのstate/cancel rollback後も保存完了、resetの99ms予約通知破棄とID再利用隔離、最終応答1 MB境界も追加。既存cleanup失敗・認証変更・全量読込禁止試験を含め全JS606件、Rust15件、転送72件、WASM生成、check（警告0）、docs:check（412リンク）、build成功。既存テスト期待値変更なし。
+- 想定外: 最初のloop推定パスが存在せずPATH上で解決。追加fixtureのfiles宣言に必須handlerが不足し、BUSYに契約外のoutcome=not-startedを要求していた。並列runtime fixtureはpublic fetchの差し替えが転送のprivate fetchへ反映されず、constructorへResourceClientを注入して修正した。全体検査の初回は並列fixture修正前を読み込んでおり、統合完了後に再実行して成功した。
+- やり直し: 2 回（親のfixture handler不足を修正、BUSYの契約外outcome期待を除去）。並列サブ作業内のfixture修正1回、loopパス修正1回。追加試験の設定のみを修正し製品コード変更なし。
+- 次への注意: 次はT10のみ。loopはPATH上のgsd-lite-loop.sh。files宣言はbackend/access/handlerが必須。ResourceClientの転送fetchはconstructorで注入する。BUSYのoutcomeは契約で指定されていないためcodeを検証する。T11未完成のためverify:transferは未実行。状態更新後の管理ファイル整形も必要。
+
 ## turn 4 — impl — T1 転送試験の基盤と最終判定runner
 
 - やったこと: 前ターンのT1実装4ファイルを確認し、指定検査をすべて再実行してコミットした。基盤/runner14件、全JS528件、Rust13件、WASM生成、check、docs:check（412リンク）、buildが成功。T1を完了にし、停止記録を解消済みに更新した。
