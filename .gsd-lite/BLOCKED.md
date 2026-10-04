@@ -1,5 +1,7 @@
 # BLOCKED — turn 15 / T11
 
+解消済み（turn 16）: 認証fixtureの修正を含むT11差分を再検証し、bun run verify:transferが実Chromium試験まで成功。T11を完了コミットし、次はT12。以下は停止時の記録。
+
 ## 状況と理由
 
 先頭未完了T11のみ実装。`bun run test:transfer:browser`が2回の立て直し後も認証fixtureの成功ケースでHTTP_401となった。gsd-lite-implの「このターン内で最大2回まで立て直し」の上限に達したため停止する。PLANのT11は未完了。実装差分はstashせず未コミットで保持した。

@@ -127,3 +127,10 @@
 - 想定外: なし。
 - やり直し: 0 回。
 - 次への注意: ユーザー指定によりプロジェクトローカルのimplスキルの修正上限を2回から5回へ変更（並列作業の合算上限も5回）。T11差分は未コミットの続きとして次ターンで取り込む。T11未完了とturn15を維持し、danger-full-accessで再開する。BLOCKED.mdの認証不一致は解消済み。
+
+## turn 16 — impl — T11 再実行可能な実ブラウザ検証
+
+- やったこと: 申し送りのT11未コミット差分を確認し、認証修正を含めて再検証して完了コミットした。bun run verify:transferが成功（WASM生成、JS612件、Rust15件、check警告0、docs:checkの412リンク、build、Chromium152.0.7977.64）。実OPFSでDOM/CanvasのCSV加工・multipart・進捗・cancel・画面置換、100 MiB GET/File/FormDataのsize/hashと全量JS読込禁止、CORS/認証/上書き/容量、2タブWeb Locksの競合と解放を確認。既存テスト期待値変更なし。
+- 想定外: 初回にリポジトリ直下のloopを指定したが存在せず、PATH上のgsd-lite-loop.shで作業場所を解決した。実装修正は不要だった。
+- やり直し: 0 回（実装・検証の立て直しなし。loopパス修正1回）。
+- 次への注意: 次はT12のみ。loopはPATH上のgsd-lite-loop.shを使用。verify:transferは実ブラウザを含めて成功済み。Vite実行中に整形しない。BLOCKED.mdのT11停止理由は解消済み。文書とskillsの追従先照合・文書例試験はT12で実施する。
