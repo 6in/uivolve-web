@@ -81,7 +81,7 @@ OAuth形式では`refresh.clientId`に公開クライアントIDを追加でき�
 更新URLは独立した送信先で、JWTの送信先許可リストへ加える必要はない。HTTPSとローカルHTTPの規則はJWTと同じ。userinfo・fragment付きURLを拒否する。リフレッシュトークンはこのURLのPOST本文だけへ送る。更新要求にはAuthorization・Cookieを付けず、CORS、no-store、リダイレクト拒否を使う。
 
 - 有効秒数があれば、次のHTTP要求時に期限前の更新を行う。猶予は最大30秒、短い寿命ではその半分。定期タイマーによる更新やJWTのexpのデコードは行わない。
-- 401なら更新し、同じGETを1回だけ再試行する。403、通信・CORS失敗、5xxでは更新しない。更新設定がなければ従来どおりエラーを返す。
+- 401なら更新し、同じGETを1回だけ再試行する。HTTPアダプターではHEADも対象で、POST/PUT/PATCH/DELETEの401後の更新・再送は行わない。403、通信・CORS失敗、5xxでは更新しない。更新設定がなければ従来どおりエラーを返す。
 - 同じResourceClientの同時取得は1つの更新要求を共有する。遅れた旧世代の401も更新後のトークンを使う。別インスタンス・別タブ間では共有しない。
 - 応答全体を検証してから両トークンを差し替える。新しいリフレッシュトークンが省略された場合は以前の値を維持する。有効秒数も省略された場合は、その後は401時に更新する。
 - 更新待ちは10秒、JSON応答本文は64,000文字まで。更新拒否・通信失敗・無効な応答・再試行後の401ではセッションを停止し、保持するトークンを破棄する。匿名取得や自動再ログインへ切り替えず、新しい認証設定を必要とする。
@@ -100,7 +100,7 @@ OAuth形式では`refresh.clientId`に公開クライアントIDを追加でき�
 - 401は任意のリフレッシュ設定があれば上記の更新・再試行を行い、403は権限エラーとして表示する。JWTを外した再試行やログインページへの遷移は行わない。
 - 取得やコンパイルの失敗は表示中の画面・状態・revision、適用中のテーマを維持する。取得中はデモの認証設定を変更できない。APIで設定を変更した場合、共通クライアントで読み込み中の画面・スクリプト・テーマの応答は破棄する。`fetch()`で返したResponseを利用するホストは、その後の本文読み込み・適用を管理する。
 
-Rhaiの宣言GETとUnary RPC、画面が参照するRPC Descriptorにも共通ResourceClientを使う。RPCのPOSTで401後のrefresh・再送を許可するのは`idempotent: true`の宣言だけ。事前の期限更新は従来通り。公開ソースのOPFS配信キャッシュはJWTモードでは無効。[RPC・キャッシュ契約](files-cache-rpc.md)を参照する。
+Rhaiの宣言GETとHTTPアダプター、Unary RPC、画面が参照するRPC Descriptorにも共通ResourceClientを使う。RPCのPOSTで401後のrefresh・再送を許可するのは`idempotent: true`の宣言だけ。事前の期限更新は従来通り。公開ソースのOPFS配信キャッシュはJWTモードでは無効。[RPC・キャッシュ契約](files-cache-rpc.md)を参照する。
 
 画像・動画・iframeはブラウザのネイティブURL読み込みで、Bearerヘッダーの対象外。保護されたメディアには署名付きURLなどの別契約が必要。HTML/JS/CSS・外部フォントはこのAPIの対象ではない。ログイン、JWTの発行・更新サーバー、サーバーの検証処理、WASM内のJWT検証は未実装。
 
@@ -110,7 +110,7 @@ Rhaiの宣言GETとUnary RPC、画面が参照するRPC Descriptorにも共通Re
 
 ```http
 Access-Control-Allow-Origin: *
-Access-Control-Allow-Methods: GET, HEAD, POST, OPTIONS
+Access-Control-Allow-Methods: GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS
 Access-Control-Allow-Headers: Authorization, Content-Type
 ```
 
@@ -131,3 +131,5 @@ JWTモードはCookieを送らないため、公開デモの`*`で利用でき�
 ブラウザ確認は一時Playwrightスクリプトによるもの。サーバーのテスト用トークン照合はBearer送信を確認するfixtureであり、JWT署名・期限の検証処理ではない。既存のHTTP読み込み・テーマ・native WebMCPの3シナリオも回帰確認した。
 
 同日のリフレッシュ対応追加後：自動テスト80件（Vitest 77、Rust 3）とビルド・静的チェック・文書リンク確認が成功。JSON/OAuth、期限前更新、共有更新、遅れた401、キャンセル・認証解除、失敗・タイムアウトの15テストを追加した。ブラウザで更新POSTのCORS、401からの更新・再試行、ローテーション後のテーマ取得、invalid_grant時の停止・状態保持、OAuth公開クライアントと省略されたrefresh_token、リダイレクト拒否、JWT無効化・再読み込み、狭い幅を確認した。既存のJWT/CORSとnative WebMCPも回帰確認した。
+
+本文付きHTTPとパス変数の具体例は[現行HTTP契約](http-adapter.md)。APIサーバーのCORS許可メソッドは使用する操作に合わせる。過去の実装時の確認件数は履歴で、現在の全体テスト数ではない。

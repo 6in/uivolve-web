@@ -1,6 +1,11 @@
 # ブラウザホスト・アダプター設計
 
-設計日: 2026-10-04。提案仕様であり、この文書のAPI・DSLは未実装。現在のGET、storage、file、RPCは既存契約のまま利用できる。
+設計日: 2026-10-04。状態: 将来設計と設計履歴。host_call、HostEffects、HTTPアダプターは初期版を実装済みで、使用するAPI・DSLは[現行HTTP契約](http-adapter.md)を優先する。この文書の残りのアダプターと継続通知、バッファ送信は未実装。既存GET、storage、file、RPCも維持している。
+
+| 範囲                                                         | 状態                                                               | コード生成の根拠                |
+| ------------------------------------------------------------ | ------------------------------------------------------------------ | ------------------------------- |
+| host_call / host_result / HTTP                               | 実装済み。optionsにメソッド等を置く。JSON本文、json/text/empty応答 | [現行HTTP契約](http-adapter.md) |
+| host_event / host_close / WebSocket / Media / Bluetooth / DB | 将来案。本文の例を実装済みAPIとして使わない                        | 実装する際の検討資料            |
 
 ## 目的と境界
 
@@ -44,6 +49,8 @@ UIのWASMから別のWASMへ直接リンクしない。JavaScriptが各SDK、Wor
 
 起動設定の提案例:
 
+ホスト登録の以下のコードは将来構成の例。HTTPだけの実行可能な構成は[現行契約](http-adapter.md)を使う。
+
 ```js
 const runtime = await createRuntime({
   element: document.querySelector("#app"),
@@ -77,10 +84,11 @@ operations:
   saveOrder:
     connection: api
     action: http.request
-    method: PATCH
-    path: orders/{id}
-    response: json
     handler: orderSaved
+    options:
+      method: PATCH
+      path: orders/{id}
+      response: json
   connectUpdates:
     connection: updates
     action: ws.connect
@@ -169,7 +177,9 @@ interface HostAdapter {
 
 WebSocket/BLEはキュー満杯で黙ってデータを捨てず、subscriptionをLIMITで停止する。メディアpreviewは最新フレームのみ表示し、毎フレームRhaiへ渡さない。DBはページ取得を明示的に要求する。ホストのemitは受領待ちを提供するが、WebSocketの送信元に対するbackpressure保証にはならない。
 
-## HTTP
+## HTTP（当初案・現行との差）
+
+以下は当初案。現行版はJSON要求本文とjson/text/empty応答を提供し、bytes・バッファ本文は未実装。実行コードは[現行HTTP契約](http-adapter.md)から生成する。
 
 GET/POST/PUT/PATCH/DELETE/HEADを提供。JSON、text、bytes、空応答を明示する。204/HEADはbodyなしで成功。応答にstatusと許可したheadersを含める。非2xxはHTTP statusを持つ失敗として返す。bodyはJSON/text/既存バッファを初期対応とし、multipartは後続とする。
 

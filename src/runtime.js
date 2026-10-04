@@ -1,5 +1,6 @@
 import "./runtime.css";
 import { WasmEngine } from "./engine.js";
+import { clockDate } from "./clock.js";
 import { DomRenderer } from "./dom-renderer.js";
 import { CanvasRenderer } from "./canvas-renderer.js";
 import { applyTheme } from "./theme.js";
@@ -14,12 +15,11 @@ import { RpcClient } from "./rpc-client.js";
 import { PageEffects } from "./page-effects.js";
 import { packageFormat } from "./package-format.js";
 
-function prepareScreen(definition, source) {
+function prepareScreen(definition, source, clock) {
   const screen = structuredClone(definition);
-  const now = new Date();
-  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const today = clock === undefined ? undefined : clockDate(clock);
   function visit(node) {
-    if (node.xtype === "datepicker" && !node.today) node.today = today;
+    if (node.xtype === "datepicker" && !node.today && today !== undefined) node.today = today;
     if (["image", "imagecomponent", "video", "iframe", "uxiframe"].includes(node.xtype)) {
       for (const key of ["src", "url", "poster", "posterUrl"]) {
         if (typeof node[key] === "string" && node[key]) {
@@ -50,6 +50,11 @@ export class UiRuntime {
     this.resources = options.resources ?? new ResourceClient({ baseUrl: this.baseUrl });
     this.applicationLoader = new ApplicationLoader({ resources: this.resources });
     this.engine = options.engine;
+    if (options.clockProvider !== undefined) {
+      if (typeof options.clockProvider !== "function")
+        throw new Error("clockProviderには関数が必要です");
+      if (this.engine) this.engine.clockProvider = options.clockProvider;
+    }
     this.cacheMode = options.cacheMode ?? "network-only";
     this.disposed = false;
     this.fetching = false;
@@ -172,6 +177,7 @@ export class UiRuntime {
     if (!this.engine)
       this.engine = await WasmEngine.create(this.wasmUrl, {
         resources: this.resources,
+        clockProvider: this.options.clockProvider ?? this.engine?.clockProvider,
         signal: this.lifecycle.signal,
       });
     this.assertActive();
@@ -263,10 +269,11 @@ export class UiRuntime {
     source = new URL(source, this.baseUrl);
     if (!["http:", "https:"].includes(source.protocol))
       throw new Error("HTTP / HTTPSのURLを指定してください");
-    screen = prepareScreen(screen, source);
+    const clock = engine.readClock();
+    screen = prepareScreen(screen, source, clock);
     const start = performance.now();
     const hostOperations = this.hostEffects.prepare(screen.operations, source);
-    const result = engine.load(screen, script, descriptors);
+    const result = engine.load(screen, script, descriptors, { clock });
     const duration = performance.now() - start;
     this.engine = engine;
     for (const surface of this.surfaces) surface.adapter.reset();
@@ -311,6 +318,7 @@ export class UiRuntime {
       });
       const engine = refreshEngine
         ? await WasmEngine.create(this.wasmUrl, {
+            clockProvider: this.options.clockProvider ?? this.engine?.clockProvider,
             resources: this.resources,
             signal: controller.signal,
             theme: this.engine.theme(),

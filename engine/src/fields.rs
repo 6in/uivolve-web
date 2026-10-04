@@ -239,38 +239,6 @@ pub fn initialize(node: &Node, state: &mut Value) {
     walk(node, state, &existing);
 }
 
-fn valid_date(value: &str) -> bool {
-    let b = value.as_bytes();
-    if b.len() != 10
-        || b[4] != b'-'
-        || b[7] != b'-'
-        || b.iter()
-            .enumerate()
-            .any(|(i, c)| i != 4 && i != 7 && !c.is_ascii_digit())
-    {
-        return false;
-    }
-    let year: u32 = value[0..4].parse().unwrap();
-    let month: usize = value[5..7].parse().unwrap();
-    let day: u32 = value[8..10].parse().unwrap();
-    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-    let days = [
-        31,
-        if leap { 29 } else { 28 },
-        31,
-        30,
-        31,
-        30,
-        31,
-        31,
-        30,
-        31,
-        30,
-        31,
-    ];
-    year > 0 && (1..=12).contains(&month) && day > 0 && day <= days[month - 1]
-}
-
 pub fn event_value(node: &Node, value: &Value) -> Result<Value, String> {
     match node.xtype.as_str() {
         "checkbox" => value
@@ -341,7 +309,10 @@ pub fn event_value(node: &Node, value: &Value) -> Result<Value, String> {
             {
                 return Err("Unknown selected option".into());
             }
-            if kind == "datefield" && !s.is_empty() && !valid_date(s) {
+            if kind == "datefield"
+                && !s.is_empty()
+                && crate::extensions::date::parse_date(s).is_err()
+            {
                 return Err("Date must be a valid YYYY-MM-DD".into());
             }
             Ok(value.clone())

@@ -77,6 +77,7 @@ export async function createApplication({
   onCache,
   adapters,
   connections,
+  clockProvider,
 } = {}) {
   configUrl = httpUrl(configUrl, globalThis.location?.href);
   const baseUrl = new URL("./", configUrl);
@@ -119,6 +120,7 @@ export async function createApplication({
       cacheMode: config.cacheMode,
       adapters,
       connections: connections ?? config.connections,
+      clockProvider,
       onError,
       onBusy,
       onState,

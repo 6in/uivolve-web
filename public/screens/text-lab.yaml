@@ -1,0 +1,39 @@
+version: 1
+id: text-lab
+title: 文字列・正規化・書記素
+script: text-lab.rhai
+state:
+  original: " ＡＢＣ　ﾊﾟ 👨‍👩‍👧‍👦 "
+  code: "42"
+  maxLength: 6
+  normalized: ""
+  graphemeCount: 0
+  shortLabel: ""
+  paddedCode: ""
+  notice: ""
+ui:
+  xtype: container
+  layout: vbox
+  items:
+    - { xtype: label, text: 文字列・正規化・書記素, variant: heading }
+    - { xtype: textfield, itemId: original, fieldLabel: 原文（保持します）, bind: original }
+    - { xtype: textfield, itemId: code, fieldLabel: コード, bind: code }
+    - {
+        xtype: numberfield,
+        itemId: maxLength,
+        fieldLabel: 表示の最大書記素数（省略記号を含む）,
+        bind: maxLength,
+        minValue: 1,
+        maxValue: 100,
+      }
+    - { xtype: button, itemId: process, text: 文字列を処理, handler: process }
+    - { xtype: displayfield, fieldLabel: 検索用NFKC・前後空白除去, bind: normalized }
+    - { xtype: displayfield, fieldLabel: 書記素数, bind: graphemeCount }
+    - { xtype: displayfield, fieldLabel: 短い表示, bind: shortLabel }
+    - { xtype: displayfield, fieldLabel: 6桁のコード, bind: paddedCode }
+    - { xtype: label, bind: notice }
+    - {
+        xtype: label,
+        text: 正規化した値と原文は別々に保持します。結合文字や絵文字を途中で分断せず処理します。,
+        variant: muted,
+      }

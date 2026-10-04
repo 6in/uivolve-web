@@ -98,3 +98,7 @@ CSSとテーマ変数は表示領域の`.uivolve-runtime`へ適用する。外�
 ## 次の配布段階
 
 現在はリポジトリから生成する静的配布物。npmの公開、`bunx uivolve-web init / serve / build`というCLI、アプリ用ビルドコマンドの一般化、ランタイムの自動更新はまだ提供していない。`package.json`は引き続きprivateで、公開操作も行わない。共通ランタイムの切り出しと静的利用の検証を先に完了させた。
+
+時計を固定・差し替えする場合はcreateApplicationまたはUiRuntimeへ`clockProvider`を渡す。既定はブラウザ時計。[日付・時計の契約](date-functions.md)を参照。
+
+ホスト操作を使う場合は起動コードで`adapters`と`connections`を設定する。createApplicationのconnectionsはapp.jsonにも置けるが、JavaScript側の値を渡すと優先される。httpAdapterは自動登録されない。[メソッド・パス変数を含む起動例](http-adapter.md)を参照。

@@ -58,6 +58,8 @@ DOMはネイティブ入力を維持して更新する。Canvasは通常表示�
 
 テーマは既存の色トークンを共用する。元のCSSクラスやstyleを描画版へ渡す契約はない。fieldsetの外観も現在のパネルに合わせている。
 
-元の画面JSON全体との互換は保証しない。cls、bodyPadding、独自CSS、borderレイアウト、イベントlisteners、vtype/regex、アイコンフォントは未対応。未知の属性・xtypeは読み込みエラーになる。追加部品は基本機能の移植であり、Monaco、リッチテキスト、完全なMarkdown/Mermaid、グラフの対話操作などは含まない。windowとgridはこの試作の設定範囲を使う。タブの動的追加はitemsBindで対応し、専用の閉鎖ボタン・ツリーGrid・サブメニューなどの制限は[Grid・ナビゲーション契約](grid-navigation.md)を参照。
+元の画面JSON全体との互換は保証しない。cls、bodyPadding、独自CSS、イベントlisteners、vtype/regex、アイコンフォントは未対応。未知の属性・xtypeは読み込みエラーになる。追加部品は基本機能の移植であり、Monaco、リッチテキスト、完全なMarkdown/Mermaid、グラフの対話操作などは含まない。windowとgridはこの試作の設定範囲を使う。タブの動的追加はitemsBindで対応し、専用の閉鎖ボタン・ツリーGrid・サブメニューなどの制限は[Grid・ナビゲーション契約](grid-navigation.md)を参照。
 
 実行例: [画面JSON](../public/screens/uivolve-forms.json) / [Rhai](../public/screens/uivolve-forms.rhai)。属性とイベント値の契約は[画面形式](screen-format.md)を参照。
+
+Borderレイアウトは[共通レイアウト契約](layouts.md)の範囲で実装済み。元ライブラリのsplitter等まで互換とはしない。

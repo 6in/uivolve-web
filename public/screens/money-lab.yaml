@@ -1,0 +1,31 @@
+version: 1
+id: money-lab
+title: 金額・税・丸め計算
+script: money-lab.rhai
+state:
+  price: "1234.50"
+  quantity: "2"
+  rate: "0.10"
+  subtotal: ""
+  tax: ""
+  total: ""
+  totalLabel: ""
+  notice: ""
+ui:
+  xtype: container
+  layout: vbox
+  items:
+    - { xtype: label, text: 金額・税・丸め計算, variant: heading }
+    - { xtype: textfield, itemId: price, fieldLabel: 単価（小数文字列）, bind: price }
+    - { xtype: textfield, itemId: quantity, fieldLabel: 数量（小数文字列）, bind: quantity }
+    - { xtype: textfield, itemId: rate, fieldLabel: 税率（0.10 = 10%）, bind: rate }
+    - { xtype: button, itemId: calculate, text: 金額を計算, handler: calculate }
+    - { xtype: displayfield, fieldLabel: 税抜額, bind: subtotal }
+    - { xtype: displayfield, fieldLabel: 税額（1円単位の四捨五入）, bind: tax }
+    - { xtype: displayfield, fieldLabel: 合計, bind: totalLabel }
+    - { xtype: label, bind: notice }
+    - {
+        xtype: label,
+        text: 計算値は小数文字列で保存します。負数の四捨五入は中間値をゼロから離す方向です。,
+        variant: muted,
+      }

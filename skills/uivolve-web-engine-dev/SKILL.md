@@ -9,12 +9,12 @@ description: uivolve-webのRust/WASMエンジン、部品、レイアウト、DS
 
 ## 変更する責務を選ぶ
 
-[アーキテクチャ](../../docs/architecture.md)を参照し、必要な作業の資料だけを読む。
+[AI向け参照入口](../../docs/ai-development.md)で実装済みと将来案を区別し、[アーキテクチャ](../../docs/architecture.md)を参照し、必要な作業の資料だけを読む。
 
 | 作業                                             | 参照資料                                          |
 | ------------------------------------------------ | ------------------------------------------------- |
 | 部品・配置・DSL・イベント                        | [部品開発](references/components.md)              |
-| Rust関数をRhaiへ公開する                         | [ネイティブ拡張](../../docs/native-extensions.md) |
+| Rust関数をRhaiへ公開する                         | [ネイティブ拡張](references/native-extensions.md) |
 | HTTP・認証・保存・配信・ルーティング・WebMCP登録 | [ブラウザホスト](references/host.md)              |
 | 検証・ビルド・互換性                             | [確認手順](references/validation.md)              |
 

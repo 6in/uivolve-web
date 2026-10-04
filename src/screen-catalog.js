@@ -96,6 +96,27 @@ export const SCREEN_CATALOG = Object.freeze(
       file: "rpc-lab.yaml",
     },
     {
+      id: "money-lab",
+      title: "金額・税・丸め計算",
+      category: "network",
+      description: "小数文字列で金額・税額・負数端数を計算",
+      file: "money-lab.yaml",
+    },
+    {
+      id: "text-lab",
+      title: "文字列・正規化・書記素",
+      category: "network",
+      description: "全角・半角の検索用正規化と絵文字の切り詰め",
+      file: "text-lab.yaml",
+    },
+    {
+      id: "date-lab",
+      title: "日付・時計・期限計算",
+      category: "network",
+      description: "日付の検証・期限・月末計算とホストの時計",
+      file: "date-lab.yaml",
+    },
+    {
       id: "native-extensions",
       title: "Rust拡張・正規表現",
       category: "network",

@@ -1,13 +1,28 @@
 // Browser boundary only: UTF-8 memory exchange and the native Wasm API.
+import { browserClock, validateClock } from "./clock.js";
+
+const clockOperations = new Set([
+  "load",
+  "event",
+  "host_result",
+  "http_result",
+  "storage_result",
+  "file_result",
+  "rpc_result",
+  "dialog_result",
+]);
+
 export class WasmEngine {
-  constructor(exports, bytes) {
+  constructor(exports, bytes, { clockProvider = browserClock } = {}) {
+    if (typeof clockProvider !== "function") throw new Error("clockProviderには関数が必要です");
+    this.clockProvider = clockProvider;
     this.exports = exports;
     this.bytes = bytes;
     this.encoder = new TextEncoder();
     this.decoder = new TextDecoder();
   }
 
-  static async create(url, { resources, signal, theme } = {}) {
+  static async create(url, { resources, signal, theme, clockProvider } = {}) {
     signal?.throwIfAborted();
     const response = resources
       ? await resources.fetch(url, { signal })
@@ -17,12 +32,22 @@ export class WasmEngine {
     signal?.throwIfAborted();
     const { instance } = await WebAssembly.instantiate(bytes, {});
     signal?.throwIfAborted();
-    const engine = new WasmEngine(instance.exports, bytes.byteLength);
+    const engine = new WasmEngine(instance.exports, bytes.byteLength, { clockProvider });
     if (theme !== undefined) engine.theme(theme);
     return engine;
   }
 
+  readClock() {
+    return validateClock(this.clockProvider());
+  }
+
   call(request) {
+    if (clockOperations.has(request.op)) {
+      const clock = Object.hasOwn(request, "clock")
+        ? validateClock(request.clock)
+        : this.readClock();
+      request = { ...request, clock };
+    }
     const bytes = this.encoder.encode(JSON.stringify(request));
     if (bytes.length > 2_000_000) throw new Error("リクエストが2 MBを超えています");
     const pointer = this.exports.input_alloc(bytes.length);
@@ -41,7 +66,7 @@ export class WasmEngine {
     }
   }
 
-  load(screen, script, descriptors = {}) {
+  load(screen, script, descriptors = {}, options = {}) {
     const ids = Object.create(null);
     try {
       for (const key of new Set(Object.values(screen.rpc ?? {}).map((r) => r.descriptor))) {
@@ -49,7 +74,13 @@ export class WasmEngine {
           throw new Error(`Descriptorがありません: ${key}`);
         ids[key] = this.storeBuffer(descriptors[key]);
       }
-      return this.call({ op: "load", package: screen, script, descriptors: ids });
+      return this.call({
+        op: "load",
+        package: screen,
+        script,
+        descriptors: ids,
+        ...(Object.hasOwn(options, "clock") ? { clock: options.clock } : {}),
+      });
     } finally {
       for (const id of Object.values(ids)) this.releaseBuffer(id);
     }

@@ -2,10 +2,10 @@
 
 uivolve-webの開発スキルは2つ。既存機能でアプリを作る作業と、エンジンの機能を増やす作業を分ける。
 
-| スキル                                                              | 用途                                                                          |
-| ------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| [uivolve-web-app-dev](../skills/uivolve-web-app-dev/SKILL.md)       | JSON/YAML＋Rhai、stateSchema、部品の利用、テーマ、HTTP・保存・RPC、WebMCP説明 |
-| [uivolve-web-engine-dev](../skills/uivolve-web-engine-dev/SKILL.md) | Rust/WASM、DSL・部品・配置・ネイティブ関数・ABI、DOM/Canvas、ブラウザホスト   |
+| スキル                                                              | 用途                                                                                                                 |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| [uivolve-web-app-dev](../skills/uivolve-web-app-dev/SKILL.md)       | JSON/YAML＋Rhai、stateSchema、部品の利用、テーマ、HTTPメソッド・パス変数、保存・RPC、日付・金額・Unicode、WebMCP説明 |
+| [uivolve-web-engine-dev](../skills/uivolve-web-engine-dev/SKILL.md) | Rust/WASM、DSL・部品・配置・ネイティブ関数・ABI、DOM/Canvas、ブラウザホスト                                          |
 
 入口のSKILL.mdには共通契約と資料の選択だけを置き、機能ごとの注意点はreferencesへ分ける。属性・APIの詳細はdocsの契約文書を参照し、同じ仕様の手動コピーを増やさない。アプリ側には、型情報を含む[Hello World YAML](../skills/uivolve-web-app-dev/assets/hello-world/hello-world.yaml)と[Rhai](../skills/uivolve-web-app-dev/assets/hello-world/hello-world.rhai)を同梱する。
 
@@ -42,3 +42,7 @@ Claude Code向けには`bun run skills:release -- 0.1.0`で2スキルをまと�
 - 仕様変更時は契約・例と機能別資料の案内を更新し、配布用フォルダーを再生成する。
 - `bun run docs:check`でソースのリンク、`bunx vp test run tests/skills.test.js`で独立した配布先のリンクと最小YAML/Rhaiの実WASM動作を確認する。SKILL.mdのfrontmatterとagents/openai.yamlも検証する。
 - ブラウザホストの手順はengine-devのreferences/host.mdに置く。ホスト開発の利用が増えたら独立スキルを検討する。WebMCPによる操作専用スキルも将来候補とし、現段階では増やさない。
+
+AIの参照順と実装済み範囲は[参照入口](ai-development.md)。app-devはHTTPと共通計算を機能別referenceから選び、engine-devはホストとネイティブ関数の変更責務から選ぶ。将来設計を対応済みAPIとして生成しない。
+
+今回の不整合修正と検証範囲は[AI向け文書点検](ai-docs-review.md)を参照。

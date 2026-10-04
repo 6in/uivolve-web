@@ -172,7 +172,7 @@ bun run demo:rpc
 - サーバーのOPTIONSでPOST、Authorization、Content-Type、Connect-Protocol-Version、Connect-Timeout-Ms、X-Grpc-Web、grpc-timeoutを必要に応じ許可する。gRPC-Webのヘッダーstatusを読む場合はgrpc-status/grpc-messageもExposeする。デモサーバーに実例がある。
 - request/responseのProtobufは各1 MB。フレーム込みのHTTP body取得は1,010,000 bytesまで。decode後のJSON/state・Rhai文字列等の既存上限も適用する。
 
-汎用HTTP POST、圧縮、grpc-web-text、Streaming、ネイティブgRPC直接接続は未対応。Connect/gRPC-WebホストはUnary専用の小さな実装で、公式サーバーで動作を検証する。
+RPCのこの契約はUnary専用。圧縮、grpc-web-text、Streaming、ネイティブgRPC直接接続は未対応。汎用HTTP POSTは別の[HTTPアダプター契約](http-adapter.md)で提供する。Connect/gRPC-WebホストはUnary専用の小さな実装で、公式サーバーで動作を検証する。
 
 ## バイナリABIと検証
 

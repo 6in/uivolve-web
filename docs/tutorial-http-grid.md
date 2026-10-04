@@ -101,7 +101,7 @@ stateに入った配列を既存のGridが描画する。サンプルは8件を5
 
 - `requests`は省略可能。最大8個。各定義は`url`と`handler`のみで、handlerの存在を読み込み時に確認する。
 - `http_get(name)`は宣言済みの名前だけを使う。`init`からも呼べる。1回の関数実行と同時進行の上限は8件。同じ名前は完了まで再要求できない。無効な依頼ではstateも通信も確定しない。
-- HTTP / HTTPSのGETとJSON応答に対応する。POST・任意ヘッダー・要求本文・ストリーミング・`async/await`は未対応。
+- このチュートリアルのhttp_getはHTTP / HTTPSのGETとJSON応答に対応し、要求本文やパス変数を受け取らない。POST/PUT/PATCH/DELETE/HEAD、パス変数、query、JSON本文、許可ヘッダーは別の[HTTPアダプター契約](http-adapter.md)のhost_callを使う。StreamingとRhaiのasync/awaitは未対応。
 - タイムアウトは15秒。応答はUTF-8で1 MB以内、stateも1 MB以内。Gridは最大2,000行。Rhai側の文字列・配列・操作数の制限も適用する。
 - ホストは既存のResourceClientを使い、CORSを既定で使用する。デフォルトは認証なし。デモの認証設定を変更した場合はJSON取得にもその設定を使う。別オリジンのAPIには配信側のCORS許可が必要。[JWT・CORS契約](authentication.md)も参照。
 - 画面切替・再取得・再コンパイルの成功時に以前の要求を中止し、遅れて届いた応答を破棄する。失敗した画面置換では元の画面を維持する。

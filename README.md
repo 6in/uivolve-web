@@ -22,7 +22,7 @@ bun run dev
 
 開発サーバー: `http://127.0.0.1:4173/`。起動時にRustをWASMへビルドする。
 
-画面を直接開くには`/pages/hello-world`などを指定する。「サンプル一覧」は18画面を「はじめに」「フォーム・部品」「レイアウト・画面構成」「通信・Rust拡張」「データ保存」「アプリケーション例」に分け、短い説明とともに表示する。一覧は折りたため、画面選択欄にも同じカテゴリがある。並び・説明は`src/screen-catalog.js`で管理する。旧`?screen=hello-world`も同じ画面を読み込む。プレビュー例: `http://127.0.0.1:4174/pages/hello-world`。戻る・進むにも対応する。
+画面を直接開くには`/pages/hello-world`などを指定する。「サンプル一覧」は21画面を「はじめに」「フォーム・部品」「レイアウト・画面構成」「通信・Rust拡張」「データ保存」「アプリケーション例」に分け、短い説明とともに表示する。一覧は折りたため、画面選択欄にも同じカテゴリがある。並び・説明は`src/screen-catalog.js`で管理する。旧`?screen=hello-world`も同じ画面を読み込む。プレビュー例: `http://127.0.0.1:4174/pages/hello-world`。戻る・進むにも対応する。
 
 ```sh
 bun run build       # WASM + Vite+本番ビルド → dist/
@@ -130,6 +130,12 @@ DOM版はネイティブ入力・ボタンを使用する。Canvas版はキー�
 
 このDSLはuivolveの宣言的な部品・配置という考えを踏まえた小さな試験用フォーマット。uivolve / ExtJSとの完全互換はない。
 
-スクリプトは同期実行。宣言したHTTP GETとUnary RPC、保存・ファイル操作の依頼と完了handlerを提供し、非同期I/Oはホストが担当する。汎用POST、Streaming、`async/await`、タイマー、モジュールimport、時刻APIは未実装。配信キャッシュは公開ソース用で、完全なオフライン起動は提供しない。操作数上限などは応答性のための制限であり、第三者コードを安全に実行するための隔離環境を保証しない。
+スクリプトは同期実行。宣言したHTTP GET、HTTPアダプターのGET/POST/PUT/PATCH/DELETE/HEADとUnary RPC、保存・ファイル操作の依頼と完了handlerを提供し、非同期I/Oはホストが担当する。Streaming、`async/await`、タイマー、モジュールimportは未実装。配信キャッシュは公開ソース用で、完全なオフライン起動は提供しない。操作数上限などは応答性のための制限であり、第三者コードを安全に実行するための隔離環境を保証しない。
 
 次の比較では、HTTP取得の拡張、大量データ・仮想スクロール、IMEの実機検証、アクセシビリティ、GPU描画を順に検証できる。
+
+日付・時計は[共通関数の契約](docs/date-functions.md)を参照。`/pages/date-lab`で月末計算とホスト時計を試せる。
+
+[金額・10進数](docs/decimal-functions.md)と[Unicode文字列](docs/text-functions.md)の共通関数を利用できる。`/pages/money-lab`と`/pages/text-lab`で試せる。
+
+AIによる開発は[参照入口](docs/ai-development.md)から必要な契約を選ぶ。HTTPのパス変数と本文付き送信は[HTTPアダプター契約](docs/http-adapter.md)を参照。

@@ -4,3 +4,4 @@ export { createUiTools, registerUiTools } from "./ui-tools.js";
 export { ResourceClient } from "./resource-client.js";
 export { HostEffects, hostError } from "./host-effects.js";
 export { httpAdapter } from "./adapters/http.js";
+export { browserClock } from "./clock.js";

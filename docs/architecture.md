@@ -80,7 +80,7 @@ DOMはkeyを使って既存要素を更新し、Canvasは面全体を再描画�
 
 制御用の公開関数は`input_alloc(len)`、`input_free(ptr,len)`、`request(ptr,len)`、`response_len()`。JSは入力を確保してUTF-8 JSONを書き込み、requestが返す応答のポインターと長さを読む。入力はfinallyで解放する。応答はエンジン所有で、次のrequestまで有効。次の呼び出しより前にJSONへ読み取る。メモリが拡張され得るため、呼び出し後はその時点の`memory.buffer`を使う。バイナリには`buffer_store / buffer_ptr / buffer_len / buffer_free`を追加した。[所有権・上限の契約](files-cache-rpc.md)に従う。
 
-操作は`load / event / http_result / storage_result / file_result / rpc_result / dialog_result / layout / theme`。成功は`{ "ok": true, "data": ... }`、失敗は`{ "ok": false, "error": "..." }`。入力の上限は2,000,000バイト。現在のWASMはブラウザのimportを要求しない。HTTP取得・保存・描画APIはホストが担当する。各操作の詳細は[画面形式](screen-format.md)、[HTTP取得](tutorial-http-grid.md)、[保存・型](platform-features.md)、[ファイル・RPC](files-cache-rpc.md)、[独自ダイアログ](dialogs.md)、[レイアウト](layouts.md)、[テーマ](theme-format.md)を参照する。
+操作は`load / event / host_result / http_result / storage_result / file_result / rpc_result / dialog_result / layout / theme`。成功は`{ "ok": true, "data": ... }`、失敗は`{ "ok": false, "error": "..." }`。入力の上限は2,000,000バイト。現在のWASMはブラウザのimportを要求しない。HTTP取得・保存・描画APIはホストが担当する。各操作の詳細は[画面形式](screen-format.md)、[HTTP取得](tutorial-http-grid.md)、[保存・型](platform-features.md)、[ファイル・RPC](files-cache-rpc.md)、[独自ダイアログ](dialogs.md)、[レイアウト](layouts.md)、[テーマ](theme-format.md)を参照する。
 
 Rhaiの`http_get(name)`は要求を一時キューへ置く。stateとUIの検証後に要求を確定し、結果へ`effects`を添える。ホストは画面JSONを基準にURLを解決し、ResourceClientでJSONを取得してid付きの`http_result`を送る。Runtimeは進行中のidだけを受け入れ、最新stateと応答を受け取りhandlerへ渡す。通常のイベントと同じ確定処理を通し、完了でもrevisionが進む。画面置換の成功時にホストが進行中の取得を中止し、世代番号でも遅延応答を破棄する。
 
@@ -94,6 +94,10 @@ HTTP認証はホストのResourceClientへ置く。画面・Rhai・テーマは�
 
 WebMCPも人の入力と同じWASMイベントを実行する。ツールの登録機構とUI処理は独立し、WebMCP未対応でも通常UIは動く。ツールの変更要求はscreen token・revision・可視性を検査するが、クライアント内のUI検証はサーバーの認可を代替しない。
 
-Rhaiは同期実行で、操作数などの制限を持つ。非同期HTTP GET・Unary RPC・ブラウザ保存・ファイル操作・ダイアログは依頼・完了handlerの契約で扱う。HTTP・JSON保存・ファイル・RPC・ダイアログすべての準備とバッファ容量の確認が通ってからstateとeffectsを確定する。HTTPは従来のkind省略、追加操作はkind=storage/file/rpcでホストへ振り分ける。kind=dialogは発行通知で、表示はSceneの構成を両レンダラーが描画する。完了handlerもstateSchemaの検証を通る。汎用POST・タイマー・GPU描画・サーバー同期は未対応。現段階の制限は[README](../README.md)と部品別の契約に記載する。
+Rhaiは同期実行で、操作数などの制限を持つ。非同期HTTP GET・Unary RPC・ブラウザ保存・ファイル操作・ダイアログは依頼・完了handlerの契約で扱う。HTTP・JSON保存・ファイル・RPC・ダイアログすべての準備とバッファ容量の確認が通ってからstateとeffectsを確定する。HTTPは従来のkind省略、追加操作はkind=storage/file/rpcでホストへ振り分ける。kind=dialogは発行通知で、表示はSceneの構成を両レンダラーが描画する。完了handlerもstateSchemaの検証を通る。タイマー・GPU描画・サーバー同期は未対応。現段階の制限は[README](../README.md)と部品別の契約に記載する。
 
 `alert / confirm / prompt`はWASMがFIFO・入力下書き・回答・レイアウトを管理し、既存windowと同じmodal層の部品としてSceneへ構成する。DOMは領域内のDOM、CanvasはCanvasへ描画する。両側は同じ1件の依頼を共有し、回答は通常のeventから最新stateの完了handlerへ届く。WebMCPも表示中の入力・ボタンを通常のui_dispatchで操作でき、背景はBLOCKEDになる。独自ホスト用のdialog_result ABIも維持する。
+
+日付計算はRustのextensions/date.rs、時計の採取はホストのsrc/clock.js。Rhaiを実行するABI操作にclockを渡し、Runtimeの実行スコープで保持する。画面loadではinitとdatepicker.todayへ同じサンプルを使う。[日付・時計の契約](date-functions.md)を参照。
+
+汎用ホスト操作はengine/src/host.rsの宣言・依頼・pendingを使い、src/host-effects.jsが登録済みアダプターへ配送する。現在の組み込みアダプターはsrc/adapters/http.js。kind=host、v=1のeffectsを受け、host_resultで最新stateのhandlerへ戻す。動的なHTTP引数の検証はホストの実行時に行う。[現行HTTP契約](http-adapter.md)を参照。
