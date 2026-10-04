@@ -34,3 +34,10 @@
 - 想定外: .agents配下は対話セッションのsandboxで読み取り専用のため、承認済みのサンドボックス外コマンドで整形した。
 - やり直し: 整形コマンドを権限付きで1回再実行。
 - 次への注意: danger-full-accessで再開する。T1の4ファイルは検証済みだが未コミットのまま、次のimplターンで取り込む。T1は未完了表示を維持し、turnは3のまま。BLOCKED.mdは前回停止の記録であり、localhostと整形障害は解消済み。ブラウザrunner欠如を成功扱いにしない。
+
+## turn 5 — impl — T2 host_cancelとpendingを消費しない進捗のengine契約
+
+- やったこと: transactionalなhost_cancelと独立control effect、progressHandlerのload検証、id/操作照合とpendingを保持するhost_progress ABI/JS progressHostを実装。最新stateへの適用、handler/state/effect検証失敗のrollback、不正payload・終了後拒否を実WASMとRustで確認。全JS531件、Rust15件、転送基盤14件、WASM生成、check、docs:check（412リンク）、buildが成功。既存テスト期待値の変更なし。
+- 想定外: 最初に推定したloopパスが存在せず、PATH上のgsd-lite-loop.shで解決した。差分レビューでtotal欠落と余分なキーの組合せが通ることを見つけ、明示的な必須キー検証と試験を追加した。
+- やり直し: 1 回（loop呼び出しパスの修正）。検証失敗による立て直しは0回。payload検証修正後に全テスト/check/buildを再確認した。
+- 次への注意: 次はT3のみ。loopはPATH上のgsd-lite-loop.shを使う。進捗ABIはdata={operation,transferred,total}（非負の安全整数、totalはnullまたはtransferred以上）を受け取る。cancel effectはkind=host_cancel/v=1/operationでIDを消費しない。runtime/HostEffectsの配送接続、generation照合、頻度制御はT8で実装する（追従先の既存runtime/host-effectsを確認済み）。T11未完成のためverify:transferはまだ最終合格用に実行しない。
