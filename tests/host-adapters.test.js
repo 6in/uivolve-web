@@ -514,3 +514,64 @@ it("discards old generation progress and completion and preserves committed resu
     outcome: "committed",
   });
 });
+
+it("cancels reserved progress on reset and isolates reused ids from the old transfer", async () => {
+  vi.useFakeTimers();
+  const pending = [];
+  const current = transferHost(
+    (op, args, context) =>
+      new Promise((resolve) => {
+        pending.push({ context, resolve });
+      }),
+  );
+  try {
+    const old = current.effects.run([transferEffect(1)]);
+    pending[0].context.progress({ transferred: 1, total: null });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(current.progress).toHaveBeenCalledTimes(1);
+    pending[0].context.progress({ transferred: 2, total: null });
+    await vi.advanceTimersByTimeAsync(99);
+    expect(current.progress).toHaveBeenCalledTimes(1);
+    current.effects.reset(current.prepared);
+    expect(pending[0].context.signal.aborted).toBe(true);
+    const fresh = current.effects.run([transferEffect(1)]);
+    pending[1].context.progress({ transferred: 7, total: 9 });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(current.progress.mock.calls).toEqual([
+      [1, { operation: "receive", transferred: 1, total: null }],
+      [1, { operation: "receive", transferred: 7, total: 9 }],
+    ]);
+    pending[0].context.progress({ transferred: 3, total: null });
+    pending[0].resolve({ generation: "old" });
+    await old;
+    expect(current.complete).not.toHaveBeenCalled();
+    expect(pending[1].context.signal.aborted).toBe(false);
+    pending[1].resolve({ generation: "new" });
+    await fresh;
+    expect(current.complete.mock.calls).toEqual([[1, ok({ generation: "new" })]]);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(current.progress).toHaveBeenCalledTimes(2);
+  } finally {
+    current.effects.dispose();
+    for (const entry of pending) entry.resolve({});
+    vi.useRealTimers();
+  }
+});
+
+it.each([0, 1])("checks the final transfer response UTF-8 limit at boundary +%s", async (extra) => {
+  const overhead = new TextEncoder().encode(JSON.stringify(ok({ body: "" }))).length;
+  const result = { body: "a".repeat(1_000_000 - overhead + extra) };
+  const current = transferHost(async () => result);
+  try {
+    await current.effects.run([transferEffect(1)]);
+    expect(current.complete).toHaveBeenCalledOnce();
+    if (extra)
+      expect(current.complete.mock.calls[0][1].error).toMatchObject({
+        code: "LIMIT",
+        outcome: "committed",
+      });
+    else expect(current.complete.mock.calls[0][1]).toEqual(ok(result));
+  } finally {
+    current.effects.dispose();
+  }
+});

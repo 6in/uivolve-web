@@ -7,6 +7,7 @@ import { UiRuntime } from "../src/runtime.js";
 import { createApplication, validateAppConfig } from "../src/application.js";
 import { createUiTools } from "../src/ui-tools.js";
 import { readPageRoute } from "../src/page-router.js";
+import { memoryOpfs } from "./helpers/opfs.js";
 
 it("uses one sampled clock for datepicker.today and init while preserving explicit today", async () => {
   let nowMs = Date.parse("2026-10-04T23:59:59.999+09:00");
@@ -326,6 +327,142 @@ it("does not apply an old HTTP completion after switching screens or disposing",
   resolve("{}");
   await runtime.whenIdle();
   expect(onState).toHaveBeenCalledTimes(calls);
+});
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+async function downloadRuntime(progressBody = "s.progress=p.transferred;s") {
+  const fs = memoryOpfs();
+  const previousNavigator = globalThis.navigator;
+  vi.stubGlobal("navigator", { storage: fs.storage });
+  const onState = vi.fn();
+  const onError = vi.fn();
+  const runtime = await host({
+    onState,
+    onError,
+    resources: new ResourceClient({
+      baseUrl: "https://example.test/app/",
+      fetch: vi.fn(
+        async () =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(new Uint8Array([1]));
+                controller.enqueue(new Uint8Array([2]));
+                controller.close();
+              },
+            }),
+          ),
+      ),
+    }),
+    connections: { api: { adapter: "http", baseUrl: "https://example.test/api/" } },
+  });
+  runtime.compile(
+    {
+      ...definition,
+      id: "runtime-transfer",
+      state: { progress: 0, result: null },
+      stateSchema: undefined,
+      files: { disk: { backend: "opfs", access: "readwrite", handler: "received" } },
+      operations: {
+        download: {
+          connection: "api",
+          action: "http.download",
+          handler: "received",
+          options: { progressHandler: "progress" },
+        },
+      },
+      ui: { xtype: "button", itemId: "download", handler: "download" },
+    },
+    `fn init(s){s} fn download(s,e){host_call("download", #{file: #{volume:"disk",path:"data.bin"}});s}
+      fn received(s,r){s.result=r;s} fn progress(s,p){${progressBody}}`,
+    "pages/home.yaml",
+  );
+  const entered = deferred();
+  const release = deferred();
+  let writes = 0;
+  fs.controls.beforeWrite = async () => {
+    if (++writes === 2) {
+      entered.resolve();
+      await release.promise;
+    }
+  };
+  return { runtime, fs, onState, onError, entered, release, previousNavigator };
+}
+
+it.each(["replace", "dispose"])(
+  "drops transfer progress and completion after runtime %s while a write is pending",
+  async (action) => {
+    const fixture = await downloadRuntime();
+    const { runtime, onState, onError, entered, release, previousNavigator } = fixture;
+    try {
+      const complete = vi.spyOn(runtime.engine, "completeHost");
+      const progress = vi.spyOn(runtime.engine, "progressHost");
+      runtime.dispatch("download");
+      await entered.promise;
+      await vi.waitFor(() => expect(runtime.state.progress).toBe(1));
+      expect(progress).toHaveBeenCalledTimes(1);
+      if (action === "replace") runtime.compile(definition, script, "pages/home.yaml");
+      else runtime.dispose();
+      const snapshot = runtime.snapshot();
+      const count = onState.mock.calls.length;
+      release.resolve();
+      await runtime.whenIdle();
+      expect(complete).not.toHaveBeenCalled();
+      expect(progress).toHaveBeenCalledTimes(1);
+      expect(onState).toHaveBeenCalledTimes(count);
+      expect(runtime.snapshot()).toEqual(snapshot);
+      expect(onError.mock.calls.filter(([error]) => error)).toEqual([]);
+    } finally {
+      release.resolve();
+      await runtime.whenIdle();
+      runtime.dispose();
+      vi.stubGlobal("navigator", previousNavigator);
+    }
+  },
+);
+
+it("reports a real WASM progress handler rollback and still commits the downloaded file once", async () => {
+  const fixture = await downloadRuntime(
+    's.progress=999;host_cancel("download");throw "progress failed";s',
+  );
+  const { runtime, fs, onError, entered, release, previousNavigator } = fixture;
+  try {
+    const complete = vi.spyOn(runtime.engine, "completeHost");
+    runtime.dispatch("download");
+    await entered.promise;
+    await vi.waitFor(() =>
+      expect(onError.mock.calls.some(([error]) => error?.message.includes("progress failed"))).toBe(
+        true,
+      ),
+    );
+    expect(runtime.state).toEqual({ progress: 0, result: null });
+    release.resolve();
+    await runtime.whenIdle();
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(runtime.state.result).toMatchObject({
+      ok: true,
+      data: { body: null, files: [{ size: 2 }] },
+    });
+    const disk = fs.root.children
+      .get("uivolve-web")
+      .children.get("fs")
+      .children.get("runtime-transfer")
+      .children.get("disk");
+    const file = await disk.children.get("data.bin").getFile();
+    expect([...new Uint8Array(await file.arrayBuffer())]).toEqual([1, 2]);
+  } finally {
+    release.resolve();
+    await runtime.whenIdle();
+    runtime.dispose();
+    vi.stubGlobal("navigator", previousNavigator);
+  }
 });
 
 it("uses an application-specific page catalog for routes and WebMCP", async () => {

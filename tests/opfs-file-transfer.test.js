@@ -3,6 +3,126 @@ import { memoryOpfs } from "./helpers/opfs.js";
 import { httpAdapter } from "../src/adapters/http.js";
 import { FileClient } from "../src/file-client.js";
 import { HostEffects } from "../src/host-effects.js";
+import { WasmEngine } from "../src/engine.js";
+import { readFile } from "node:fs/promises";
+
+it.each(
+  ["Write", "Close", "Abort"].flatMap((stage) =>
+    ["cancel", "timeout", "replace"].map((stop) => [stage, stop]),
+  ),
+)("keeps real-WASM %s transfers exclusive through %s and settlement", async (stage, stop) => {
+  const f = await downloadFixture({ overwrite: true, timeout: 1 });
+  await f.seed();
+  const stream = f.stream(stage === "Abort" ? [[1], [2, 3, 4, 5]] : [[65]]);
+  const wasm = await WebAssembly.compile(
+    await readFile(new URL("../public/engine.wasm", import.meta.url)),
+  );
+  const engine = new WasmEngine((await WebAssembly.instantiate(wasm, {})).exports);
+  const definition = {
+    version: 1,
+    id: f.context.scope,
+    title: "Transfer",
+    script: "transfer.rhai",
+    state: { result: null },
+    files: { writable: { backend: "opfs", access: "readwrite", handler: "done" } },
+    operations: { download: { ...f.operation, connection: "api", handler: "done" } },
+    ui: {
+      xtype: "container",
+      items: [
+        { xtype: "button", itemId: "start", handler: "start" },
+        { xtype: "button", itemId: "cancel", handler: "cancel" },
+      ],
+    },
+  };
+  const script =
+    'fn init(s){s} fn start(s,e){host_call("download", #{path: #{id: "one"}, file: #{volume: "writable", path: "日本語.csv"}});s} fn cancel(s,e){host_cancel("download");s} fn done(s,r){s.result=r;s}';
+  engine.load(definition, script);
+  const complete = vi.fn((id, result) => engine.completeHost(id, result));
+  const host = (completion = complete) => {
+    const effects = new HostEffects({
+      adapters: [f.adapter],
+      connections: { api: f.connection },
+      complete: completion,
+    });
+    effects.reset(effects.prepare(definition.operations, "https://example.test/", f.context));
+    return effects;
+  };
+  const effects = host();
+  // A second WASM host shares the scope/volume despite independent effect IDs.
+  const otherEngine = new WasmEngine((await WebAssembly.instantiate(wasm, {})).exports);
+  otherEngine.load(definition, script);
+  const otherComplete = vi.fn((id, result) => otherEngine.completeHost(id, result));
+  const other = host(otherComplete);
+  let release;
+  f.fs.controls[`before${stage}`] = () =>
+    new Promise((resolve) => {
+      release = resolve;
+    });
+  const storeBuffer = vi.spyOn(engine, "storeBuffer");
+  const readBuffer = vi.spyOn(engine, "readBuffer");
+  const pending = effects.run(engine.dispatch("start").effects);
+  try {
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    if (stop === "timeout") {
+      await new Promise((resolve) => setTimeout(resolve, 1050));
+    } else if (stop === "cancel") {
+      await effects.run(engine.dispatch("cancel").effects);
+    } else {
+      effects.reset(effects.prepare(definition.operations, "https://example.test/", f.context));
+      engine.load(definition, script);
+    }
+    expect(complete).not.toHaveBeenCalled();
+    const client = new FileClient({ storage: f.fs.storage });
+    for (const operation of ["read_text", "write_text", "remove"]) {
+      await expect(
+        client.execute(f.context.scope, {
+          operation,
+          volume: "writable",
+          path: f.args.file.path,
+          data: "replacement",
+        }),
+      ).rejects.toMatchObject({ code: "BUSY" });
+    }
+    await other.run(otherEngine.dispatch("start").effects);
+    expect(otherComplete).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({
+        error: expect.objectContaining({ code: "BUSY" }),
+      }),
+    );
+    complete.mockClear();
+    release();
+    await pending;
+    if (stop === "replace") expect(complete).not.toHaveBeenCalled();
+    else {
+      expect(complete).toHaveBeenCalledOnce();
+      expect(complete.mock.calls[0][1]).toMatchObject({
+        error: {
+          code: stop === "timeout" ? "TIMEOUT" : "CANCELLED",
+          outcome: stage === "Close" ? "committed" : "failed",
+        },
+      });
+      expect(complete.mock.results[0].value.state.result.data).toBeNull();
+    }
+    expect(
+      await client.execute(f.context.scope, {
+        operation: "read_text",
+        volume: "writable",
+        path: f.args.file.path,
+      }),
+    ).toBe(stage === "Close" ? "A" : "old");
+    expect(storeBuffer).not.toHaveBeenCalled();
+    expect(readBuffer).not.toHaveBeenCalled();
+    for (const method of ["blob", "arrayBuffer", "text"])
+      expect(stream.response[method]).not.toHaveBeenCalled();
+  } finally {
+    release?.();
+    effects.dispose();
+    other.dispose();
+    await pending;
+    vi.useRealTimers();
+  }
+});
 
 function transferValidation(action = "http.download", options = {}, transferLimit = 104_857_600) {
   const fs = memoryOpfs();

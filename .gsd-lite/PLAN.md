@@ -85,7 +85,7 @@ bun run build
   - 依存: T2、T7
   - 並列サブ作業: なし（配送/実行contextの相互依存）。
 
-- [ ] T9: 異常・並行性の統合回帰
+- [x] T9: 異常・並行性の統合回帰
   - 完了基準: 実WASM→HostEffects→HTTP→OPFSでwrite/close/abort gate中にTIMEOUT/cancel/画面置換を起こし通常read/write/removeと重複転送がBUSY、実処理settle後のみ利用可能を確認。2つのruntimeでも同scope排他。close中取消・成功closeの確定outcome、cleanup失敗、handler失敗、認証変化、最終応答上限、頻度境界を交差試験。WASM bufferとstateに本体を通さず全量読込spyが転送中呼ばれない。既存テスト全体が通る。
   - 対象: tests/opfs-file-transfer.test.js、tests/host-adapters.test.js、tests/files-cache-rpc.test.js、tests/runtime.test.js、発見した問題のsrc/engine修正
   - 依存: T8
