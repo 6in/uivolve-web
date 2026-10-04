@@ -1,0 +1,60 @@
+version: 1
+id: opfs-file-transfer
+title: OPFSファイル転送
+script: home.rhai
+state:
+  notice: CSV取得・加工・送信を開始できます。
+  progress: 受信進捗なし
+  busy: false
+  stage: idle
+files:
+  workspace: { backend: opfs, access: readwrite, handler: fileDone }
+operations:
+  csv:
+    connection: api
+    action: http.download
+    handler: downloaded
+    options: { path: csv, overwrite: true, progressHandler: received }
+  slow:
+    connection: api
+    action: http.download
+    handler: transferDone
+    options: { path: download, overwrite: true, progressHandler: received }
+  upload:
+    connection: api
+    action: http.upload
+    handler: transferDone
+    options: { path: upload, method: PUT }
+  multipart:
+    connection: api
+    action: http.multipart
+    handler: transferDone
+    options: { path: multipart, method: POST }
+  failure:
+    connection: api
+    action: http.download
+    handler: transferDone
+    options: { path: status, overwrite: true }
+ui:
+  xtype: container
+  layout: { type: vbox, gap: 12 }
+  items:
+    - { xtype: displayfield, bind: notice, fieldLabel: 状態 }
+    - { xtype: displayfield, bind: progress, fieldLabel: 受信 }
+    - {
+        xtype: button,
+        itemId: csv,
+        text: CSV取得・加工・複数ファイル送信,
+        handler: start,
+        disabledBind: busy,
+      }
+    - { xtype: button, itemId: slow, text: 低速受信, handler: slow, disabledBind: busy }
+    - {
+        xtype: button,
+        itemId: upload,
+        text: 100 MiB本文アップロード,
+        handler: upload,
+        disabledBind: busy,
+      }
+    - { xtype: button, itemId: failure, text: 失敗応答を確認, handler: failure, disabledBind: busy }
+    - { xtype: button, itemId: cancel, text: 転送を中止, handler: cancel }

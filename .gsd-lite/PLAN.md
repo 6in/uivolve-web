@@ -91,7 +91,7 @@ bun run build
   - 依存: T8
   - 並列サブ作業: A: 排他/cleanup統合（tests/opfs-file-transfer.test.js）。B: 世代/handler回帰（tests/runtime.test.js、tests/host-adapters.test.js）。実装修正は親が統合。
 
-- [ ] T10: テストサーバーとDOM/Canvasサンプル
+- [x] T10: テストサーバーとDOM/Canvasサンプル
   - 完了基準: localhostサーバーにGET、POST/PUT本文、POST/PUT multipart、遅延/容量/非2xx/認証/不正応答のfixtureを用意。受信hash/sizeとmultipart entry順序・同名値・filename/typeを返しサーバー試験で一致確認。maxRequestBodySizeは大容量検証を許可。DOM/Canvas共通YAML/Rhaiでdownload→小CSV加工→別名保存→複数file multipartを表示し、中止/受信進捗/送信中・完了/失敗を扱う。100 MiBはホストがchunkで直接生成しRhai既存上限を迂回拡張しない。既存CRUDサーバーを維持。
   - 対象: scripts/transfer-server.mjs、tests/transfer-server.test.js、examples/opfs-file-transfer/、package.json
   - 依存: T9

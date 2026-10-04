@@ -12,6 +12,7 @@
     "preview": "vp preview",
     "demo:rpc": "bun scripts/rpc-server.mjs",
     "demo:http": "bun scripts/http-server.mjs",
+    "demo:transfer": "bun scripts/transfer-server.mjs",
     "measure:rpc": "bun scripts/measure-rpc.mjs",
     "publish:packages": "bun scripts/publish-packages.mjs",
     "test:rust": "cargo test --manifest-path engine/Cargo.toml",
