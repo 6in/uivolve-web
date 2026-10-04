@@ -18,12 +18,12 @@
     "name": "",
     "path": "."
   },
-  "milestone": "",
-  "phase": "discuss",
-  "next_command": "DISCUSS",
+  "milestone": "opfs-file-transfer",
+  "phase": "research",
+  "next_command": "/gsd-lite-research",
   "branch": {
-    "name": "",
-    "base": ""
+    "name": "gsd-lite/opfs-file-transfer",
+    "base": "main"
   },
   "research": {
     "targets": [
@@ -47,5 +47,5 @@
     "verify": "claude-fable-5-1",
     "reflect": "claude-fable-5-1"
   },
-  "updated_at": "2026-10-04T20:26:54+09:00"
+  "updated_at": "2026-10-04T12:05:21.628479+00:00"
 }
