@@ -148,3 +148,11 @@
 - 想定外: loopの推定パス.gsd-lite/gsd-lite-loop.shは存在せず、PATH上のgsd-lite-loop.shで解決。全試験が成功しても、upload試験がContent-Type欠落を期待しており受け入れ基準違反を検出していなかった。
 - やり直し: 0 回（検証の再実行・実装修正なし。loopパス修正1回）。
 - 次への注意: 次ターンはF1のみ実装。本文upload POST/PUTの既定/明示Content-Typeとmultipartのブラウザ生成boundaryを受信側まで確認し、誤った既存期待値変更を記録する。次のverifyは初回格子とF1差分の回帰を行う。loopはPATH上を使用。BLOCKED.mdは解消済みの履歴であり今回BLOCKEDではない。マージは未実施。
+
+## turn 19 — impl — F1 本文アップロードの既定Content-Type
+
+- やったこと: upload省略時のContent-Typeとmultipart既定file partをapplication/octet-streamに設定し、明示uploadヘッダーとブラウザ生成boundaryを保持。空typeの実OPFS FileをPOST/PUTで送信しサーバーの受信ヘッダー・本文hash・size、multipart順序を照合した。bun run verify:transfer成功（JS614件、Rust15件、check警告0、445文書リンク、build、Chromium152.0.7977.64のDOM/Canvas・100 MiB・CORS/認証・2タブ排他）。
+- 想定外: 初回loop推定パスが存在せずPATH上で解決。Chromiumは.txt/.binのFile typeを推定するため空type試験は拡張子なしを使用。Bunのmultipart解析も型をファイル名から推定するためサーバーfixtureは生MIMEヘッダーの型を返すよう修正。文書例試験にも空type期待が残っていた。
+- やり直し: 5 回（受信fixture追加に伴うserver期待更新、File由来型に依存しない既定値へ修正、文書例期待更新、空type fixtureを拡張子なしへ変更、multipart受信型を生MIMEヘッダーで検証）。loopパス修正1回。
+- 既存テスト期待値変更: tests/opfs-file-transfer.test.jsの本文送信content-type欠落期待をapplication/octet-streamに、multipart既定partの空typeをapplication/octet-streamに変更。tests/documented-transfer.test.jsのsource.csv空type期待も同じ既定値へ変更。要件の既定Content-Typeに合わせるため。tests/transfer-server.test.jsの本文2箇所にcontentType:null、multipartにboundary一致を追加（fixture応答への受信ヘッダー追加に追従、直接Uint8Array/stream送信の挙動は維持）。
+- 次への注意: F1完了、次はgsd-lite-verifyのみ。loopはPATH上を使用。multipartの受信型はBun解析後のFile.typeではなく生MIMEヘッダーで照合する。空type OPFS fixtureは拡張子なし。実装ターンではマージしない。
