@@ -35,7 +35,7 @@ bun run check
 
 ## Tasks
 
-- [ ] T1: 記事限定検査と根拠台帳の準備
+- [x] T1: 記事限定検査と根拠台帳の準備
   - 完了基準: `scripts/check-retrospective.mjs` と `scripts/verify-retrospective.mjs` を追加。stage draftは本文/例/字数/相対ローカルリンクを、diagramsはさらに3図を、completeはさらに画面PNG/直下5ファイル/入口1件を検査する。未完成成果物をcompleteで成功させない。記事の各節とAI節を同じUnicode計数器で集計し6,000〜8,000字・AI20〜30%を判定する。フェンス、末尾「参考リンク」以下、画像alt、リンク先URL、装飾を除外し、空白/改行はレイアウトとして除外する。境界6,000/8,000、絵文字、リンク、コード、altの小さな自己検証をscratchで行い結果を保存。恒久的な実装コピーのテストは増やさない。最終判定は非0終了を伝播し元の失敗とcleanup失敗を分け、環境準備/全コマンド順を確認できる。BLOG-EVIDENCEに8内容/コード/画像/数値の照合欄を用意する。
   - 対象: `scripts/check-retrospective.mjs`、`scripts/verify-retrospective.mjs`、`.gsd-lite/BLOG-EVIDENCE.md`、scratchの自己検証/ログ
   - 依存: なし
