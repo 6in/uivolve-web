@@ -41,3 +41,10 @@
 - 想定外: 最初に存在しない.gsd-lite/gsd-lite-loop.shを指定しPATH入口へ修正。3担当のbundled Chromiumが未インストールで、既存の可視Chromiumへ切替。親のhost-effects縮小画像パスを誤り、実在の-preview.pngへ修正。
 - やり直し: 親2回（loop入口、縮小画像パス）。担当の起動修正各1回、配置修正architecture1回/event-flow2回/host-effects1回。検証失敗に対する立て直し0回。
 - 次への注意: 次はT4のみ、実Hello World撮影と記事専用撮影スクリプト。PATH上のgsd-lite-loop.sh --whereを使う。Playwrightのbundled Chromiumがないため既存/snap/bin/chromium（/usr/bin/chromium-browserも入口）を使った。制作ソースはscratch、技術PNGは追跡済み。本文上限まで74字。整形→build→preview→撮影の順、実Canvas画素を開いて読む。phase=impl/next_command=/gsd-lite-implを保持。
+
+## turn 6 — impl — T4 実Hello WorldのDOM/Canvas操作と撮影
+
+- やったこと: playwright-skillを読み、管理文書整形→本番build→自己管理preview→可視ChromiumでDOM/Canvas各起点の実入力/押下・入力のみ不変・空白Worldを11チェック。両側Hello 太郎の実比較領域PNG（1225×296）を保存し、Canvasの実画素と日本語/切れ/重なりを目視確認。ブラウザ/OS/URL/viewport/操作/PNG検査/サーバー終了を台帳へ記録。frozen install、WASM生成、対象UT16件、diagrams、docs:check、check成功。実装コミット33a54d3。既存テスト期待値の変更なし。
+- 想定外: 存在しない./gsd-lite-loop.shを指定しPATH入口へ修正。lean-ctxのプロジェクト外skill読み込みは拒否され通常読取へ切替、ctx_searchの非対応pathキーを修正。初回撮影で実Rhaiにない末尾!を検証側で期待しtimeout。CSS領域の小数座標がPNGの画素寸法へ丸められるため台帳はdecodePngの実寸を採用。
+- やり直し: 1回（撮影の末尾!を実Rhaiと同じHello 太郎/World/花子へ修正、再撮影成功）。成功時はpreview/ブラウザ終了、cleanupErrorsなし。
+- 次への注意: 次はT5のみ、docs入口と最終照合/verify-retrospective。PATH上のgsd-lite-loop.sh --whereを使う。撮影スクリプトは既存/usr/bin/chromium-browserを可視起動しpreviewを自己管理、4174が使用済みなら失敗。文書整形→build→撮影順を守る。Rhai挨拶に末尾!はない。PNG寸法はCSS領域から推測せずdecodePngで確認。本文7926字/AI24.968%、入口未追加のためcompleteはT5。phase=impl、next_command=/gsd-lite-implを保持。
