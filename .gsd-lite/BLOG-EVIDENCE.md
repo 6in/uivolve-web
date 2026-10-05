@@ -1,6 +1,6 @@
 # 開発振り返り記事 根拠台帳
 
-状態: T4の実Hello World操作・DOM/Canvas撮影・実PNG目視まで完了。文書入口と最終判定はT5で実施。機械検査は文章の正しさや画像の可読性を認定しない。
+状態: T5の文書入口・最終要件照合・最終判定まで完了。独立したverifyへ引き継ぐ。機械検査は文章の正しさや画像の可読性を認定しない。
 
 ## 必須8内容と主張照合
 
@@ -51,7 +51,7 @@
 - T1自己検証: `bun .gsd-lite/logs/development-retrospective-blog/scratch/turn-003-selfcheck.mjs`、23項目成功。ソースと結果は同scratchのturn-003-selfcheck.mjs / turn-003-selfcheck.log。6,000/8,000とAI20/30%の境界、絵文字、リンク/コード/alt除外、各節/AI共通計数、未完成complete失敗、PNG破損、外部画像/欠落リンク/余計なファイル拒否を確認。最終コマンド順と終了7で後続停止はspawn代替で確認し、実ビルド/撮影の成功とは扱わない。
 - T1実検査: `bun install --frozen-lockfile`、`bun run check`（217ファイル整形、92ファイルlint）、`bun run docs:check`（445リンク/56文書）成功。`bun scripts/check-retrospective.mjs --stage draft`は本文がT2のためENOENT/終了1を確認。実記事のdraft/diagrams/completeと最終判定はT2〜T5で実行する。
 - 最終判定: `bun scripts/verify-retrospective.mjs`。依存→WASM→対象UT→check→docs:check→build→complete→撮影。各コマンドと出力/終了コードをlogsへ保存。
-- 最終字数/AI比率、check/docs:check/UT/build/complete/撮影結果、残留制限: 未実施。
+- 最終字数/AI比率、check/docs:check/UT/build/complete/撮影結果、残留制限: 下記T5に記録。
 
 ## T2実行・主張の照合（turn 4）
 
@@ -88,3 +88,20 @@
 - 撮影: 実在する `.comparison` 領域をPlaywright locator.screenshotで切り出し、1225×296のPNGを保存。名前欄のHTML編集overlayを閉じ、Canvas側は実画素。元の画面配置・表示のまま、合成なし。PNG署名/CRC/展開/寸法もdecodePngで確認（CSS切り出し1224×295に対し小数座標の画素丸めでPNGは1225×296）。
 - 成功証跡: scratch/capture-1791168700657.json（ブラウザ/OS/操作/切り出し座標/全11チェック）。serverStopped=true、cleanupErrors=[]。初回失敗証跡はscratch/capture-1791168690140.json。Rhaiの挨拶にない末尾!を検証側で期待してtimeoutしたため実物へ合わせた。既存テスト期待値は変更していない。
 - 検査: frozen install、build（WASM 4464 KiB）、対象UT2ファイル16件、diagrams（7926字/AI1979字・24.968%）、docs:check（445リンク/56文書）、check（219整形/93lint/cargo fmt）成功。記事直下はindex.md+PNG4枚で各画像の相対参照/alt/説明はT2のまま。docs入口/complete/最終判定はT5で実施する。
+
+## T5最終要件照合・独立再実行（turn 7）
+
+| 確認対象             | 最終照合と結果                                                                                                                                                                                                                                            |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 必須8内容・文体      | 固定順の全8節を本文と上記実物照合表へ照合。出発点、共通エンジン、Hello World、通信/保存、WebMCP、Worker/UT、AI運用、制限を確認。短い段落・ですます・絵文字を保持。本文の追加推敲は不要。                                                                  |
+| ABI・状態確定        | src/engine.js:45-67とengine/src/abi.rs:150-159で入力finally解放/応答所有権/次requestまでの寿命/呼出後memory.bufferを再確認。lib.rs:930-983の候補検証後の確定、752-775の最新stateを再確認。本文と3図の矢印/責務が一致。                                    |
+| WebMCP・モック・UT   | application.js:61,159、ui-tools.js:294以降と本文を照合。比較デモ起動登録と独立アプリ明示設定、対応API/secure contextを区別。モックは明示登録/固定応答/CRUDで任意コード不可。掲載UTはモデルと実WASMで、実Worker/CORS/描画を保証しない。                    |
+| 転送の境界           | docs/opfs-file-transfer.md:115-127とhost-effects.jsの世代検査を再照合。JS側のファイル本体、最新state、世代/中止、cleanupがsettleするまで排他、close開始後巻戻しなし/成功後削除なし、Web Locks未対応時のホスト内保証を本文に確認。                         |
+| 歴史・数値・人の介入 | 本文の履歴範囲868983e〜a8fdffe、20試行/5697秒の限定、3停止/人の再開、Content-Type差し戻しをT2の履歴根拠へ照合。数値検索で古い画面件数/未記録値の断定は0件。モデル/費用を未取得とし、考察を記録上の事実と区別。                                            |
+| 未取得・残留制限     | 実IME/支援技術の網羅検証、実Worker/CORS、全OS/全ブラウザ、GPU/FPS性能実験、正確な実行モデル/費用は今回未取得。CPU再描画時間から性能優位を断定しない。今回の11操作をこれらの保証へ拡張しない。                                                             |
+| 入口・配置・画像     | docs/README.mdに相対入口1件。直下はindex.mdとPNG4枚のみ。全画像の相対参照/日本語alt/説明をcompleteで確認。4枚の実PNGを開き、責務/候補と確定/最新state/JS本体経路と、両側のHello 太郎、日本語欠字/切れ/重なりがないことを再確認。T3の800px目視記録も保持。 |
+
+- 最終判定は管理文書整形後、既存サーバーなしを検出して `bun scripts/verify-retrospective.mjs` を実行。frozen install（96 installs/172 packages、変更なし）→WASM（4464 KiB）→対象UT（2ファイル16件）→check（219整形/93lint/cargo fmt）→docs:check（446リンク/56文書）→本番build→complete→実ブラウザ撮影の全8工程が終了0。既存テスト期待値の変更なし。
+- 本文7926字、AI1979字、24.968%。PNG実寸はarchitecture 1600×900、event-flow 1600×1100、host-effects 1600×1080、dom-canvas 1225×296。再撮影でCPU計測表示だけが変わり、実比較領域をそのまま保存。
+- 最終ログ: `.gsd-lite/logs/development-retrospective-blog/verification-1791168900750.log`。撮影証跡: 同scratchの`capture-1791168907119.json`。Chromium 152.0.7977.64/Linux、127.0.0.1:4174/pages/hello-world、1440×1000、deviceScaleFactor=1。DOM/Canvas各起点・入力のみ不変・空白World・最後に太郎の11チェック成功、failure=null、serverStopped=true、cleanupErrors=[]。
+- 独立再実行はリポジトリルートで `bun scripts/verify-retrospective.mjs`。追跡済みの検査/撮影スクリプトとPNGを使い、scratch制作ソースや起動済みサーバーを前提にしない。既存Chromium `/usr/bin/chromium-browser` と可視ブラウザ用DISPLAY、空いている4174が必要。実行時の証跡はlogsへ生成する。公開/pushは行わない。
