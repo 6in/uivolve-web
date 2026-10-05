@@ -1,6 +1,6 @@
 # 開発振り返り記事 根拠台帳
 
-状態: T2原稿と掲載例の実行・実装照合を完了。図・撮影・最終判定は未実施。機械検査は文章の正しさや画像の可読性を認定しない。
+状態: T3技術図3枚の制作・800px幅目視とdiagrams検査まで完了。撮影・最終判定は未実施。機械検査は文章の正しさや画像の可読性を認定しない。
 
 ## 必須8内容と主張照合
 
@@ -26,12 +26,12 @@
 
 ## 画像・目視
 
-| PNG              | 制作ソース/再作成方法・寸法 | 800px表示の日本語/矢印/切れ/重なり・本文との照合 | 結果   |
-| ---------------- | --------------------------- | ------------------------------------------------ | ------ |
-| architecture.png | 未記入                      | JS取得/描画とWASMの責務                          | 未生成 |
-| event-flow.png   | 未記入                      | 候補と確定、両描画                               | 未生成 |
-| host-effects.png | 未記入                      | 最新state、JSファイル本体/WASMメタデータ         | 未生成 |
-| dom-canvas.png   | 未記入                      | 両側Hello 太郎、Canvas実画素                     | 未撮影 |
+| PNG              | 制作ソース/再作成方法・寸法                       | 800px表示の日本語/矢印/切れ/重なり・本文との照合                                      | 結果       |
+| ---------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------- | ---------- |
+| architecture.png | scratch/turn-005-architecture.html/.cjs、1600×900 | 800×450で日本語/矢印/切れ/重なりを確認。HTTP→JS→WASM→Scene→JS描画と本文一致           | T3確認済み |
+| event-flow.png   | scratch/turn-005-event-flow.html/.js、1600×1100   | 800×550で日本語/矢印/切れ/重なりを確認。候補/検証/確定/失敗時保持/両描画と本文一致    | T3確認済み |
+| host-effects.png | scratch/turn-005-host-effects.html/.js、1600×1080 | 800×540で日本語/矢印/切れ/重なりを確認。最新state/JS本体経路/WASMメタデータと本文一致 | T3確認済み |
+| dom-canvas.png   | 未記入                                            | 両側Hello 太郎、Canvas実画素                                                          | 未撮影     |
 
 撮影環境・方法: ブラウザ/OS/URL/viewport/操作順/切り出し/サーバー終了はT4で記入。
 
@@ -69,3 +69,12 @@
 - 人の考察: AI節の契約から期待値を決める提案と次の実験は筆者の考察として記述。記録にない感情・発言の引用はなし。
 
 - T2追加検査: bun run check成功（218ファイル整形、92ファイルlint、cargo fmt check）、bun run docs:check成功（445ローカルリンク/56文書）、git diff --check成功。整形後のdraftと掲載断片を再確認。diagrams/complete/build/撮影の最終検証はT3〜T5で実施する。
+
+## T3技術図の制作・目視（turn 5）
+
+- 制作ソースは `.gsd-lite/logs/development-retrospective-blog/scratch/`。再作成は `node /home/parallels/.agents/skills/playwright-skill/run.js` に同scratchの `turn-005-architecture.cjs`、`turn-005-event-flow.js`、`turn-005-host-effects.js` をそれぞれ絶対パスで渡す。ローカルHTMLを既存Chromiumの可視ブラウザで描画、依存追加なし。PNG自体を追跡し、scratchは再制作記録で最終判定の依存にしない。
+- フォントはNoto Sans CJK JP。各制作時にdocument.fonts.check成功。原寸と800px幅の実PNGを開き、欠字・切れ・重なり・矢印を確認。親も3枚の800px幅PNGを開き、日本語ラベルと矢印を確認した。
+- architecture: HTTP取得/認証/YAML変換はJS、状態・イベント・Rhai・配置は共通Rust/WASM、Sceneから両レンダラーへ。WASMがfetch/描画を直接呼ぶ矢印なし。
+- event-flow: DOM/Canvas入力から現在stateをコピーした候補、Rhai、検証/effects準備、成功時の確定を区別。Rhai/検証失敗は現在state/部品木保持。lib.rs:621,704-718,930-983に照合。
+- host-effects: host_call時は候補、検証後の確定effectsだけをJSアダプターへ配送。host_resultが最新stateのhandlerへ入り候補を再検証。lib.rs:752-773,930-983に照合。HTTP/OPFSのファイル本体経路はJS側、WASM/JSON stateへの領域・パス・サイズは制御情報として分離。
+- 検査: bun install --frozen-lockfile、bun run build:wasm、対象UT2ファイル16件、bun run check（218ファイル整形/92lint/cargo fmt）、bun run docs:check（445リンク/56文書）成功。diagrams検査は7926字、AI1979字/24.968%、3PNGの署名/デコード/寸法/相対参照が成功。既存テスト期待値の変更なし。dom-canvas撮影とcomplete最終判定はT4/T5で実施する。

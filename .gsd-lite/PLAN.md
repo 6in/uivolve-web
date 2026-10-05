@@ -47,7 +47,7 @@ bun run check
   - 依存: T1
   - 並列サブ作業: なし（同じ本文と根拠台帳を一貫して編集する）
 
-- [ ] T3: 責務・イベント・非同期effectsの日本語技術図を制作
+- [x] T3: 責務・イベント・非同期effectsの日本語技術図を制作
   - 完了基準: architecture/event-flow/host-effectsの3PNGを直下に生成しdiagrams検査が通る。日本語フォントを実描画で確認、画像を開いて欠字/切れ/重なり/矢印を点検、本文幅で読める結果を台帳へ記録。architectureはHTTP取得→JS→共通Rust/WASM→Scene→DOM/Canvas、event-flowはどちらの入力→候補state/Rhai→検証→確定→両描画、host-effectsはhost_call→確定effects→JS/アダプター→host_result→最新stateのhandler→再検証を表す。取得/描画APIをWASMが直接呼ぶ矢印を作らない。候補stateと確定state、JS側のファイル本体経路とWASM側のメタデータを区別する。制作ソース/手順をscratch、再作成情報と画像寸法を台帳へ保存する。ブラウザ描画を使う際はplaywright-skillを先に読む。
   - 対象: 記事直下の`architecture.png`、`event-flow.png`、`host-effects.png`、`.gsd-lite/BLOG-EVIDENCE.md`、scratchの図制作ソース
   - 依存: T2
