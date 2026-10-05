@@ -1,5 +1,12 @@
 # 開発振り返りブログ 進捗
 
+## turn 3 — impl — T1 記事限定検査と根拠台帳の準備
+
+- やったこと: draft/diagrams/completeの本文・字数・AI比率・例リンク・PNGデコード・配置/入口検査と、依存準備から撮影までの最終判定スクリプト、8内容/コード/画像/数値の根拠台帳を追加。scratch自己検証23項目、frozen install、check（217整形/92lint）、docs:check（445リンク/56文書）、git diff --check成功。実装コミットはf8b537b。既存テスト期待値の変更なし。
+- 想定外: scratch自己検証の関数閉じ括弧が1件抜け、初回は構文エラー。実記事draftのENOENT/終了1はT2前なので想定どおり。最終判定順・終了コード伝播はspawn代替で検証し、実UT/build/撮影は未実施。
+- やり直し: 1 回（scratchの構文抜けを修正）。最終確認前にfixture削除を入れ、再実行可能にした。
+- 次への注意: 次はT2のみ。本文は固定順のH2・インラインリンクを使い、4PNG参照はdraftから各1件必要。PNGは非インターレース8bit灰色/RGB/灰色alpha/RGBAを使用。コード/主張の意味と画像の目視は機械検査とは別に台帳へ記録。scratchは実行前の構文確認とfixture初期化を行う。実記事draft/UT/抜粋実行はT2、撮影スクリプトはT4、最終判定はT5。phase=impl、next_command=/gsd-lite-implを保持。
+
 ## turn 2 — plan — 記事・図・実撮影・最終照合を5タスクへ統合
 
 - やったこと: 要件/決定/research、現行コード・例・検査コマンド、直近reflectを照合しPLAN.mdを作成。記事専用のUnicode計数/リンク/PNG検査、実例確認、日本語図3枚、DOM/Canvasの実撮影、最終判定1本と主張台帳を固定。全受け入れ基準とresearchの落とし穴をタスクへ対応付け、docs:checkは445リンク/56文書で成功。
