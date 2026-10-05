@@ -48,3 +48,10 @@
 - 想定外: 存在しない./gsd-lite-loop.shを指定しPATH入口へ修正。lean-ctxのプロジェクト外skill読み込みは拒否され通常読取へ切替、ctx_searchの非対応pathキーを修正。初回撮影で実Rhaiにない末尾!を検証側で期待しtimeout。CSS領域の小数座標がPNGの画素寸法へ丸められるため台帳はdecodePngの実寸を採用。
 - やり直し: 1回（撮影の末尾!を実Rhaiと同じHello 太郎/World/花子へ修正、再撮影成功）。成功時はpreview/ブラウザ終了、cleanupErrorsなし。
 - 次への注意: 次はT5のみ、docs入口と最終照合/verify-retrospective。PATH上のgsd-lite-loop.sh --whereを使う。撮影スクリプトは既存/usr/bin/chromium-browserを可視起動しpreviewを自己管理、4174が使用済みなら失敗。文書整形→build→撮影順を守る。Rhai挨拶に末尾!はない。PNG寸法はCSS領域から推測せずdecodePngで確認。本文7926字/AI24.968%、入口未追加のためcompleteはT5。phase=impl、next_command=/gsd-lite-implを保持。
+
+## turn 7 — impl — T5 文書入口・最終要件照合
+
+- やったこと: docs入口1件を追加し、必須8内容/ABI/WebMCP/モック/UT/転送/履歴/未取得境界を本文・図・根拠台帳で最終照合。整形後にverify-retrospective全8工程成功（対象UT16件、check、446リンク、build、complete、実ブラウザ11操作）。本文7926字/AI24.968%、4PNG目視と再撮影/cleanup成功を台帳へ記録。実装コミット3c4f149。既存テスト期待値の変更なし。
+- 想定外: 最初に存在しない.gsd-lite/gsd-lite-loop.shを指定した。PATH上の入口へ修正して作業場所を解決。再撮影でCPU計測値の表示が変わりPNGを更新した。
+- やり直し: 1 回（loop入口をPATH上へ修正）。実装/最終検証の立て直し0回。
+- 次への注意: 全5タスク完了、phase=verify/next_command=/gsd-lite-verifyへ遷移。PATH上のgsd-lite-loop.sh --whereを使う。独立判定はbun scripts/verify-retrospective.mjs、既存可視Chromium/DISPLAY/空いている4174が必要。根拠台帳のT5と最終ログ/撮影証跡を参照。実IME/支援技術/実Worker/CORS/GPU性能/モデル費用は今回未取得。
