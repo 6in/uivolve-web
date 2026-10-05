@@ -1,85 +1,69 @@
 # 🧩 モックから「動く画面」へ！uivolveをRust/WASMで育ててみた
 
-🎮 **まずは触ってみよう！ [GitHub Pagesの公開デモ](https://6in.github.io/uivolve-web/pages/hello-world/)**
+uivolve-webは、**JSONやYAMLで書いた画面定義を、そのままブラウザで動かすUIエンジンの試作**です。ボタンを押したときの処理はRhaiという小さなスクリプトで書き、Rust/WASMのエンジンが状態と配置を決めて、DOMとCanvasの両方へ表示します。
 
-インストール不要で、ブラウザから試せます。Hello Worldで名前を入力して挨拶ボタンを押したり、サンプル一覧から別の画面を選んだりしながら、この記事を読んでみてください。✨
+まずは触ってみてください。インストールは要りません。
+
+**[公開デモを開く（Hello World）](https://6in.github.io/uivolve-web/pages/hello-world/)**
 
 ![受注管理サンプルのDOM版とCanvas版。件数・合計金額、受注一覧、選択した受注の編集欄が並ぶ画面](./orders.png)
 
-こちらは受注管理サンプル。集計カード、検索、一覧、編集欄を組み合わせた、業務画面の雰囲気です。左がDOM、右がCanvasで、どちらから操作しても同じ状態を表示します。[受注管理を試す](https://6in.github.io/uivolve-web/pages/orders/)から開けます。🧾
+こちらは受注管理のサンプルです。左がDOM、右がCanvas。どちらで操作しても、もう片方に同じ結果が出ます。[受注管理を試す](https://6in.github.io/uivolve-web/pages/orders/)から開けますよ。各パネルの右下にある「0.40 ms」のような数字は、表示の更新にかかったCPU時間です。
 
-### 🧰 どんなことができる？
+この記事では、2026年10月2日から5日までの開発を振り返りながら、次の3つをお話しします。
 
-今の機能をざっくり並べると、こんな感じです。詳しい使い方は[READMEの機能一覧](https://github.com/6in/uivolve-web/blob/main/README.md)からたどれます。
+- この形（Rust/WASM、二つの描画、Rhai）にすると、何がうれしいのか
+- Hello Worldが動くとき、中で何が起きているのか
+- AIに実装を任せてみて、どこで止まったのか
 
-| 分野 | 試せること |
-| --- | --- |
-| 画面づくり | JSON/YAML＋Rhai、画面遷移、動的タブ、テーマ切替、DOM/Canvas表示 |
-| 入力・操作 | テキスト・数値・日付、チェック・ラジオ・選択、スライダー、ダイアログ、KANBAN |
-| 一覧・配置 | Gridの検索・ソート・編集、ツリー・メニュー、パネル・ウィンドウ、各種レイアウト |
-| 表現 | Markdown、コード・差分、チャート・図、会話・ログ、画像・動画・iframeなどの基本機能 |
-| 通信・保存 | HTTP・JWT、IndexedDB・OPFS、ファイル転送、ProtobufのUnary RPC、WebMCP |
-
-部品の対応範囲は[移植対応表](https://github.com/6in/uivolve-web/blob/main/docs/uivolve-port.md)と[ギャラリーの契約](https://github.com/6in/uivolve-web/blob/main/docs/uivolve-gallery.md)へ。編集部品やチャートなどは、まず基本機能を試せる段階です。🎨
-
-**Web Workerへの拡張**では、別スレッドにモックAPIを置き、JSON/YAMLで定義したデータを一覧取得・登録・更新・削除できます。サーバーを用意する前に画面を動かし、後で接続をHTTPへ切り替える使い方です。[WorkerモックAPI](https://github.com/6in/uivolve-web/blob/main/docs/worker-mock-api.md)で構成を紹介しています。⚙️
-
-**AI向けスキル**もあります。[app-dev](https://github.com/6in/uivolve-web/blob/main/skills/uivolve-web-app-dev/SKILL.md)は画面とRhaiでアプリを作るため、[engine-dev](https://github.com/6in/uivolve-web/blob/main/skills/uivolve-web-engine-dev/SKILL.md)はRust/WASMや部品・ホストを拡張するための案内です。[配布・利用方法](https://github.com/6in/uivolve-web/blob/main/docs/skills.md)も用意しています。開発工程を進めるgsd-liteのdiscuss／research／plan／impl／verify／reflectについては、後半で振り返ります。🤖
-
-「画面のモックを作ったら、その定義を使って、実際の動きまで確かめたい！」
-
-uivolve-webは、そんな方向へ進んだWeb向けUIエンジンの試作です。画面をJSONやYAMLで書き、ボタンを押したときの処理はRhaiへ。Rust/WASMが状態と配置をまとめ、DOMとCanvasの両方へ表示します。🦀✨
-
-今回は、その仕組みと開発の歩みを振り返ります。まずは元のuivolveが目指していたことから。ここが分かると、Hello World、WebMCP、仮のサーバー、AIによる開発が、一つの話としてつながります。さっそく見ていきましょう！🚀
+部品や機能の一覧は[README](https://github.com/6in/uivolve-web/blob/main/README.md)にまとめたので、ここでは仕組みと学びに絞ります。
 
 ## 🌱 出発点：uivolveは「モックを作って終わり」にしない
 
-元の[uivolve](https://github.com/6in/uivolve/blob/3d22a3cfab5488afe3c60f8775676a85c51593ec/README.md)は、React製の画面モックアップライブラリです。ExtJSの宣言的なconfigの書き方を取り入れ、部品と配置をDSLで記述します。入力欄や一覧、ボタンを定義して、画面の形を素早く確かめるための道具です。🧩
+元になった[uivolve](https://github.com/6in/uivolve/blob/3d22a3cfab5488afe3c60f8775676a85c51593ec/README.md)は、React製の画面モックアップライブラリです。入力欄や一覧、ボタンを宣言的なDSLで書いて、画面の形をすばやく確かめます。
 
-その狙いは、**モックを素早く作り、そのDSLをAIへ渡して、任意のUIライブラリで本実装につなげること**。ここが大事です。見た目を決める作業と、コードを書く作業の間に、読み取れる画面定義を置きます。
+おもしろいのは、その先です。uivolveの狙いは、**作ったモックのDSLをAIへ渡して、好きなUIライブラリで本実装してもらうこと**。見た目を決める作業とコードを書く作業のあいだに、人もAIも読める画面定義を置くわけですね。Markdownの仕様書にDSLを埋め込めば、説明文のすぐ隣にモックを表示できます。
 
-たとえば受注画面なら、「一覧が中央、検索が上、保存ボタンが右」と書けます。`itemId`で部品を識別し、`handler`の名前で操作の動線も残せます。元のモックではhandlerを宣言し、AIへの引き渡しに使います。処理を実行するコードは、次の本実装へつなぐ役割です。✍️
+ただ、元のモックでは、ボタンの`handler`は名前を宣言するだけ。押しても処理は動きません。
 
-Playgroundの「AI用にコピー」には、DSLと一緒に使用部品のリファレンスも入ります。人がプレビューで確認した画面を、部品の意味を添えてAIへ渡せる仕組みです。独自の部品でも説明を付けられるので、画面の意図を引き継ぎやすくなります。🤝
+「せっかく画面を定義したのだから、押したときの動きまで確かめたい」。uivolve-webは、ここから始まりました。画面定義にstate（画面の状態）とRhaiの処理を足して、入力、ボタン、通信、保存まで動かします。
 
-もう一つの柱が、**Markdownの仕様書と、画面モックを同じソースで管理すること**。Markdown/MDXの中にuivolveのコードフェンスを書くと、その場所にモックを表示できます。説明文と画面が隣にあり、定義を変えればプレビューにも反映される。仕様を読む人、画面を確認する人、実装するAIが、同じ材料を見られる構成です。📄🎨
-
-この考えをWeb向けに広げたのが、今回のuivolve-webです。画面定義にstateとRhaiの処理を組み合わせ、入力、ボタン、通信、保存まで動かします。元の「モック→AIへ引き渡す」という流れに対し、こちらでは**定義した画面の振る舞いを共通エンジンで試す**ところを掘り下げました。🎮
-
-両者のつながりは、部品名だけではありません。画面の意図を宣言として残し、確認できる形にする発想を引き継いでいます。元のReact実装をそのままWASMへ載せたわけではなく、部品・状態・イベント・描画の分担を組み直した試作です。
-
-なお、ここまでの実装はuivolve/ExtJSの完全互換ではありません。元のMarkdown統合やAI用コピーを、こちらへそのまま移植したわけでもありません。今回追うのは、その出発点から生まれた「動く画面」の仕組みです。🔍
+引き継いだのは「画面の意図を宣言として残す」という考え方です。Reactの実装を移したものではなく、エンジンは一から組み直しました。DSLもuivolveやExtJSと完全互換ではなく、対応する部品は[移植対応表](https://github.com/6in/uivolve-web/blob/main/docs/uivolve-port.md)と[ギャラリーの契約](https://github.com/6in/uivolve-web/blob/main/docs/uivolve-gallery.md)にまとめています。
 
 ## 🦀 共通エンジン：画面の中身を一か所に集める
 
-**WASMエンジンは、開いたブラウザの中で動いています。** 同じブラウザ内にJSホストとDOM／Canvasの描画部分があり、エンジンを中心に操作と表示が循環します。JSON/YAMLが「どんな部品を置くか」、Rhaiが「操作でどう状態を変えるか」を担当します。画面を追加するために、毎回Rustを書き直す必要はありません。📦
+登場人物は3つ。どれも、開いたブラウザの中で動きます。
 
-画面定義とRhaiはJSホストがHTTPで取得します。YAMLをJSON相当へ変換し、共通エンジンへ渡すところまでがホストの仕事です。エンジンは定義を検証し、RhaiをASTへコンパイルしてイベントごとに実行します。画面用のRhaiから、新しいWASMバイナリを作る方式ではありません。
-
-ここで、状態と描画の間に**Scene**を置きます。`layout(width)`へ表示幅を渡すと、部品の座標、寸法、表示値などが返ります。その結果を、DOMレンダラーとCanvasレンダラーが受け取ります。🎨
+- **WASMエンジン**（Rust製）：状態を持ち、Rhaiを実行し、部品の配置を計算します
+- **JSホスト**：エンジンの外側にいるJavaScriptです。ファイルの取得や通信、保存など、ブラウザのAPIを呼ぶ仕事を引き受けます
+- **レンダラー**：DOM用とCanvas用の2種類。エンジンの計算結果を受け取って描きます
 
 ![ブラウザ内のWASMエンジンとJSホスト、DOMとCanvasの間で操作と描画更新が循環する構造](./architecture.png)
 
-たとえば「挨拶する」ボタンなら、次の順で動きます。🔄
+「挨拶する」ボタンを押すと、図の番号の順に進みます。
 
-1. DOM／CanvasでのクリックをJSが受け取り、WASMへイベントを渡す。
-2. WASM内でRhaiのhandlerを実行し、挨拶の文字列をstateへ確定する。
-3. JSホストがWASMへ配置計算を求め、配置と表示値をまとめたSceneを受け取る。
-4. JSのレンダラーがDOM要素やCanvasの描画を更新し、次の操作を待つ。
+1. クリックをJSが受け取り、エンジンへイベントとして渡す
+2. エンジンがRhaiのhandlerを実行して、stateを更新する
+3. エンジンが配置を計算し、**Scene**を返す。Sceneは「どの部品を、どこに、どんな値で出すか」をまとめたデータです
+4. レンダラーがSceneを見て、DOM要素やCanvasを更新する
 
-**WASMが表示内容・配置とイベント後の状態を決め、JSがブラウザの描画APIを呼ぶ**分担です。挨拶のような画面内の処理は、このブラウザ内の往復で進みます。通信や保存が必要なときは、JSホストが外部APIを呼び、その結果を再びWASMへ渡します。
+つまり、**何を表示するかはWASMが決め、どう描くかはJSが受け持ちます。**
 
-DOM側はinputやbuttonなどの要素を更新し、Canvas側は面を描き直します。「挨拶は何と表示するか」を決める状態は共有し、「どう描くか」をそれぞれへ任せる分担です。表示幅が違えば配置も変わるので、両画面の画素がすべて同じになる仕組みではありません。
+### この形だと、何がうれしい？
 
-この分担は、部品を増やすときにも効いてきます。入力値、許される操作、イベント後の結果を共通側で決めておけば、DOMとCanvasで業務処理を二重に書く範囲を減らせます。レンダラーごとに残る入力や描画の違いも、Sceneを境に追えます。🛠️
+**画面の振る舞いを書く場所が一つになります。** 入力値の検証も、押せないボタンの判定も、エンジンの中だけ。DOM用とCanvas用に同じ処理を二度書かずに済みますし、あとで出てくるAIからの操作やテストも、同じ入口を通ります。
 
-JSとWASMの基本的な受け渡しはUTF-8 JSONです。JSが入力メモリを確保し、requestを呼び、結果を読んだら入力を解放します。応答はエンジン所有で、次のrequestまで有効。メモリが拡張される可能性があるため、結果を読むときは呼び出し後の`memory.buffer`を使います。
+**DOMとCanvasを並べると、分担が守れているかすぐ分かります。** 片方のレンダラーだけに処理を書いてしまうと、もう片方では動きません。性格のまるで違う二つの描画先が、いわばお互いの検査役です。
 
-この境界にはコピーや変換の費用もあります。WASMを使っただけで高速と決めつけず、まずは責務を説明できる設計を作る。詳細は[アーキテクチャ](https://github.com/6in/uivolve-web/blob/main/docs/architecture.md)へ置き、ここからは小さな画面で流れを追います。👣
+**Rhaiは、Rustのプログラムに組み込めるスクリプト言語です。** エンジンがソースをASTへコンパイルして実行します。だから画面を増やすたびにRustをビルドし直す必要がありません。Rhaiから呼べるのは言語の標準機能とエンジンが用意した関数だけで、DOMやfetchを直接さわる手段を持たないのもポイントです。
+
+正直にお伝えすると、「WASMだから速い」とは考えていません。JSとWASMのあいだはJSON文字列でやり取りするので、コピーと変換のコストがかかります。エンジン本体も、手元のビルドで約4.4 MiB（gzipで約1.2 MiB）。軽いとは言えないサイズです。
+
+この試作で確かめているのは速さではなく、「画面定義・状態・描画をここまで分けても、ちゃんと動かせるか」です。細かな受け渡しの決まりは[アーキテクチャ](https://github.com/6in/uivolve-web/blob/main/docs/architecture.md)をご覧ください。
 
 ## 👋 Hello World：一つの定義で二つの画面を動かす
 
-最初の例は、名前を入力して挨拶する画面です。小さいですが、画面定義と処理のつながりがよく見えます。使うのは[Hello WorldのJSON](https://github.com/6in/uivolve-web/blob/main/public/screens/hello-world.json)と[Rhai](https://github.com/6in/uivolve-web/blob/main/public/screens/hello-world.rhai)。まずはJSONの部品部分を抜粋します。🧩
+いちばん小さな例で、流れを追ってみましょう。名前を入力して挨拶する画面です。[画面のJSON](https://github.com/6in/uivolve-web/blob/main/public/screens/hello-world.json)から、部品の部分を抜粋します。
 
 ```json
 [
@@ -89,9 +73,7 @@ JSとWASMの基本的な受け渡しはUTF-8 JSONです。JSが入力メモリ�
 ]
 ```
 
-入力欄はstateの`name`、結果ラベルは`greeting`につながっています。名前を入力するとnameが更新され、ボタンを押すとsayHelloが呼ばれます。完全な画面JSONには、初期stateやコンテナもあります。上の抜粋は、その中のitemsです。
-
-続いて、挨拶を作るRhaiの抜粋はこちら。🦀
+`bind`は、部品とstateをつなぐ指定です。入力欄はstateの`name`と、ラベルは`greeting`とつながっています。ボタンを押すと、`sayHello`が呼ばれます。その中身が、こちらの[Rhai](https://github.com/6in/uivolve-web/blob/main/public/screens/hello-world.rhai)です。
 
 ```rhai
 fn sayHello(state, event) {
@@ -105,61 +87,79 @@ fn sayHello(state, event) {
 }
 ```
 
-太郎と入力して押せば「Hello 太郎」。空白だけなら「Hello World」です。Rhaiではこの`name.trim();`で変数の値を整えます。DOMを探すコードも、Canvasに文字を書くコードも、このhandlerには登場しません。状態を返すと、共通エンジンとレンダラーが表示へつなぎます。✨
+「太郎」と入れて押せば「Hello 太郎」、空白だけなら「Hello World」。Rhaiの`name.trim();`は、変数そのものを書き換えて前後の空白を落とします。
+
+注目してほしいのは、**このhandlerにDOMを探すコードも、Canvasへ文字を書くコードもない**ことです。stateを受け取って、新しいstateを返すだけ。表示へつなぐのは、エンジンとレンダラーの仕事です。
 
 ![DOMまたはCanvasの入力から候補state、Rhai、検証、確定を経て両描画へ届く流れ](./event-flow.png)
 
-イベント処理では、現在のstateから候補を作り、入力の変更とRhaiを適用してから検証します。成功したところでstateと部品木、必要なeffectsを確定します。処理途中で失敗した候補は、現在の状態へ混ぜません。画面の読み込みでも、候補が成立してから切り替えるので、壊れた定義で表示中の画面を失わないようにしています。🛟
+エンジンは、stateをいきなり書き換えません。まず現在のstateをコピーして「候補」を作り、入力とRhaiをそちらへ適用してから検証します。問題がなければ、候補を本物として確定。Rhaiがエラーを出したり検証に引っかかったりしたら候補を捨てるので、画面は元のまま残ります。新しい画面を読み込むときも同じで、壊れた定義のせいで表示中の画面を失うことはありません。
 
-この流れは、ブラウザを開かずに実WASMでUTできます。[既存のテスト](https://github.com/6in/uivolve-web/blob/main/tests/engine.test.js)から、操作と確認を抜粋してみます。engine、screen、scriptの準備には、完全なHello Worldファイルとビルド済みWASMを使います。
+エンジンが一か所にまとまっていると、テストも楽になります。ブラウザを開かずに、本物のWASMへイベントを送って確かめられるんです。[既存のテスト](https://github.com/6in/uivolve-web/blob/main/tests/engine.test.js)からの抜粋です（エンジンの準備は省いています）。
 
 ```javascript
-const initial = engine.load(screen, script);
-const entered = engine.dispatch("nameInput", { value: "  太郎  " });
-expect(entered.state.greeting).toBe(initial.state.greeting);
+engine.load(screen, script);
+engine.dispatch("nameInput", { value: "  太郎  " });
 expect(engine.dispatch("helloButton").state.greeting).toBe("Hello 太郎");
 expect(engine.layout(500).widgets.find((w) => w.key === "greetingLabel").text).toBe("Hello 太郎");
-engine.dispatch("nameInput", { value: " 	 " });
-expect(engine.dispatch("helloButton").state.greeting).toBe("Hello World");
 ```
 
-expectは`vite-plus/test`、WasmEngineは`src/engine.js`から読み込みます。`bun install --frozen-lockfile`と`bun run build:wasm`で準備し、`public/engine.wasm`をcompile/instantiateしてテストごとに独立したengineを作ります。
-
-確認できるのは「入力だけでは挨拶を変えない」「押すと更新する」「Sceneにも同じ文字が入る」という振る舞いです。画面の計算を小さく試せるのが便利！ 実際の文字や入力操作は、次のようにブラウザでも確認します。📸
+名前を入れて、ボタンを押して、stateとSceneの両方に「Hello 太郎」が入ったことを確認しています。実際の見た目は、ブラウザでも確かめました。
 
 ![Hello Worldを操作し、DOMとCanvasの両側に同じ挨拶を表示した比較画面](./dom-canvas.png)
 
+二つの画面は幅を別々に測って配置するので、文字の大きさや位置までぴったり同じにはなりません。そろえているのは「何を表示するか」のほうです。
+
+冒頭の受注管理も、仕組みはまったく同じ。あの画面は、JSONが106行、Rhaiが69行です。件数や合計金額は、Rhaiの関数がstateの受注一覧から計算し直しています。
+
 ## 📬 通信と保存：画面の外の仕事もつなぐ
 
-挨拶が動いたら、次はデータを取りに行きたくなります。開発ではHTTP取得、型付きstateと保存、OPFSファイル、キャッシュ、ProtobufのUnary RPCへと機能を広げました。共通runtimeや独立アプリの配布も加わり、画面の周りにホストの役割が育っていきます。🌱
+挨拶が動くと、次はデータを取りに行きたくなります。ここからの数日は、こんな順番で進みました。
 
-Rhaiは同期実行なので、通信完了までその場で待つ書き方は採りません。`host_call`で依頼し、検証後に確定したeffectsをJSへ渡します。ホストのアダプターが通信や保存を実行し、結果を`host_result`で戻すと、Rhaiの完了handlerが呼ばれます。📮
+| 日付    | 追加したもの                                                    |
+| ------- | --------------------------------------------------------------- |
+| 10/2    | それまでの試作をリポジトリへ取り込み、レイアウトとJWT認証を追加 |
+| 10/3    | Hello World、HTTPでのJSON取得、型付きstateと保存、OPFS、RPC     |
+| 10/4    | 単体で配布できるランタイム、HTTPアダプター、Workerモック        |
+| 10/4〜5 | 大きなファイルの転送                                            |
+
+困ったのは、Rhaiが同期実行だということ。通信が終わるまでその場で待つ、という書き方ができません。そこで、Rhaiは「これをお願い」と依頼を出すだけにしました。この依頼を**effects**と呼んでいます。
 
 ![確定したeffectsをJSアダプターへ送り、結果を最新stateのhandlerへ戻す非同期経路](./host-effects.png)
 
-戻ってきた結果は、完了時点の最新stateへ適用します。通信中に入力した内容を、依頼時の古いstateで上書きしないためです。画面切替後の古い結果は、依頼idと世代の確認で新しい画面への混入を防ぎます。
+図の番号に、省かれている③④を補うとこうなります。
 
-この分担が特に分かりやすいのがOPFS転送です。大容量ファイルをWASMへコピーすると、画面のstateとは別の重い荷物を抱えることになります。そこでdownloadはJS側でreaderからOPFSへ少しずつ保存し、uploadはFile、multipartはFormDataで送ります。WASMは領域、パス、サイズなどの制御情報を扱います。📁
+- ① Rhaiが`host_call`で依頼を準備する
+- ② エンジンがstateを検証し、通ったときだけeffectsを確定する
+- ③ JSホストがeffectsを受け取る
+- ④ JSホストが通信や保存を実行する
+- ⑤ 結果を`host_result`でエンジンへ戻し、Rhaiの完了handlerが最新のstateへ反映する
 
-「Rust/WASMを使うから、全部そこを通す」という設計にはしませんでした。ブラウザが持つファイルや通信APIをホストで使い、画面側は開始、進捗、結果を扱う。この境界を保って、100 MiB級の転送も実ブラウザで検証しています。
+⑤で「最新の」と強調したのには理由があります。通信を待っているあいだに、ユーザーが別の欄へ入力しているかもしれません。依頼したときの古いstateへ結果を書き込むと、その入力が消えてしまいます。画面を切り替えたあとに届いた古い結果は、依頼の番号を照合して捨てています。
 
-中止や保存確定も、設計しておく必要があります。downloadはwriter.closeの成功が確定点で、close開始後の巻き戻しは保証しません。中止しても実処理とcleanupが終わるまで排他を保持します。Web Locks対応環境では別タブにも排他が及び、未対応なら同じホスト実行環境内が範囲です。条件の詳細は[OPFS転送契約](https://github.com/6in/uivolve-web/blob/main/docs/opfs-file-transfer.md)へまとめています。🔒
+この分担がいちばん効いたのが、ファイル転送でした。ブラウザ内のファイル置き場であるOPFSへ、HTTPで受け取ったファイルを保存する機能です。100 MiBのファイルをWASMのメモリへコピーしたら、画面のstateとは関係のない重い荷物を抱えることになります。
+
+そこで、ファイルの中身はJSホストが直接扱うことにしました。ダウンロードは届いた分から少しずつOPFSへ書き込み、アップロードはブラウザのFileをそのまま送ります。エンジンが知っているのは、保存先のパスやサイズ、進み具合といった「荷札」だけです。
+
+「Rust/WASMを使うから、全部そこを通す」とはしませんでした。ブラウザが得意なことはブラウザに任せる。この方針のおかげで、100 MiBの転送も実ブラウザで通っています。中止や排他の細かな決まりは[OPFS転送の契約](https://github.com/6in/uivolve-web/blob/main/docs/opfs-file-transfer.md)にあります。
 
 ## 🤖 WebMCP：AIにも「このボタン」を伝えられる
 
-元のuivolveは、画面の意図をDSLでAIへ渡します。こちらのuivolve-webでは、**動いている画面をAIから構造化して扱う入口**も備えています。それがWebMCPです。設計時の引き渡しと、実行中の操作で、AIとの接点が広がりました。🤝✨
+元のuivolveは、画面の定義をAIへ渡すものでした。uivolve-webでは一歩進めて、**動いている画面をAIが操作する入口**を用意しています。それがWebMCPです。ブラウザ上のページが、AIエージェントへ「使える道具」を公開する仕組みですね。
 
-比較デモでは起動時に共通ツールを自動登録します。画面や状態を読み、表示中の部品keyへイベントを送れます。Canvasでも、座標を画像から推測する経路に加えて、部品を指定して操作できる構成です。
+比較デモは、起動時に5つの共通ツールを登録します。AIは画面の部品と状態を読み、「この部品へ、このイベントを」と名前で指定して操作できます。
 
-人が押してもツールが操作しても、共通WASMの検証とRhaiのhandlerを通ります。画面tokenとrevisionを確認するので、古い画面や状態への操作も拒否できます。Sceneとイベントを共通にしたことが、ここでも役立ちます。🛠️
+これが特にうれしいのはCanvasです。Canvasの中身は、外から見るとただの絵。ふつうは画像から座標を推測して押すしかありませんが、ここでは部品を名指しできます。
 
-利用には対応ブラウザAPIとsecure contextが必要です。比較デモはデフォルトで登録を試み、独立アプリでは`webmcp: true`で有効にします。未対応ブラウザでも通常UIは動きます。詳しくは[WebMCP接続](https://github.com/6in/uivolve-web/blob/main/docs/webmcp.md)をどうぞ。
+しかも、AIの操作は人のクリックと同じ入口を通ります。エンジンの検証もRhaiのhandlerも共通なので、「AI経由だと検証をすり抜ける」ということが起きません。画面が切り替わったあとに届いた古い指示は、受け付けません。
+
+使うには、WebMCPに対応したブラウザと、HTTPSかlocalhostでの配信が必要です。未対応のブラウザでも、通常のUIはそのまま動きます。設定は[WebMCP接続](https://github.com/6in/uivolve-web/blob/main/docs/webmcp.md)をどうぞ。
 
 ## 🧪 WorkerモックとUT：仮のサーバーも用意できます
 
-画面ができたら、一覧を取ったり、注文を追加したりする動きも確かめたいところ。そんなときは、WebWorkerのメモリで処理するモックAPIを使えます。仮のサーバーの初期データとルートを、画面とは別のJSON/YAMLへ記述します。📦
+一覧を取ったり注文を追加したりする画面を作りたい。でも、サーバーはまだない。そんなときのために、**Web Workerの中で動く仮のサーバー**を用意しました。初期データと受け付けるルートを、YAMLで書くだけです。
 
-[注文モック](https://github.com/6in/uivolve-web/blob/main/public/mock/orders-api.yaml)を小さくした例です。項目とルートを減らした、一覧取得用の定義として読めます。
+[注文モック](https://github.com/6in/uivolve-web/blob/main/public/mock/orders-api.yaml)を、一覧の取得だけに縮めた例がこちら。
 
 ```yaml
 version: 1
@@ -173,46 +173,56 @@ routes:
   listOrders: { method: GET, path: orders, operation: list, collection: orders }
 ```
 
-完全例には登録、更新、削除、リセットや固定応答もあります。ホストへworkerMockAdapterを明示登録すると、画面とRhaiはhost_callで依頼できます。実HTTPへ移るときも同じ呼び出し形式を使い、接続や必要なoperation設定を切り替えられます。🔌
+実物のファイルには、登録、更新、削除、リセットのルートもあります。画面のRhaiは、通信のときと同じ`host_call`で依頼するだけ。あとで本物のサーバーができたら、接続先の設定を切り替えます。画面側を書き直さずに済むのが、いいところです。
 
-このモックは宣言した固定応答とCRUDを扱います。任意のサーバーコードを実行する仕組みではなく、検索や遅延、永続化は現行の対象外。それでも、バックエンドの実装を待たずに画面のデータの流れを確かめられるのはうれしいところです。
+できるのは、宣言した固定応答と、データの追加・取得・更新・削除まで。検索や遅延の再現、データの永続化には対応していません。それでも、バックエンドを待たずに画面のデータの流れを確かめられるのは助かります。
 
-UTではWorkerも描画も外し、MockApiModelへ入力して結果を確認できます。[既存のモックテスト](https://github.com/6in/uivolve-web/blob/main/tests/worker-mock.test.js)から、一覧の確認を抜粋するとこのサイズです。✅
+このモックも、Workerを起動せずにテストできます。[モックのテスト](https://github.com/6in/uivolve-web/blob/main/tests/worker-mock.test.js)からの抜粋です。`definition`は、上のYAMLを読み込んだ値です。
 
 ```javascript
 const model = new MockApiModel(definition);
 expect(model.request({ method: "GET", path: "orders" }).body).toHaveLength(2);
 ```
 
-expectは`vite-plus/test`、MockApiModelは`src/mock-api-model.js`からimportします。definitionは`src/package-format.js`のparsePackageでYAMLを読んだ値です。上のミニ版でも完全な注文定義でも、初期レコードは2件あります。
-
-実WASMとモックの対象テストは、WASM生成後に`bunx vp test run tests/engine.test.js tests/worker-mock.test.js`で実行できます。状態とロジックを先にUTし、実Workerの読み込み、CORS、DOM/Canvasの操作はブラウザで確認する。役割を分けると、失敗した場所も追いやすくなります。🔍
+状態とロジックは先に小さなテストで固めて、実際のWorkerの読み込みや画面操作はブラウザで確かめる。役割を分けておくと、失敗したときに原因の場所を絞りやすくなります。構成は[WorkerモックAPI](https://github.com/6in/uivolve-web/blob/main/docs/worker-mock-api.md)で紹介しています。
 
 ## 📝 AI開発の振り返り：任せるための準備も大切でした
 
-OPFS転送では、gsd-liteとCodexの無人ループを使いました。人が要件と判断基準を決め、AIが調査、計画、実装、検証を進め、記録を残して次へ渡す流れです。画面をAIへ渡すuivolveの考え方と同じく、意図を読める形で残すことが出発点でした。🤝
+ファイル転送は、実装の大部分をAIに任せました。使ったのはgsd-liteという、開発を6つの工程に区切って進める手順です。区切りごとにAI（今回はCodex）を新しい会話で起動し、会話の記憶の代わりにファイルを読んで続きを進めます。
 
-![人が要件を決め、AIがdiscussからreflectまでの記録を読みながら進み、BLOCKEDとverifyでは人が判断へ戻る開発ループ](./ai-workflow.png)
+![人が要件を決め、AIが記録を読みながら6つの工程を進み、BLOCKEDでは人が見直して再開する開発ループ](./ai-workflow.png)
 
-図の中央にあるREQUIREMENTS、DECISIONS、PROGRESSは、会話の代わりに残す引き継ぎです。何を作るか、なぜその判断をしたか、どこまで進み、何が想定外だったかをファイルへ置きます。次のAIは新しい会話でも記録を読んで、先頭の未完了タスクから続けられます。📓
+図の番号は、1がdiscuss、2がresearch、3がplan、4がimpl、5がverify、6がreflectです。真ん中のREQUIREMENTS、DECISIONS、PROGRESSが引き継ぎ用のファイル。要件と合格の基準は人が決めます。
 
-implでは一つのタスクを実装してテストし、進捗と次の注意点を残します。verifyは「コードが通るか」だけでなく、最初に決めた契約どおりかを見る工程です。図のループに人の判断点を残したのは、止まった原因をAIだけのリトライ回数として数えないためです。🔄
+researchからverifyまでは20回の起動で、動いていた時間の合計は約95分（5,697秒）でした。できあがったのは、計画13項目と、管理用を含む38コミット。ただし、人が対話した時間や止まって待っていた時間は入っていません。「95分で完成した」わけではないので、ご注意を。
 
-今回はdownload、本文upload、multipartについて、容量・中止・期限・排他・DOM/Canvasの確認まで先に決めました。researchからverifyは20試行、試行内所要の合計は5,697秒、約95分です。待機や人の対話、この記事の作業は含みません。⏱️
+実際、途中で3回止まりました。図のBLOCKEDです。
 
-自動で一直線には進みません。BLOCKEDは3回あり、実行環境、RhaiのCSV加工、ブラウザ認証fixtureを人が見直して再開しました。verifyでは、uploadの既定Content-Typeが欠け、テストもその欠けを期待していたことを発見。**実装とテストが同じ勘違いをすれば、両方そろって緑になります。** 要件から期待値を決め、受信側・実WASM・実ブラウザで観測する必要を学びました。記録を残すのは、同じ迷いを繰り返さず、どこで人が判断すべきかを次回へ渡すためでもあります。🧭
+1. 最初のタスクで、実行環境がlocalhostでのサーバー起動を拒否しました
+2. CSVを加工するサンプルで、Rhaiの`replace`が「値を返さず、変数を書き換える」ことに気づかず、やり直しの上限に到達しました
+3. ブラウザ試験で、認証用のトークンが試験データのあいだで食い違っていました
 
-詳細は[OPFSの振り返り記録](https://github.com/6in/uivolve-web/blob/main/.gsd-lite/reflect/20261005-0843-opfs-file-transfer.md)へ。要件、判断、進捗を残すことが、人とAIが次の実装を判断する共通の材料になります。🌱✨
+どれも、人が環境や前提を直してから再開しています。記録上のリトライは0回でしたが、手戻りが0だったわけではありません。
+
+いちばんの学びは、verifyで見つかりました。アップロードで既定のContent-Typeが送られていなかったのに、テストは全部成功していたんです。原因は、テストのほうも「付かない」を正解として書いていたこと。**実装とテストが同じ勘違いをすれば、両方そろって緑になります。**
+
+気づけたのは、verifyが実装ではなく要件と突き合わせたからでした。期待する値は、要件から決める。次は計画の段階で、既定値の表を作っておきます。
 
 ## 🚧 制限と次の実験：まだまだ育てる余地があります
 
-小さなモックから、入力、通信、保存、AIの構造化操作まで話が広がりました。共通エンジンで画面の振る舞いを確かめ、必要な外部処理はホストへ任せる。その形が、今のuivolve-webです。🌱
+最後に、できていないことをまとめます。
 
-次に確かめたいこともあります。Canvasの入力はネイティブ入力欄を併用しており、実IME、読み上げ、アクセシビリティは実機での確認が必要です。Rhaiは同期実行なので、重い処理を自由に走らせる仕組みではありません。現在の描画はCanvas 2Dで、GPU描画はこれからの検討です。⌨️
+- **Canvas版のアクセシビリティ**：部品ごとの読み上げ情報を持っていません。スクリーンリーダー、文字の選択、ページ内検索が必要な場面は、いまのところDOM版の担当です
+- **日本語入力**：Canvas版も、編集中はブラウザの入力欄を重ねています。変換候補の位置やモバイルのキーボードは、実機での確認がこれからです
+- **サイズ**：エンジンは約4.4 MiB。初回の読み込みを軽くする工夫は、まだしていません
+- **Rhaiは同期実行**：タイマーや`async`は書けず、重い計算にも向きません
+- **描画はCanvas 2D**：GPUを使う描画は検討の段階です
 
-DOM/Canvas比較のCPU再描画時間は、処理区間の測定値です。FPSやGPU性能の優位を証明するものではありません。共通化の便利さと実際の操作性、性能は、それぞれ利用場面を決めて確かめていきます。📊
+冒頭で触れた右下の数字は、DOMの更新やCanvasの描画命令にかかったCPU時間です。FPSやGPUの性能を比べた値ではないので、「どちらが速いか」の答えにはなりません。
 
-元のuivolveが、仕様書、モック、AIによる本実装をつなごうとしたように、こちらでは画面定義、実行、テスト、構造化操作のつながりを育てています。宣言として残した画面の意図を、どこまで同じ材料で確かめられるか。Hello Worldから始まった実験は、もう少し先へ進めそうです。🧩🚀
+小さなモックから始まって、入力、通信、保存、AIからの操作まで話が広がりました。宣言として残した画面の意図を、どこまで同じ材料で動かして確かめられるか。この実験は、もう少し先へ進めそうです。
+
+よければ、[公開デモ](https://6in.github.io/uivolve-web/pages/hello-world/)で名前を入れて、挨拶ボタンを押してみてください。自分で画面を作ってみたくなったら、AI向けの[アプリ開発スキル](https://github.com/6in/uivolve-web/blob/main/skills/uivolve-web-app-dev/SKILL.md)が道案内をします（[使い方](https://github.com/6in/uivolve-web/blob/main/docs/skills.md)）。エンジンに手を入れたい方には[エンジン開発スキル](https://github.com/6in/uivolve-web/blob/main/skills/uivolve-web-engine-dev/SKILL.md)もありますよ 🚀
 
 ## 📚 参考リンク
 
@@ -225,4 +235,5 @@ DOM/Canvas比較のCPU再描画時間は、処理区間の測定値です。FPS�
 - [WebMCP接続](https://github.com/6in/uivolve-web/blob/main/docs/webmcp.md)
 - [WorkerモックAPI](https://github.com/6in/uivolve-web/blob/main/docs/worker-mock-api.md)
 - [テストの案内](https://github.com/6in/uivolve-web/blob/main/docs/testing.md)
+- [OPFS開発の振り返り記録](https://github.com/6in/uivolve-web/blob/main/.gsd-lite/reflect/20261005-0843-opfs-file-transfer.md)
 - [OPFS開発の進捗記録](https://github.com/6in/uivolve-web/blob/main/.gsd-lite/archive/opfs-file-transfer/PROGRESS.md)
