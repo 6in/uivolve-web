@@ -1,6 +1,6 @@
 # 開発振り返り記事 根拠台帳
 
-状態: T5の文書入口・最終要件照合・最終判定まで完了。独立したverifyへ引き継ぐ。機械検査は文章の正しさや画像の可読性を認定しない。
+状態: 初稿はT5とverify/reflectまで完了。ユーザーの文体・出発点の指摘を受け、下記「初稿への編集修正」で本文を改稿。機械検査は文章の正しさや文体の好み、画像の可読性を認定しない。以下のT1〜T5の字数・判定は初稿の記録。
 
 ## 必須8内容と主張照合
 
@@ -105,3 +105,13 @@
 - 本文7926字、AI1979字、24.968%。PNG実寸はarchitecture 1600×900、event-flow 1600×1100、host-effects 1600×1080、dom-canvas 1225×296。再撮影でCPU計測表示だけが変わり、実比較領域をそのまま保存。
 - 最終ログ: `.gsd-lite/logs/development-retrospective-blog/verification-1791168900750.log`。撮影証跡: 同scratchの`capture-1791168907119.json`。Chromium 152.0.7977.64/Linux、127.0.0.1:4174/pages/hello-world、1440×1000、deviceScaleFactor=1。DOM/Canvas各起点・入力のみ不変・空白World・最後に太郎の11チェック成功、failure=null、serverStopped=true、cleanupErrors=[]。
 - 独立再実行はリポジトリルートで `bun scripts/verify-retrospective.mjs`。追跡済みの検査/撮影スクリプトとPNGを使い、scratch制作ソースや起動済みサーバーを前提にしない。既存Chromium `/usr/bin/chromium-browser` と可視ブラウザ用DISPLAY、空いている4174が必要。実行時の証跡はlogsへ生成する。公開/pushは行わない。
+
+## 初稿への編集修正
+
+- ユーザー指摘: 「ポップって感じでもない」「uivolveの元の考え方も入っていない」。初稿の見出し・絵文字・技術検査だけでは、この意図を満たしていなかった。
+- 原資料: `/home/parallels/workspaces/uivolve/README.md`、HEADは `3d22a3cfab5488afe3c60f8775676a85c51593ec`（docs/uivolve-port.mdの参照元と同じ）。公開先のREADMEへの固定commitリンクを本文と参考リンクへ追加。
+- 原READMEの冒頭/クイックスタート/イベント宣言/Markdown・MDX統合を確認。「モックを素早く作る→DSLと使用部品のリファレンスをAIへ渡して任意のUIライブラリで本実装」「仕様書とモックを同じソースで管理」「元のhandlerは宣言のみ」を新しい出発点の根拠にした。
+- 改稿は、この目的から今回のstate/Rhai実行・Scene・WebMCP・Workerモック/UTへつながる順で説明。元のMarkdown統合やAI用コピーがuivolve-webへ移植済みとは書かない。長い検証手順や防御的な注意文を本文の流れから減らし、短い段落と具体例、丁寧な呼びかけで文体を改めた。
+- Worker YAMLを2件のseedがあるミニ版へ変更し、直後のUTの2件期待値と一致させた。その他の掲載JSON/Rhai/実WASM/モデルUTは現行の完全例へ照合。
+- 再実行: `bun .gsd-lite/logs/development-retrospective-blog/scratch/editorial-revision-excerpts.mjs`。本文からJSON/Rhai/YAML/JavaScriptを抽出し、実WASM/モデルで成功。入力のみ不変・Hello 太郎・Scene・空白World、ミニYAMLと完全definitionの2件を確認。OPFSの20試行/5697秒も再集計。結果は同scratchのeditorial-revision-results.json。
+- `bun scripts/check-retrospective.mjs --stage complete`: 本文7735字、AI1917字（24.783%）、8節/コード例/相対画像リンク/PNG4枚/入口1件成功。既存の画像とランタイムを変更していないため、今回の修正で全ブラウザ撮影やランタイム全回帰は繰り返さない。

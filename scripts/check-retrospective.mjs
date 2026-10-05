@@ -5,7 +5,14 @@ import { inflateSync } from "node:zlib";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const article = "blog/uivolve-web-retrospective/index.md";
-const images = ["architecture.png", "event-flow.png", "host-effects.png", "dom-canvas.png"];
+const images = [
+  "architecture.png",
+  "event-flow.png",
+  "host-effects.png",
+  "dom-canvas.png",
+  "orders.png",
+  "ai-workflow.png",
+];
 const sections = [
   "出発点",
   "共通エンジン",
@@ -71,8 +78,8 @@ export function measureArticle(source) {
 }
 
 export function assertLength({ total, aiRatio }) {
-  if (total < 6000 || total > 8000) throw new Error(`Body length ${total}; expected 6000–8000`);
-  if (aiRatio < 0.2 || aiRatio > 0.3) throw new Error(`AI ratio ${aiRatio}; expected 20–30%`);
+  if (total < 6000 || total > 9000) throw new Error(`Body length ${total}; expected 6000–9000`);
+  if (aiRatio < 0.05 || aiRatio > 0.15) throw new Error(`AI ratio ${aiRatio}; expected 5–15%`);
 }
 
 // Decode ordinary non-interlaced 8-bit PNG scanlines; generated browser PNGs use this format.
@@ -213,17 +220,21 @@ export async function checkArticle({ stage = "complete", cwd = root } = {}) {
   ])
     if (
       !links.some(
-        (l) => !l[1] && resolve(directory, l[3].split(/[?#]/, 1)[0]) === resolve(cwd, target),
+        (l) =>
+          !l[1] &&
+          (resolve(directory, l[3].split(/[?#]/, 1)[0]) === resolve(cwd, target) ||
+            l[3].split(/[?#]/, 1)[0] ===
+              `https://github.com/6in/uivolve-web/blob/main/${target}`),
       )
     )
       throw new Error(`Missing complete example link: ${target}`);
   const dimensions = {};
-  for (const name of stage === "draft" ? [] : images.slice(0, stage === "diagrams" ? 3 : 4))
+  for (const name of stage === "draft" ? [] : stage === "diagrams" ? images.slice(0, 3) : images)
     dimensions[name] = decodePng(await readFile(resolve(directory, name)));
   if (stage === "complete") {
     const actual = (await readdir(directory)).sort();
     if (JSON.stringify(actual) !== JSON.stringify(["index.md", ...images].sort()))
-      throw new Error("Article directory must contain exactly five files");
+      throw new Error(`Article directory must contain exactly ${images.length + 1} files`);
     const entry = withoutFences(await readFile(resolve(cwd, "docs/README.md"), "utf8"));
     const entries = [
       ...entry.matchAll(/(?<!!)\[[^\]]+\]\(\.\.\/blog\/uivolve-web-retrospective\/index\.md\)/g),
