@@ -55,3 +55,10 @@
 - 想定外: 最初に存在しない.gsd-lite/gsd-lite-loop.shを指定した。PATH上の入口へ修正して作業場所を解決。再撮影でCPU計測値の表示が変わりPNGを更新した。
 - やり直し: 1 回（loop入口をPATH上へ修正）。実装/最終検証の立て直し0回。
 - 次への注意: 全5タスク完了、phase=verify/next_command=/gsd-lite-verifyへ遷移。PATH上のgsd-lite-loop.sh --whereを使う。独立判定はbun scripts/verify-retrospective.mjs、既存可視Chromium/DISPLAY/空いている4174が必要。根拠台帳のT5と最終ログ/撮影証跡を参照。実IME/支援技術/実Worker/CORS/GPU性能/モデル費用は今回未取得。
+
+## turn 8 — verify — 合格・mainへローカルマージ成功
+
+- やったこと: 全diffのコード/セキュリティ/要件照合、最終判定8工程、掲載断片と23境界項目の再実行、4画像の目視確認。originなしに従いmainへno-ffマージした。
+- 想定外: 初回のループ位置指定 .gsd-lite/gsd-lite-loop.sh は存在せず、PATHのgsd-lite-loop.shで位置を解決した。
+- やり直し: 1 回（--whereの実行パスを修正）。検証の再試行は0回。
+- 次への注意: phase=reflect、次は/gsd-lite-reflect。ループスクリプトはPATHのgsd-lite-loop.sh。最終ログverification-1791169067100.log、撮影capture-1791169073459.json。push/公開なし。
