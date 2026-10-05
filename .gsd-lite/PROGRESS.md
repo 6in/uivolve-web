@@ -27,3 +27,10 @@
 - 想定外: なし。
 - やり直し: 対話の仕様調整を反映（6,000〜8,000字、ポップで丁寧・絵文字多め、記事フォルダ直下のPNG4枚、WebMCP/モック/UT追加）。実装の立て直しではない。
 - 次への注意: PATH上のgsd-lite-loop.shを使用。調査対象はこのrepoのみ。旧成果の根拠はarchive/opfs-file-transferと既存reflect/logs。WebMCPの既定有効範囲とUT/ブラウザ試験の境界を正確に説明。字数の除外規則を固定し、図は画像ファイルを相対参照する。
+
+## turn 4 — impl — T2 根拠付き日本語原稿と掲載例の実行確認
+
+- やったこと: 必須8節の日本語原稿と4画像の相対参照/alt/説明を追加し、実装・契約・履歴の根拠台帳を更新。本文7926字、AI1979字（24.968%）でdraft成功。依存確認/WASM生成、対象UT16件、掲載JSON/Rhai/YAMLと2つのJSフェンス直接実行、OPFS20試行5697秒再集計、check（218整形/92lint/cargo fmt）、docs:check（445リンク/56文書）、diff check成功。実装コミット0a08ab8。既存テスト期待値の変更なし。
+- 想定外: 最初に存在しない./gsd-lite-loop.shを指定した。ctx_searchのqueriesに非対応fileキーを渡した。scratch再集計でduration_sを確認する前にelapsed_secと書きNaNになった。掲載例の実行自体は初回から成功。
+- やり直し: 3 回（PATH入口へ修正、検索をrgへ修正、ログの実キーduration_sへ修正）。原稿/掲載例の立て直しは0回。
+- 次への注意: 次はT3のみ。PATH上のgsd-lite-loop.sh --whereを使う。ログ集計はduration_s。本文は上限まで74字なのでT3以降の説明追加時は再計数し推敲する。画像は未生成、撮影未実施、docs入口はT5。ブラウザ描画前にplaywright-skillを読み、日本語3図を800px幅で実PNG目視する。T3は並列サブ作業3件あり、担当を分離して統合後に親が台帳を更新する。phase=impl、next_command=/gsd-lite-implを保持。
