@@ -1,6 +1,6 @@
 # 開発振り返り記事 根拠台帳
 
-状態: T3技術図3枚の制作・800px幅目視とdiagrams検査まで完了。撮影・最終判定は未実施。機械検査は文章の正しさや画像の可読性を認定しない。
+状態: T4の実Hello World操作・DOM/Canvas撮影・実PNG目視まで完了。文書入口と最終判定はT5で実施。機械検査は文章の正しさや画像の可読性を認定しない。
 
 ## 必須8内容と主張照合
 
@@ -31,9 +31,9 @@
 | architecture.png | scratch/turn-005-architecture.html/.cjs、1600×900 | 800×450で日本語/矢印/切れ/重なりを確認。HTTP→JS→WASM→Scene→JS描画と本文一致           | T3確認済み |
 | event-flow.png   | scratch/turn-005-event-flow.html/.js、1600×1100   | 800×550で日本語/矢印/切れ/重なりを確認。候補/検証/確定/失敗時保持/両描画と本文一致    | T3確認済み |
 | host-effects.png | scratch/turn-005-host-effects.html/.js、1600×1080 | 800×540で日本語/矢印/切れ/重なりを確認。最新state/JS本体経路/WASMメタデータと本文一致 | T3確認済み |
-| dom-canvas.png   | 未記入                                            | 両側Hello 太郎、Canvas実画素                                                          | 未撮影     |
+| dom-canvas.png   | scripts/capture-retrospective.mjs、1225×296       | 両側の名前とHello 太郎、Canvas実画素の日本語/切れ/重なりを確認                        | T4確認済み |
 
-撮影環境・方法: ブラウザ/OS/URL/viewport/操作順/切り出し/サーバー終了はT4で記入。
+撮影環境・方法: T4の下記記録を参照。
 
 ## 数値・歴史
 
@@ -78,3 +78,13 @@
 - event-flow: DOM/Canvas入力から現在stateをコピーした候補、Rhai、検証/effects準備、成功時の確定を区別。Rhai/検証失敗は現在state/部品木保持。lib.rs:621,704-718,930-983に照合。
 - host-effects: host_call時は候補、検証後の確定effectsだけをJSアダプターへ配送。host_resultが最新stateのhandlerへ入り候補を再検証。lib.rs:752-773,930-983に照合。HTTP/OPFSのファイル本体経路はJS側、WASM/JSON stateへの領域・パス・サイズは制御情報として分離。
 - 検査: bun install --frozen-lockfile、bun run build:wasm、対象UT2ファイル16件、bun run check（218ファイル整形/92lint/cargo fmt）、bun run docs:check（445リンク/56文書）成功。diagrams検査は7926字、AI1979字/24.968%、3PNGの署名/デコード/寸法/相対参照が成功。既存テスト期待値の変更なし。dom-canvas撮影とcomplete最終判定はT4/T5で実施する。
+
+## T4実Hello World操作・撮影（turn 6）
+
+- 再実行: 管理文書整形後に `bun run build` → `bun scripts/capture-retrospective.mjs`。スクリプトが `bun run preview` を自己管理し、127.0.0.1:4174の使用済みポートでは失敗する。終了時は自身のpreviewプロセスグループとブラウザを終了し、元の失敗とcleanup失敗を別々に記録する。T5の最終判定にも組み込み済み。
+- 環境: Linux 6.8.0-142-generic、可視Chromium 152.0.7977.64（/usr/bin/chromium-browser → 既存Chromium）、http://127.0.0.1:4174/pages/hello-world。viewport 1440×1000、deviceScaleFactor=1。外部サイト/認証/個人情報を使わず、例の太郎・花子のみ入力。
+- 操作: 初期画面→DOMで太郎入力（挨拶不変）→DOM押下（両側Hello 太郎）→DOM空白入力（不変）/押下（両側Hello World）→Canvasの入力欄座標をクリック/花子入力（DOMの名前も更新、挨拶不変）→Canvasボタン座標をクリック（両側Hello 花子）→Canvas空白入力（不変）/押下（両側Hello World）→Canvas太郎入力（不変）/押下（両側Hello 太郎）。11チェック成功、pageerrorなし。操作は実ポインター/HTML入力イベントで、dispatch/stateの直接変更なし。
+- Canvas確認: 実CanvasRenderingContext2DのfillText/clearRectを受動記録し各描画の挨拶を確認。原メソッドを呼び、画素・画面を合成しない。DOM文字列/state/描画呼び出しだけで合格にせず、実PNGを開いてCanvas側の太郎・挨拶する・Hello 太郎、日本語欠字/切れ/重なりがないことを確認。
+- 撮影: 実在する `.comparison` 領域をPlaywright locator.screenshotで切り出し、1225×296のPNGを保存。名前欄のHTML編集overlayを閉じ、Canvas側は実画素。元の画面配置・表示のまま、合成なし。PNG署名/CRC/展開/寸法もdecodePngで確認（CSS切り出し1224×295に対し小数座標の画素丸めでPNGは1225×296）。
+- 成功証跡: scratch/capture-1791168700657.json（ブラウザ/OS/操作/切り出し座標/全11チェック）。serverStopped=true、cleanupErrors=[]。初回失敗証跡はscratch/capture-1791168690140.json。Rhaiの挨拶にない末尾!を検証側で期待してtimeoutしたため実物へ合わせた。既存テスト期待値は変更していない。
+- 検査: frozen install、build（WASM 4464 KiB）、対象UT2ファイル16件、diagrams（7926字/AI1979字・24.968%）、docs:check（445リンク/56文書）、check（219整形/93lint/cargo fmt）成功。記事直下はindex.md+PNG4枚で各画像の相対参照/alt/説明はT2のまま。docs入口/complete/最終判定はT5で実施する。

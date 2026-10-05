@@ -57,7 +57,7 @@ bun run check
     - C: host-effects図（対象: host-effects.png、scratchのhost-effects制作ソース）
     - 親が根拠・PNGを確認し台帳を更新する。
 
-- [ ] T4: 実Hello WorldのDOM/Canvasを操作して撮影
+- [x] T4: 実Hello WorldのDOM/Canvasを操作して撮影
   - 完了基準: playwright-skillを読み、管理文書整形→build→previewの順で実ブラウザを起動。`/pages/hello-world` で実入力・押下し、両方式にHello 太郎が表示されることを確認した比較領域のdom-canvas.pngを保存する。DOM起点とCanvas起点を順に操作し双方の更新、入力のみで挨拶を変えないこと、空白入力のWorldも確認して撮影時は太郎へ戻す。Canvasの実画素を開いて読む。DOM文字列やstate検査だけで合格にしない。実在UIの切り出しに留め、合成しない。ブラウザ/OS/URL/viewport/操作/撮影方法、PNGの目視、サーバー終了を台帳/PROGRESSに記録。記事専用の `scripts/capture-retrospective.mjs` は最終判定でも使えるようサーバー起動/終了を自己管理し、失敗時cleanupが元の失敗を隠さない。秘密情報のない名前とlocalhostのみ使用する。
   - 対象: `blog/uivolve-web-retrospective/dom-canvas.png`、`.gsd-lite/BLOG-EVIDENCE.md`、`scripts/capture-retrospective.mjs`、scratchの撮影ログ
   - 依存: T3
