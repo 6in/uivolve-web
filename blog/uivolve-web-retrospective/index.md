@@ -12,7 +12,7 @@ uivolve-webは、**JSONやYAMLで書いた画面定義を、そのままブラ�
 
 ![受注管理サンプルのDOM版とCanvas版。件数・合計金額、受注一覧、選択した受注の編集欄が並ぶ画面](./orders.png)
 
-こちらは受注管理のサンプルです。左がDOM、右がCanvas。どちらで操作しても、もう片方に同じ結果が出ます。[受注管理を試す](https://6in.github.io/uivolve-web/pages/orders/)から開けますよ。各パネルの右下にある「0.40 ms」のような数字は、表示の更新にかかったCPU時間です。
+こちらは受注管理のサンプルです。左がDOM版、右がCanvas版。一つの画面定義が両方のレンダリングエンジンで表示されています。どちらで操作しても、もう片方に同じ結果が出ます。[受注管理を試す](https://6in.github.io/uivolve-web/pages/orders/)から開けますよ。各パネルの右下にある「0.40 ms」のような数字は、表示の更新にかかったCPU時間です。
 
 この記事では、2026年10月2日から5日までの開発を振り返りながら、次の3つをお話しします。
 
@@ -245,3 +245,4 @@ researchからverifyまでは20回の起動で、動いていた時間の合計�
 - [テストの案内](https://github.com/6in/uivolve-web/blob/main/docs/testing.md)
 - [OPFS開発の振り返り記録](https://github.com/6in/uivolve-web/blob/main/.gsd-lite/reflect/20261005-0843-opfs-file-transfer.md)
 - [OPFS開発の進捗記録](https://github.com/6in/uivolve-web/blob/main/.gsd-lite/archive/opfs-file-transfer/PROGRESS.md)
+
