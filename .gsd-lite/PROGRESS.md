@@ -1,5 +1,12 @@
 # 開発振り返りブログ 進捗
 
+## turn 2 — plan — 記事・図・実撮影・最終照合を5タスクへ統合
+
+- やったこと: 要件/決定/research、現行コード・例・検査コマンド、直近reflectを照合しPLAN.mdを作成。記事専用のUnicode計数/リンク/PNG検査、実例確認、日本語図3枚、DOM/Canvasの実撮影、最終判定1本と主張台帳を固定。全受け入れ基準とresearchの落とし穴をタスクへ対応付け、docs:checkは445リンク/56文書で成功。
+- 想定外: 最初に存在しない.gsd-lite配下のloopを指定した。DECISIONS/前回reflect/PROGRESSにPATH上の入口を使う申し送りがあることを確認した。
+- やり直し: 1 回（作業場所解決をPATH上のgsd-lite-loop.sh --whereへ修正）。計画の立て直しは0回。
+- 次への注意: PATH上のgsd-lite-loop.sh --whereのみ使う。次はT1。検査/撮影スクリプトはクリーンなcheckoutから最終判定可能にするため追跡し、図の制作ソースはscratchへ保存。記事限定のstage検査を使い、整形→本番build→撮影の順を守る。コード/UT/撮影はplanでは未実施。
+
 ## turn 1 — research — 記事の実装根拠・履歴・検証方法を調査
 
 - やったこと: このrepoの共通WASM/Hello World/effects/WebMCP/Workerモックの文書・実装・UTとOPFS履歴を調査し、RESEARCH.mdへ根拠パス・再利用例・図の責務・落とし穴と検証方法を記録。OPFSログを再集計し20試行/5,697秒を確認。重大発見なし、planへ遷移する。成果物3ファイルの整形検査、git diff --check、docs:check（445リンク/56文書）が成功。
