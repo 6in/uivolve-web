@@ -4,7 +4,7 @@ uivolve-webは、**JSONやYAMLで書いた画面定義を、そのままブラ�
 
 まずは触ってみてください。インストールは要りません。
 
-**[公開デモを開く（Hello World）](https://6in.github.io/uivolve-web/pages/hello-world/)**
+**[公開デモを開く（受注管理）](https://6in.github.io/uivolve-web/pages/orders/)**
 
 ![受注管理サンプルのDOM版とCanvas版。件数・合計金額、受注一覧、選択した受注の編集欄が並ぶ画面](./orders.png)
 
