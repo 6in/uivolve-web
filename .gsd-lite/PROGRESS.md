@@ -62,3 +62,10 @@
 - 想定外: 初回のループ位置指定 .gsd-lite/gsd-lite-loop.sh は存在せず、PATHのgsd-lite-loop.shで位置を解決した。
 - やり直し: 1 回（--whereの実行パスを修正）。検証の再試行は0回。
 - 次への注意: phase=reflect、次は/gsd-lite-reflect。ループスクリプトはPATHのgsd-lite-loop.sh。最終ログverification-1791169067100.log、撮影capture-1791169073459.json。push/公開なし。
+
+## turn 9 — reflect — development-retrospective-blog
+
+- やったこと: 記録を照合し、振り返りを .gsd-lite/reflect/20261005-1200-development-retrospective-blog.md に作成（提案5件）。8試行2531秒、5タスク/5実装ターン、初回verify合格を確認し、前回提案の反映を評価した。
+- 想定外: 最初に存在しない.gsd-lite配下のloopを指定し、PATH上の入口へ修正。モデル/費用/拒否回数は未記録。統合済みのためログ開始headから履歴を集計した。
+- やり直し: 1 回（loop入口の修正）。振り返りの立て直し0回。
+- 次への注意: DONE。次回はPATH入口の具体例、並列制作前の環境共有、scratch事前確認、修正回数/見出し順と未取得値の記録を改善する。
