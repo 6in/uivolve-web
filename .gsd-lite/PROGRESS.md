@@ -34,3 +34,10 @@
 - 想定外: 最初に存在しない./gsd-lite-loop.shを指定した。ctx_searchのqueriesに非対応fileキーを渡した。scratch再集計でduration_sを確認する前にelapsed_secと書きNaNになった。掲載例の実行自体は初回から成功。
 - やり直し: 3 回（PATH入口へ修正、検索をrgへ修正、ログの実キーduration_sへ修正）。原稿/掲載例の立て直しは0回。
 - 次への注意: 次はT3のみ。PATH上のgsd-lite-loop.sh --whereを使う。ログ集計はduration_s。本文は上限まで74字なのでT3以降の説明追加時は再計数し推敲する。画像は未生成、撮影未実施、docs入口はT5。ブラウザ描画前にplaywright-skillを読み、日本語3図を800px幅で実PNG目視する。T3は並列サブ作業3件あり、担当を分離して統合後に親が台帳を更新する。phase=impl、next_command=/gsd-lite-implを保持。
+
+## turn 5 — impl — T3 日本語技術図3枚の制作
+
+- やったこと: 担当を分離した3並列作業でarchitecture/event-flow/host-effects PNGを制作し、親が800px幅の実画像と本文/実装を照合。制作ソース/再作成方法/寸法/フォントを台帳へ記録。diagrams（7926字/AI24.968%）、依存確認、WASM生成、対象UT16件、check、docs:check、diff check成功。実装コミットa991f9e。既存テスト期待値の変更なし。
+- 想定外: 最初に存在しない.gsd-lite/gsd-lite-loop.shを指定しPATH入口へ修正。3担当のbundled Chromiumが未インストールで、既存の可視Chromiumへ切替。親のhost-effects縮小画像パスを誤り、実在の-preview.pngへ修正。
+- やり直し: 親2回（loop入口、縮小画像パス）。担当の起動修正各1回、配置修正architecture1回/event-flow2回/host-effects1回。検証失敗に対する立て直し0回。
+- 次への注意: 次はT4のみ、実Hello World撮影と記事専用撮影スクリプト。PATH上のgsd-lite-loop.sh --whereを使う。Playwrightのbundled Chromiumがないため既存/snap/bin/chromium（/usr/bin/chromium-browserも入口）を使った。制作ソースはscratch、技術PNGは追跡済み。本文上限まで74字。整形→build→preview→撮影の順、実Canvas画素を開いて読む。phase=impl/next_command=/gsd-lite-implを保持。
