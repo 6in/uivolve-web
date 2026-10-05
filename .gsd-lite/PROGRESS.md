@@ -1,172 +1,57 @@
-# Progress
+# 開発振り返りブログ 進捗
 
-## turn 12 — impl — T9 異常・並行性の統合回帰
+## turn 3 — impl — T1 記事限定検査と根拠台帳の準備
 
-- やったこと: 実WASM→HostEffects→HTTP→OPFSのwrite/close/abort gateとcancel/期限/画面置換の9交差試験を追加。通常read/write/removeと別WASMホストの同scope転送は実処理settleまでBUSY、成功closeはcommitted、旧世代通知は破棄されることを確認した。実runtimeで進捗handlerのstate/cancel rollback後も保存完了、resetの99ms予約通知破棄とID再利用隔離、最終応答1 MB境界も追加。既存cleanup失敗・認証変更・全量読込禁止試験を含め全JS606件、Rust15件、転送72件、WASM生成、check（警告0）、docs:check（412リンク）、build成功。既存テスト期待値変更なし。
-- 想定外: 最初のloop推定パスが存在せずPATH上で解決。追加fixtureのfiles宣言に必須handlerが不足し、BUSYに契約外のoutcome=not-startedを要求していた。並列runtime fixtureはpublic fetchの差し替えが転送のprivate fetchへ反映されず、constructorへResourceClientを注入して修正した。全体検査の初回は並列fixture修正前を読み込んでおり、統合完了後に再実行して成功した。
-- やり直し: 2 回（親のfixture handler不足を修正、BUSYの契約外outcome期待を除去）。並列サブ作業内のfixture修正1回、loopパス修正1回。追加試験の設定のみを修正し製品コード変更なし。
-- 次への注意: 次はT10のみ。loopはPATH上のgsd-lite-loop.sh。files宣言はbackend/access/handlerが必須。ResourceClientの転送fetchはconstructorで注入する。BUSYのoutcomeは契約で指定されていないためcodeを検証する。T11未完成のためverify:transferは未実行。状態更新後の管理ファイル整形も必要。
+- やったこと: draft/diagrams/completeの本文・字数・AI比率・例リンク・PNGデコード・配置/入口検査と、依存準備から撮影までの最終判定スクリプト、8内容/コード/画像/数値の根拠台帳を追加。scratch自己検証23項目、frozen install、check（217整形/92lint）、docs:check（445リンク/56文書）、git diff --check成功。実装コミットはf8b537b。既存テスト期待値の変更なし。
+- 想定外: scratch自己検証の関数閉じ括弧が1件抜け、初回は構文エラー。実記事draftのENOENT/終了1はT2前なので想定どおり。最終判定順・終了コード伝播はspawn代替で検証し、実UT/build/撮影は未実施。
+- やり直し: 1 回（scratchの構文抜けを修正）。最終確認前にfixture削除を入れ、再実行可能にした。
+- 次への注意: 次はT2のみ。本文は固定順のH2・インラインリンクを使い、4PNG参照はdraftから各1件必要。PNGは非インターレース8bit灰色/RGB/灰色alpha/RGBAを使用。コード/主張の意味と画像の目視は機械検査とは別に台帳へ記録。scratchは実行前の構文確認とfixture初期化を行う。実記事draft/UT/抜粋実行はT2、撮影スクリプトはT4、最終判定はT5。phase=impl、next_command=/gsd-lite-implを保持。
 
-## turn 4 — impl — T1 転送試験の基盤と最終判定runner
+## turn 2 — plan — 記事・図・実撮影・最終照合を5タスクへ統合
 
-- やったこと: 前ターンのT1実装4ファイルを確認し、指定検査をすべて再実行してコミットした。基盤/runner14件、全JS528件、Rust13件、WASM生成、check、docs:check（412リンク）、buildが成功。T1を完了にし、停止記録を解消済みに更新した。
-- 想定外: 最初に推定したloopパスが存在せず、PATH上のgsd-lite-loop.shで作業場所を解決した。既存テスト期待値の変更はなし。
-- やり直し: 1 回（loop呼び出しパスの修正）。実装・検証の立て直しは0回。
-- 次への注意: 次はT2のみ実装する。loopはPATH上のgsd-lite-loop.shを使う。T11のブラウザrunnerは未作成で、verify:transferは欠如を非0として扱う。前回のlocalhost/書式障害は指定全検査の成功で解消を確認した。
+- やったこと: 要件/決定/research、現行コード・例・検査コマンド、直近reflectを照合しPLAN.mdを作成。記事専用のUnicode計数/リンク/PNG検査、実例確認、日本語図3枚、DOM/Canvasの実撮影、最終判定1本と主張台帳を固定。全受け入れ基準とresearchの落とし穴をタスクへ対応付け、docs:checkは445リンク/56文書で成功。
+- 想定外: 最初に存在しない.gsd-lite配下のloopを指定した。DECISIONS/前回reflect/PROGRESSにPATH上の入口を使う申し送りがあることを確認した。
+- やり直し: 1 回（作業場所解決をPATH上のgsd-lite-loop.sh --whereへ修正）。計画の立て直しは0回。
+- 次への注意: PATH上のgsd-lite-loop.sh --whereのみ使う。次はT1。検査/撮影スクリプトはクリーンなcheckoutから最終判定可能にするため追跡し、図の制作ソースはscratchへ保存。記事限定のstage検査を使い、整形→本番build→撮影の順を守る。コード/UT/撮影はplanでは未実施。
 
-## turn 3 — impl — T1 転送試験の基盤と最終判定runner（blocked）
+## turn 1 — research — 記事の実装根拠・履歴・検証方法を調査
 
-- やったこと: OPFS mockのchunk追記、File snapshot、close確定/abort破棄、段階別失敗/gateと14件の基盤・runner試験を実装。順次検査と失敗伝搬/中断cleanupを行うverify:transferを登録。コードは検証未合格のため未コミットで保持した。
-- 想定外: 既存files試験のlocalhost bindがEPERMで拒否された。checkは既存管理文書11件の書式で失敗。最初のloop推定パスが存在せずPATH上で解決した。
-- やり直し: 1 回（loop呼び出しパスを修正）。実装修正による検証再試行は0回。既存テスト期待値の変更はなし。
-- 次への注意: BLOCKED.md参照。localhost bind可能な環境で未コミットT1を継続して全検査を通す。既存管理文書の書式問題も解決が必要。loopはPATH上のgsd-lite-loop.sh。ブラウザ未実施を成功扱いにしない。
+- やったこと: このrepoの共通WASM/Hello World/effects/WebMCP/Workerモックの文書・実装・UTとOPFS履歴を調査し、RESEARCH.mdへ根拠パス・再利用例・図の責務・落とし穴と検証方法を記録。OPFSログを再集計し20試行/5,697秒を確認。重大発見なし、planへ遷移する。成果物3ファイルの整形検査、git diff --check、docs:check（445リンク/56文書）が成功。
+- 想定外: docs:checkはblog内部を走査せず、READMEの画面数とtestingの恒久ブラウザscript説明に古い記述が残る。最初に存在しない.gsd-lite配下のloopを指定した。root commitの親を範囲起点に指定した履歴コマンドは失敗した。
+- やり直し: 2 回（loopをPATH上のgsd-lite-loop.shへ修正、root commitに親がないためa8fdffeまでの全履歴へ修正）。成果物の立て直しは0回。
+- 次への注意: PATH上のgsd-lite-loop.sh --whereを使う。記事内リンク/4画像/直下5成果物/Unicode字数を個別検査し、現行実装との主張照合表をplanで固定。20試行はreflect・対話停止の待機を除く。管理文書整形後に実Hello World撮影を行い、playwright-skillを読む。研究のみのためUT・撮影は未実施。
 
-## turn 1 — research — OPFS転送の標準API・既存境界・異常系を調査
+## discuss — 仕様確定・開始準備
 
-- やったこと: similar_oss / official_docs / local_projectsを調査し、RESEARCH.mdへ参考パス・URL、統合変更点、容量/排他/中止/確定/進捗の検証基準を記録した。要件変更を要する重大発見はなくplanへ遷移する。
-- 想定外: 既存ResourceClientの本文は約1 MBのUint8Array限定、Web Locksは競合時待機であり、そのまま転送には使えない。lean-ctx構成ツールはapproval policyで拒否され、読み取りで継続した。最初のloopスクリプト推定パス、コード推定パスは不一致。lean-ctx readはプロジェクト外パスを拒否するため通常readでローカル参考を確認した。
-- やり直し: 3 回（loopをPATH上のgsd-lite-loop.shに修正、コード検索パスを実在パスへ修正、プロジェクト外の参考readを通常ツールへ変更）。
-- 次への注意: --whereの出力はmode=repo、MS=.gsd-lite、TARGET=.。loopはPATH上のgsd-lite-loop.shを使う。コードパスはsrc/adapters/http.js / src/file-client.js。プロジェクト外readは通常ツールで行う。転送専用本文経路、共有BUSY排他、実promiseのcleanupまでのロック保持をplanに含め、RESEARCHの検証表を完了基準へ写す。
-
-## turn 2 — plan — OPFS転送を12タスクへ分解
-
-- やったこと: 実コード・要件・決定・調査からPLAN.mdを作成し、共有排他、3転送action、中止/進捗、認証、異常系、サーバー/サンプル、100 MiB実ブラウザ試験、文書と最終判定を依存順に計画した。受け入れ基準と全落とし穴の検証担当、追従先、採否表を記録した。
-- 想定外: loopを最初に推定した.gsd-lite配下には存在せずPATH上で解決した。探索時のengine/src/model.rsとsrc/wasm-engine.jsは存在せず、実在のlib.rs/engine.js/abi.rsへ照合先を修正した。ctx_composeはapproval policyで拒否され、通常のコード読み取りで継続した。
-- やり直し: 3 回（loop呼び出しのパス1回、コード検索対象の修正2回）。計画の作り直しは0回。
-- 次への注意: loopはPATH上のgsd-lite-loop.sh。engine宣言はengine/src/lib.rs、JS ABIラッパーはsrc/engine.js。ctx_composeが拒否される環境では既存read/searchで継続する。先頭未完了T1から実装し、runnerのブラウザ検証未実施を成功扱いにしない。close確定境界とcleanup実promiseまでの排他を守る。
-
-## 対話セッション — T1再開準備
-
-- やったこと: サンドボックス内のlocalhost EPERMを再現し、外側では全JS528件とRust13件が成功することを確認。check（193ファイル整形、81ファイルlint）、docs:check（412リンク）、buildも成功。管理文書11件を整形した。
-- 想定外: .agents配下は対話セッションのsandboxで読み取り専用のため、承認済みのサンドボックス外コマンドで整形した。
-- やり直し: 整形コマンドを権限付きで1回再実行。
-- 次への注意: danger-full-accessで再開する。T1の4ファイルは検証済みだが未コミットのまま、次のimplターンで取り込む。T1は未完了表示を維持し、turnは3のまま。BLOCKED.mdは前回停止の記録であり、localhostと整形障害は解消済み。ブラウザrunner欠如を成功扱いにしない。
-
-## turn 5 — impl — T2 host_cancelとpendingを消費しない進捗のengine契約
-
-- やったこと: transactionalなhost_cancelと独立control effect、progressHandlerのload検証、id/操作照合とpendingを保持するhost_progress ABI/JS progressHostを実装。最新stateへの適用、handler/state/effect検証失敗のrollback、不正payload・終了後拒否を実WASMとRustで確認。全JS531件、Rust15件、転送基盤14件、WASM生成、check、docs:check（412リンク）、buildが成功。既存テスト期待値の変更なし。
-- 想定外: 最初に推定したloopパスが存在せず、PATH上のgsd-lite-loop.shで解決した。差分レビューでtotal欠落と余分なキーの組合せが通ることを見つけ、明示的な必須キー検証と試験を追加した。
-- やり直し: 1 回（loop呼び出しパスの修正）。検証失敗による立て直しは0回。payload検証修正後に全テスト/check/buildを再確認した。
-- 次への注意: 次はT3のみ。loopはPATH上のgsd-lite-loop.shを使う。進捗ABIはdata={operation,transferred,total}（非負の安全整数、totalはnullまたはtransferred以上）を受け取る。cancel effectはkind=host_cancel/v=1/operationでIDを消費しない。runtime/HostEffectsの配送接続、generation照合、頻度制御はT8で実装する（追従先の既存runtime/host-effectsを確認済み）。T11未完成のためverify:transferはまだ最終合格用に実行しない。
-
-## turn 6 — impl — T3 共有領域ロックと転送用handle境界
-
-- やったこと: fileLockKey/withFileLocksを追加し、通常filesと転送のscope/volumeキーを共通化。複数キーを重複除去・固定順でifAvailable非待機取得し、競合はcode=BUSY、実promiseのsettleまで保持する。指定パス・宣言権限に限定したtransferFileとOPFS handle/File/writable取得を追加し、親事前mkdirと既存全量上限を維持。転送基盤19件、全JS536件、Rust15件、WASM生成、check、docs:check（412リンク）、buildが成功。既存テスト期待値の変更なし。
-- 想定外: 差分レビューでdirectory全体の公開では指定パス/読み取り権限を迂回できるため、パスをclosureに固定したtransferFileへ変更。fileのoptionsからcreateを渡さず、読み取り用参照にはmutable handle/writable/removeを許可しない。
-- やり直し: 0 回（検証失敗なし。境界レビュー修正後に全テスト、最終の軽微な権限制約修正後に対象19件/checkを再確認）。
-- 次への注意: 次はT4のみ。transferFile(scope, declarations, volume, path, {write})はkey/file/handle/writable/removeを返す。uploadはfileのみ、downloadはwrite=trueで利用し、withFileLocks(keys, action, {signal, locks})で処理とcleanup全体を囲む（取得メソッド単独ではロックしない）。handleはmutableなためwrite=true限定。cacheのnamespaceは別のままで既存files/cache試験が成功。T11未完成のためverify:transferはまだ最終合格用に実行しない。
-
-## turn 7 — impl — T4 認証付きFile/FormData専用送信経路
-
-- やったこと: ResourceClient.transferRequestを追加しGET/POST/PUTとBlob/File/FormDataを検証、既存URL/JWT/CORS/許可origin経路を共有した。retryAuthentication=falseを強制し、送信前失敗はnot-started、送信後失敗はunknown、秘密を含む例外は固定メッセージへ置換する。一般fetchのUint8Array/1,010,000 bytes上限を維持。対象50件、全JS542件、Rust15件、WASM生成、check、docs:check（412リンク）、buildが成功。既存テスト期待値の変更なし。
-- 想定外: 最初に推定したloopパスが存在せず、PATH上のgsd-lite-loop.shで作業場所を解決した。
-- やり直し: 1 回（loop呼び出しパスの修正）。実装・検証の立て直しは0回。
-- 次への注意: 次はT5のみ。loopはPATH上のgsd-lite-loop.shを使う。転送はtransferRequest(url, {method, body, headers, signal, allowHttpErrors:true})を使用し、非2xxの処理はadapterで行う。GETはbodyなし、POST/PUTはBlob（File含む）またはFormDataのみ。認証の事前refreshは許容するが401後の再送は常に無効。容量/parts/接続範囲/ヘッダーの転送固有検証はT5/T7で行う。T11未完成のためverify:transferはまだ最終合格用に実行しない。
-
-## turn 8 — impl — T5 HTTP転送宣言・引数・ホスト設定の純粋検証
-
-- やったこと: http.download/upload/multipartを登録し、宣言のmethod/timeout/overwrite/progressHandler、URL/headers、file/partsの形・権限・相対パス、32parts/8files/100,000 UTF-8 bytesを副作用前に検証した。transferLimitはホスト限定の正の安全整数（既定104857600）としてcreateApplication/UiRuntimeから渡し、HostEffects.prepareにscope/filesのsnapshotを接続した。全JS548件、Rust15件、転送23件、WASM生成、check、docs:check（412リンク）、buildが成功。追従先のResourceClient/一般HTTPと起動経路を確認し、文書更新はT12に維持。既存テスト期待値の変更なし。
-- 想定外: 最初のloop推定パスが存在せずPATH上のgsd-lite-loop.shで解決。追加したruntime試験用files宣言で必須backendが欠けていた。prepared context配送のため対象一覧にないsrc/host-effects.jsとtests/runtime.test.jsも必要最小限変更した。
-- やり直し: 2 回（loop呼び出しパスの修正1回、追加試験のbackend欠落を修正1回）。実装の検証失敗による立て直しは1回で、その後全テストとcheckが成功。
-- 次への注意: 次はT6のみ。loopはPATH上のgsd-lite-loop.shを使う。files宣言にはbackend: opfsが必須。HTTP内部transferArgumentsはURLと限定FileClient参照を返すが、executeは純粋検証後にUNSUPPORTEDを返す段階で、T6/T7で実処理へ接続する。境界の正常入力試験も現在はUNSUPPORTED到達を確認するため、接続時に実処理のfixtureへ更新する。不正入力試験はINVALID_ARGUMENT/LIMITを要求しfetch/OPFS未到達を確認済み。準備contextはscope/files、transferLimitはadapterに保持し、options.timeoutは秒で既定120（配送への適用はT8）。T11未完成のためverify:transferはまだ最終合格用に実行しない。
-
-## turn 9 — impl — T6 downloadのストリーム保存と原子的確定
-
-- やったこと: http.downloadを共有領域ロック内の専用helperへ接続し、2xx応答をread→容量検査→writeの逐次awaitで保存。close成功を確定境界とし、失敗・中止時はreader.cancel/writer.abort/新規entry削除を待ち、既存bytesを保持する。0 bytes、容量境界、Content-Length虚偽/不正/なし、gzip復号後超過、非2xx、各OPFS例外、cleanup gate、中止中closeを検証。転送53件、全JS578件、Rust15件、WASM生成、check（警告0）、docs:check（412リンク）、buildが成功。
-- 想定外: close中の中止ではclose成功後もreader.cancelの実promiseを待つ必要があり、cleanupを確定済みでも待機する構造へ修正。初回checkは成功したがfinally内throwと試験配列生成に警告が出たため、cleanup結果を保持してfinally後に判定する構造とArray.fromへ修正した。
-- やり直し: 1 回（整形後の行とpatchが一致せず、該当箇所を読み直して適用）。検証失敗による立て直しは0回。レビューと警告解消後に全テスト/check/buildを再確認した。
-- 既存テスト期待値変更: tests/opfs-file-transfer.test.jsの「validates host transferLimit and snapshots file declarations in prepared context」で、HostEffects完了のUNSUPPORTED期待をok:true/body:nullへ変更。理由はT6でdownload実処理が接続されたため。fixtureのtransferRequestは200空応答を返す。multipart境界試験のUNSUPPORTED期待はT7まで維持。
-- 次への注意: 次はT7のみ。download helperはsrc/adapters/http-download.js。withFileLocksでfetchからcleanupまで保持し、close成功後は中止されても確定済みfileを削除しない。cleanup失敗はCLEANUP、確定後ならoutcome=committed。共有FileClient/OpfsDirectory境界と通常files/cache退行試験を確認済み、既存全量上限は維持。配送のcancel/期限/進捗/世代および最終結果検査はT8で接続する。T11未完成のためverify:transferはまだ最終合格用に実行しない。
-
-## turn 10 — impl — T7 本文/multipart送信と応答outcome
-
-- やったこと: File本文と順序付きFormData送信を接続。重複file partを含む合計容量を送信前検証し、status/許可headers/body/filesと送信前not-started・送信後unknown・2xx後committedを返す。応答解析完了まで共有ロックを保持。転送58件、全JS583件、Rust15件、WASM生成、docs:check（412リンク）、buildが成功。checkも管理ファイル整形後に確認。
-- 想定外: loopを誤って.gsd-lite配下から呼び、PATH上のgsd-lite-loop.shへ修正。checkで既存PROGRESS.md/state.jsonの整形不一致が検出された。
-- やり直し: 1 回（checkの管理ファイル整形不一致を修正）。loopパス修正1回。実装テスト失敗なし。
-- 既存テスト期待値変更: tests/opfs-file-transfer.test.jsの32parts/8files/UTF-8 args境界試験でUNSUPPORTEDを成功data.filesへ変更。T7で実送信に接続されたため、空OPFSファイルとresponse:emptyを用意した。副作用前の不正入力拒否は既存試験を維持。
-- 次への注意: 次はT8のみ。loopはPATH上のgsd-lite-loop.shを使用。upload/multipartはhttp.jsでwithFileLocks内にFile取得から応答解析まで保持する。配送のcancel/期限/世代/最終結果検査はT8。checkは管理ファイルも対象とするため状態更新後に整形する。T11未完成のためverify:transferは未実行。
-
-## turn 11 — impl — T8 配送の中止・期限・進捗・世代を接続
-
-- やったこと: HostEffectsにoperation名/generation/実処理promiseを保持し、host_cancelの同名全中止、転送既定120秒/options.timeout秒、一般host既定15秒、reset/dispose時の中止と旧世代通知破棄を接続。転送中止後は実処理/cleanupのsettleを待ち、close成功や2xx応答後のcommittedを維持する。downloadの保存済みbytes進捗を100ms以上間隔でprogressHostへ配送し、予約通知を終端で取消、handler失敗はonErrorへ報告して継続する。全JS591件、Rust15件、転送63件、WASM生成、check（警告0）、docs:check（412リンク）、build成功。
-- 想定外: 最初のloop推定パスが存在せずPATH上へ修正。adapter.executeをmicrotaskへ移した初回実装が既存の同期開始契約を壊し、reset試験のresolveが未設定となった。同期executeとPromise.resolveの構造へ戻した。対象一覧外のhttp-download.js/http.jsも進捗contextの接続に必要だった。checkの例外変数代入警告は代入を除去して解消した。既存テスト期待値変更なし。
-- やり直し: 1 回（既存試験失敗を受けadapter同期開始を復元し、対象/全検査が成功）。loopパス修正1回。警告修正後も全検査を再確認。
-- 次への注意: 次はT9のみ。loopはPATH上のgsd-lite-loop.sh。転送の期限/中止結果はcleanupを含む実処理settle後に一度配送するため、ロックはそれまで保持される。中止中close成功はCANCELLED/TIMEOUTのoutcome=committed。進捗はwrite成功後のbytes、符号化/不正/欠落/超過したContent-Lengthはtotal=null。実WASM進捗契約と既存runtime試験も成功。T9で実WASMからのwrite/close/abort gateと通常files競合の交差試験を追加する。T11未完成のためverify:transferは未実行。
-
-## turn 13 — impl — T10 テストサーバーとDOM/Canvasサンプル（BLOCKED）
-
-- やったこと: 独立localhost転送サーバー、DOM/Canvas共通YAML/Rhai、ホストで100 MiBをOPFSへchunk生成するhelper、demo:transfer登録、サーバー/実WASM試験を作成。WASM生成とcheck成功。対象試験78件中77件成功（既存転送72件、サーバー5件）、サンプルのCSV加工試験1件失敗。既存テスト期待値変更なし。実装差分は未コミットのまま保持し、PLANのT10は未完了。
-- 想定外: 最初に推定したloopパスが存在せずPATH上のgsd-lite-loop.shで解決。Bun 1.3.12はReadableStream応答のContent-Lengthを外し、空multipart Fileのnameを失うため既知長Blob fixtureとMIMEヘッダー補助を追加。初回試験はOPFS helper名が誤り、1回目修正後はfetchのRequest変換が不足。2回目修正後、Rhai replaceの戻り値がunitでfile_write_textの型不一致となった。state.turn=12/T9完了コミットはあるがPROGRESSにはturn12の追記がなく、過去記録は改変していない。
-- やり直し: 2 回（1: Bun fixture互換とOPFS helper名修正。2: fixtureへRequestを渡すfetch wrapper修正）。スキルの上限に達したため追加修正なし。
-- 次への注意: BLOCKED.mdを参照。再開時は今回の未コミット差分をT10の続きとして扱う。home.rhaiのCSV加工はローカル文字列にreplaceを適用してからfile_write_textへ渡す方式を実WASMで確認する。checkは成功したが全検証コマンドは未完走。T11の実ブラウザ試験は未実装なのでverify:transferは未実行。
-
-## 対話セッション — T10修正と再開
-
-- やったこと: home.rhaiのCSVをローカル変数へ取得し、replaceで変数を変更してからfile_write_textへ渡すよう修正。実WASMサンプルを含む全JS612件・Rust15件、check、docs:check、buildが成功。
+- やったこと: 選択式対話で主題/読者/分量/文体/図とコード/配置/追加内容/実行設定/監視方式を確定。前回OPFS成果をarchive/opfs-file-transferへ退避し、reflectとログは保持。REQUIREMENTS/DECISIONS/stateを新規マイルストーンへ更新。
 - 想定外: なし。
-- やり直し: 0 回。
-- 次への注意: T10の差分は検証済みの未コミット変更として維持。次のimplターンでT10の続きとして取り込み完了コミットする。turnは13のまま、T10のチェックは未完了。BLOCKED.mdのCSV型不一致は解消済み。ユーザーの指示により、既存のdanger-full-access設定で再開する。
+- やり直し: 対話の仕様調整を反映（6,000〜8,000字、ポップで丁寧・絵文字多め、記事フォルダ直下のPNG4枚、WebMCP/モック/UT追加）。実装の立て直しではない。
+- 次への注意: PATH上のgsd-lite-loop.shを使用。調査対象はこのrepoのみ。旧成果の根拠はarchive/opfs-file-transferと既存reflect/logs。WebMCPの既定有効範囲とUT/ブラウザ試験の境界を正確に説明。字数の除外規則を固定し、図は画像ファイルを相対参照する。
 
-## turn 14 — impl — T10 テストサーバーとDOM/Canvasサンプル
+## turn 4 — impl — T2 根拠付き日本語原稿と掲載例の実行確認
 
-- やったこと: 前ターンと対話セッションのT10差分を確認し、続きとして再検証して完了コミットした。localhost転送サーバーのGET/POST/PUT/multipart・hash/size・遅延/容量/認証/不正応答、共通YAML/RhaiのCSV加工と複数ファイル送信、ホストで100 MiBをchunk生成するサンプルを確認。対象78件、全JS612件、Rust15件、WASM生成、check（警告0）、docs:check（412リンク）、build成功。既存テスト期待値変更なし。
-- 想定外: 最初のloop推定パスが存在せず、PATH上のgsd-lite-loop.shで作業場所を解決した。未コミット差分は申し送りに記録されたT10の続きで、追加の実装修正は不要だった。
-- やり直し: 0 回（実装・検証の立て直しなし。loopパス修正1回）。
-- 次への注意: 次はT11のみ。loopはPATH上のgsd-lite-loop.shを使用。DOM/Canvas入口はexamples/opfs-file-transfer/index.htmlのrendererクエリ、独立転送サーバーはbun run demo:transfer（4177）。実ブラウザ検証とverify:transferへの組込みは未実装のため、最終判定runnerは未実行。通常HTTP/既存CRUDサーバーは変更していない。
+- やったこと: 必須8節の日本語原稿と4画像の相対参照/alt/説明を追加し、実装・契約・履歴の根拠台帳を更新。本文7926字、AI1979字（24.968%）でdraft成功。依存確認/WASM生成、対象UT16件、掲載JSON/Rhai/YAMLと2つのJSフェンス直接実行、OPFS20試行5697秒再集計、check（218整形/92lint/cargo fmt）、docs:check（445リンク/56文書）、diff check成功。実装コミット0a08ab8。既存テスト期待値の変更なし。
+- 想定外: 最初に存在しない./gsd-lite-loop.shを指定した。ctx_searchのqueriesに非対応fileキーを渡した。scratch再集計でduration_sを確認する前にelapsed_secと書きNaNになった。掲載例の実行自体は初回から成功。
+- やり直し: 3 回（PATH入口へ修正、検索をrgへ修正、ログの実キーduration_sへ修正）。原稿/掲載例の立て直しは0回。
+- 次への注意: 次はT3のみ。PATH上のgsd-lite-loop.sh --whereを使う。ログ集計はduration_s。本文は上限まで74字なのでT3以降の説明追加時は再計数し推敲する。画像は未生成、撮影未実施、docs入口はT5。ブラウザ描画前にplaywright-skillを読み、日本語3図を800px幅で実PNG目視する。T3は並列サブ作業3件あり、担当を分離して統合後に親が台帳を更新する。phase=impl、next_command=/gsd-lite-implを保持。
 
-## turn 15 — impl — T11 再実行可能な実ブラウザ検証（BLOCKED）
+## turn 5 — impl — T3 日本語技術図3枚の制作
 
-- やったこと: Playwright依存とlocalhostサーバー/実Chromiumを起動・終了するrunner、固有OPFS namespaceのブラウザ試験、DOM/Canvasサンプルの試験入口を追加。実Chromium 152で両rendererのCSV取得・加工・複数file送信・受信進捗・cancel・画面置換と、100 MiB GET/File/FormDataのsize/hash・全量JS読込禁止が成功。WASM生成も成功。T11は未完了、実装差分は未コミットで保持した。既存テスト期待値変更なし。
-- 想定外: 初回ブラウザ検査中の整形がVite再読込を発生させ、cleanup例外が元の失敗を隠した。再検査ではViteがnew URL("./", import.meta.url)の末尾/を落とし、YAML参照がHTML fallbackになった。URL修正後、認証fixtureの成功ケースがHTTP_401となった。2タブ排他試験は認証で停止したため未実行、PLANの全検証コマンドは未完走。
-- やり直し: 2 回（1: 再読込後のcleanupで元の例外を隠さないようにし、サンプル起動エラーを明示。2: Vite変換を実測してサンプルbaseUrlをlocation.href基準へ修正）。上限に達したため認証ケースの追加修正は行っていない。
-- 次への注意: BLOCKED.md参照。次ターンはT11差分を引き継ぎ、認証fixtureと試験tokenの一致を確認してからブラウザ試験・PLAN全検査を実行する。Vite実行中に整形しない。試験runnerはChromium実行ファイルをTRANSFER_BROWSER_PATHまたは/usr/bin/chromium-browserから選択し、存在しない環境ではPlaywrightの既定browserを使い、起動不能は非0。runnerにverify:transferからの既存接続がある。T12には着手しない。
+- やったこと: 担当を分離した3並列作業でarchitecture/event-flow/host-effects PNGを制作し、親が800px幅の実画像と本文/実装を照合。制作ソース/再作成方法/寸法/フォントを台帳へ記録。diagrams（7926字/AI24.968%）、依存確認、WASM生成、対象UT16件、check、docs:check、diff check成功。実装コミットa991f9e。既存テスト期待値の変更なし。
+- 想定外: 最初に存在しない.gsd-lite/gsd-lite-loop.shを指定しPATH入口へ修正。3担当のbundled Chromiumが未インストールで、既存の可視Chromiumへ切替。親のhost-effects縮小画像パスを誤り、実在の-preview.pngへ修正。
+- やり直し: 親2回（loop入口、縮小画像パス）。担当の起動修正各1回、配置修正architecture1回/event-flow2回/host-effects1回。検証失敗に対する立て直し0回。
+- 次への注意: 次はT4のみ、実Hello World撮影と記事専用撮影スクリプト。PATH上のgsd-lite-loop.sh --whereを使う。Playwrightのbundled Chromiumがないため既存/snap/bin/chromium（/usr/bin/chromium-browserも入口）を使った。制作ソースはscratch、技術PNGは追跡済み。本文上限まで74字。整形→build→preview→撮影の順、実Canvas画素を開いて読む。phase=impl/next_command=/gsd-lite-implを保持。
 
-## 対話セッション — T11認証修正と再開
+## turn 6 — impl — T4 実Hello WorldのDOM/Canvas操作と撮影
 
-- やったこと: ブラウザ試験の成功tokenをサーバーfixtureのtransfer-fixtureへ一致させた。verify:transfer全体が成功（JS612件、Rust15件、check、docs、build、Chromium152のDOM/Canvas・100 MiB・認証/CORS・2タブ排他）。
-- 想定外: なし。
-- やり直し: 0 回。
-- 次への注意: ユーザー指定によりプロジェクトローカルのimplスキルの修正上限を2回から5回へ変更（並列作業の合算上限も5回）。T11差分は未コミットの続きとして次ターンで取り込む。T11未完了とturn15を維持し、danger-full-accessで再開する。BLOCKED.mdの認証不一致は解消済み。
+- やったこと: playwright-skillを読み、管理文書整形→本番build→自己管理preview→可視ChromiumでDOM/Canvas各起点の実入力/押下・入力のみ不変・空白Worldを11チェック。両側Hello 太郎の実比較領域PNG（1225×296）を保存し、Canvasの実画素と日本語/切れ/重なりを目視確認。ブラウザ/OS/URL/viewport/操作/PNG検査/サーバー終了を台帳へ記録。frozen install、WASM生成、対象UT16件、diagrams、docs:check、check成功。実装コミット33a54d3。既存テスト期待値の変更なし。
+- 想定外: 存在しない./gsd-lite-loop.shを指定しPATH入口へ修正。lean-ctxのプロジェクト外skill読み込みは拒否され通常読取へ切替、ctx_searchの非対応pathキーを修正。初回撮影で実Rhaiにない末尾!を検証側で期待しtimeout。CSS領域の小数座標がPNGの画素寸法へ丸められるため台帳はdecodePngの実寸を採用。
+- やり直し: 1回（撮影の末尾!を実Rhaiと同じHello 太郎/World/花子へ修正、再撮影成功）。成功時はpreview/ブラウザ終了、cleanupErrorsなし。
+- 次への注意: 次はT5のみ、docs入口と最終照合/verify-retrospective。PATH上のgsd-lite-loop.sh --whereを使う。撮影スクリプトは既存/usr/bin/chromium-browserを可視起動しpreviewを自己管理、4174が使用済みなら失敗。文書整形→build→撮影順を守る。Rhai挨拶に末尾!はない。PNG寸法はCSS領域から推測せずdecodePngで確認。本文7926字/AI24.968%、入口未追加のためcompleteはT5。phase=impl、next_command=/gsd-lite-implを保持。
 
-## turn 16 — impl — T11 再実行可能な実ブラウザ検証
+## turn 7 — impl — T5 文書入口・最終要件照合
 
-- やったこと: 申し送りのT11未コミット差分を確認し、認証修正を含めて再検証して完了コミットした。bun run verify:transferが成功（WASM生成、JS612件、Rust15件、check警告0、docs:checkの412リンク、build、Chromium152.0.7977.64）。実OPFSでDOM/CanvasのCSV加工・multipart・進捗・cancel・画面置換、100 MiB GET/File/FormDataのsize/hashと全量JS読込禁止、CORS/認証/上書き/容量、2タブWeb Locksの競合と解放を確認。既存テスト期待値変更なし。
-- 想定外: 初回にリポジトリ直下のloopを指定したが存在せず、PATH上のgsd-lite-loop.shで作業場所を解決した。実装修正は不要だった。
-- やり直し: 0 回（実装・検証の立て直しなし。loopパス修正1回）。
-- 次への注意: 次はT12のみ。loopはPATH上のgsd-lite-loop.shを使用。verify:transferは実ブラウザを含めて成功済み。Vite実行中に整形しない。BLOCKED.mdのT11停止理由は解消済み。文書とskillsの追従先照合・文書例試験はT12で実施する。
-
-## turn 17 — impl — T12 現行契約文書と最終判定
-
-- やったこと: 現行OPFS転送契約と実行可能なYAML/Rhai例を追加し、入口文書・認証・ABI・設計履歴・skillsを追従更新。文書例を実WASMで実行し、download/upload/multipart、受信進捗、中止と旧ファイル保持を確認。追従先チェックリストの数値rgを全件レビューし、一般HTTP/JSON/Rhai/files/RPC/Workerと過去計画の上限を区別した。skills:bundleは両スキル127ファイルを生成し、追跡差分なし。bun run verify:transferがクリーンな試験開始から成功（WASM生成、JS613件、Rust15件、check警告0、docs:checkの445リンク/56文書、build）。localhostの実Chromium152.0.7977.64でDOM/CanvasのCSV・multipart・進捗・中止・画面置換、100 MiB GET/File/FormDataのsize/hash・全量JS読込禁止、CORS/認証/上書き/容量、2タブWeb Locks競合と解放が成功。既存テスト期待値変更なし。
-- 想定外: 最初に推定したloopパスが存在せずPATH上のgsd-lite-loop.shで解決。追加のAI参照入口リンクのpatchに一致しない削除行が含まれたため、リンク追加だけへ修正して適用した。統合レビューで中止通知の説明を実処理/cleanup終了後に合わせた。
-- やり直し: 0 回（実装・検証の立て直しなし。loopパス修正1回、patch修正1回）。
-- 次への注意: 全タスク完了、次はgsd-lite-verify。実装ターンではマージしない。loopはPATH上のgsd-lite-loop.shを使用する。BLOCKED.mdのT11停止理由は解消済みの履歴。verify:transferは実ブラウザまで成功済みで、文書例も自動検査対象。Vite実行中に整形しない。
-
-## turn 18 — verify — 指摘1件、implへ差し戻し
-
-- やったこと: main...HEAD全体を要件・完了基準と照合し、コード/セキュリティの読み取り専用並列レビュー、初回堅牢性格子と文書追従を確認。bun run verify:transfer成功（JS613件、Rust15件、check、445文書リンク、build、実Chromium152のDOM/Canvas・100 MiB・CORS/認証・2タブ排他）。本文uploadの既定Content-Type欠落をnative Requestで再現し、VERIFICATIONとPLANのF1に記録した。
-- 想定外: loopの推定パス.gsd-lite/gsd-lite-loop.shは存在せず、PATH上のgsd-lite-loop.shで解決。全試験が成功しても、upload試験がContent-Type欠落を期待しており受け入れ基準違反を検出していなかった。
-- やり直し: 0 回（検証の再実行・実装修正なし。loopパス修正1回）。
-- 次への注意: 次ターンはF1のみ実装。本文upload POST/PUTの既定/明示Content-Typeとmultipartのブラウザ生成boundaryを受信側まで確認し、誤った既存期待値変更を記録する。次のverifyは初回格子とF1差分の回帰を行う。loopはPATH上を使用。BLOCKED.mdは解消済みの履歴であり今回BLOCKEDではない。マージは未実施。
-
-## turn 19 — impl — F1 本文アップロードの既定Content-Type
-
-- やったこと: upload省略時のContent-Typeとmultipart既定file partをapplication/octet-streamに設定し、明示uploadヘッダーとブラウザ生成boundaryを保持。空typeの実OPFS FileをPOST/PUTで送信しサーバーの受信ヘッダー・本文hash・size、multipart順序を照合した。bun run verify:transfer成功（JS614件、Rust15件、check警告0、445文書リンク、build、Chromium152.0.7977.64のDOM/Canvas・100 MiB・CORS/認証・2タブ排他）。
-- 想定外: 初回loop推定パスが存在せずPATH上で解決。Chromiumは.txt/.binのFile typeを推定するため空type試験は拡張子なしを使用。Bunのmultipart解析も型をファイル名から推定するためサーバーfixtureは生MIMEヘッダーの型を返すよう修正。文書例試験にも空type期待が残っていた。
-- やり直し: 5 回（受信fixture追加に伴うserver期待更新、File由来型に依存しない既定値へ修正、文書例期待更新、空type fixtureを拡張子なしへ変更、multipart受信型を生MIMEヘッダーで検証）。loopパス修正1回。
-- 既存テスト期待値変更: tests/opfs-file-transfer.test.jsの本文送信content-type欠落期待をapplication/octet-streamに、multipart既定partの空typeをapplication/octet-streamに変更。tests/documented-transfer.test.jsのsource.csv空type期待も同じ既定値へ変更。要件の既定Content-Typeに合わせるため。tests/transfer-server.test.jsの本文2箇所にcontentType:null、multipartにboundary一致を追加（fixture応答への受信ヘッダー追加に追従、直接Uint8Array/stream送信の挙動は維持）。
-- 次への注意: F1完了、次はgsd-lite-verifyのみ。loopはPATH上を使用。multipartの受信型はBun解析後のFile.typeではなく生MIMEヘッダーで照合する。空type OPFS fixtureは拡張子なし。実装ターンではマージしない。
-
-## turn 20 — verify — 合格、mainへローカルマージ
-
-- やったこと: 初回堅牢性格子とF1修正差分の回帰、コード・セキュリティ・文書追従を確認。bun run verify:transfer成功（JS614件、Rust15件、check、445リンク、build、実Chromium152のDOM/Canvas・100 MiB・CORS/認証・2タブ排他・Content-Type受信照合）。検証結果をコミット後、origin未設定のためmainへno-ffマージ成功。
-- 想定外: 最初に推定した.gsd-lite/gsd-lite-loop.shは存在せずPATH上のgsd-lite-loop.shで解決。mainにはgithub/mainの追跡設定があるが、スキルの分岐対象originは未設定。
-- やり直し: 0 回（検証・実装修正なし。loopパス修正1回）。
-- 次への注意: 次はgsd-lite-reflectのみ。phase=reflect、next_command=/gsd-lite-reflect、turn=20。main上で状態をコミットし、マイルストーンブランチは保持。loopはPATH上を使用。BLOCKED.mdは解消済みの履歴。
-
-## turn 21 — reflect — opfs-file-transfer
-
-- やったこと: 振り返りを .gsd-lite/reflect/20261005-0843-opfs-file-transfer.md に作成（提案6件）。20試行の計測、3回のBLOCKEDと1件のverify差し戻し、38コミットを照合した。
-- 想定外: loopの推定パスが存在せずPATH上へ修正。モデル・出力/キャッシュ・コスト・permission_denialsはログに記録なし。PROGRESS turn13のturn12不足記述と現存turn12欄の差異を記録した。
-- やり直し: 0 回（振り返りの立て直しなし。loopパス修正1回）。
-- 次への注意: 次回は入口パス固定、環境事前確認、fixtureとサンプルの分割、ブラウザ起動前整形、要件既定値の受信試験、停止/立て直しの記録を検討する。ローカルマージ済みのmainでDONEへ更新する。
+- やったこと: docs入口1件を追加し、必須8内容/ABI/WebMCP/モック/UT/転送/履歴/未取得境界を本文・図・根拠台帳で最終照合。整形後にverify-retrospective全8工程成功（対象UT16件、check、446リンク、build、complete、実ブラウザ11操作）。本文7926字/AI24.968%、4PNG目視と再撮影/cleanup成功を台帳へ記録。実装コミット3c4f149。既存テスト期待値の変更なし。
+- 想定外: 最初に存在しない.gsd-lite/gsd-lite-loop.shを指定した。PATH上の入口へ修正して作業場所を解決。再撮影でCPU計測値の表示が変わりPNGを更新した。
+- やり直し: 1 回（loop入口をPATH上へ修正）。実装/最終検証の立て直し0回。
+- 次への注意: 全5タスク完了、phase=verify/next_command=/gsd-lite-verifyへ遷移。PATH上のgsd-lite-loop.sh --whereを使う。独立判定はbun scripts/verify-retrospective.mjs、既存可視Chromium/DISPLAY/空いている4174が必要。根拠台帳のT5と最終ログ/撮影証跡を参照。実IME/支援技術/実Worker/CORS/GPU性能/モデル費用は今回未取得。

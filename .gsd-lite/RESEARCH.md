@@ -1,73 +1,62 @@
-# OPFSファイル転送 調査
+# RESEARCH — development-retrospective-blog
 
-調査日: 2026-10-04。対象: similar_oss / official_docs / local_projects。
-REQUIREMENTS.md / DECISIONS.mdを優先し、要件本文は変更しない。以下はplanへの実装・検証提案であり、実ブラウザでの転送検証は実装フェーズで行う。
+調査: 2026-10-05、turn 1。対象は `local_projects` / `.` のみ。外部検索・他プロジェクトの調査はしていない。REQUIREMENTS / DECISIONSは変更しない。重大な判断変更を必要とする発見はなく、planへ渡す。
 
-## 結論と参考実装
+## 参考実装と記事の根拠
 
-既存http adapter、ResourceClient、FileClient、OpfsDirectoryを拡張する。ブラウザ標準のFile / FormData / ReadableStream / createWritableで実現可能。新しい転送ライブラリは必須ではない。確認したOSSは転送やOPFS一般の部品であり、本プロジェクトのRhai、領域権限、JWT、世代管理、outcomeまで置換する根拠は見つからなかった。discussを覆す重大発見なし。
+以下はすべてリポジトリルートからのパス。記事から参照するときは `../../` を付ける。
 
-| 参考                                                                                                                       | 使える設計・採用判断                                                                                                                                                       |
-| -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [happy-opfs](https://github.com/JiangJie/happy-opfs)                                                                       | OPFSのパスAPI、writable stream、downloadFile/uploadFile、実ブラウザ試験の参考。ホスト契約まで満たすと判断せず、依存追加せず設計を参照する。                                |
-| [drip-fs](https://github.com/pratherbytecraft/drip-fs)                                                                     | ストリームとOPFS staging、後始末の参考。Service Worker/ユーザー向け保存やblob fallbackは本件の領域内転送と異なる。全量メモリfallbackは採用しない。                         |
-| `src/opfs.js`, `src/file-client.js`                                                                                        | 領域namespace `uivolve-web/fs/<scope>/<volume>`、相対パス制限、通常filesのロックキーを再利用。テキスト100,000 bytes/バイナリ1,000,000 bytesの既存制限は維持。              |
-| `src/adapters/http.js`, `src/resource-client.js`, `src/http-policy.js`                                                     | URL範囲、許可ヘッダー、JWT/CORS、応答上限、json/text/emptyを再利用。転送は認証失敗後の再送も無効化。                                                                       |
-| `src/host-effects.js`, `src/runtime.js`, `engine/src/host.rs`                                                              | transactional effect発行、世代、完了handler、既存host_callの実装箇所。host_cancelと進捗はここへ統合する。                                                                  |
-| `tests/helpers/opfs.js`, `tests/host-adapters.test.js`, `tests/files-cache-rpc.test.js`, `tests/platform-features.test.js` | close確定、beforeClose gate、異常応答、世代切替試験を拡張。現在のOPFS mockはwriteごとに置換し、getFileもFileではないので、複数chunk・File/FormData試験向けの忠実性を補う。 |
-| `scripts/http-server.mjs`, `examples/host-http`                                                                            | BunローカルHTTPサーバーとサンプルの雛形。現状JSON CRUDであり、転送/multipartは未対応。                                                                                     |
+| 主張・素材      | 正準の根拠                                                                                                                                  | 記事で使う内容                                                                                                                         |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| 出発点・制限    | `README.md`、`docs/uivolve-port.md`、`REQUIREMENTS.md`                                                                                      | 宣言的な部品・配置をWebへ移す試作。完全互換や性能改善を動機として創作しない                                                            |
+| 共通エンジン    | `docs/architecture.md`、`engine/src/lib.rs`、`engine/src/abi.rs`、`src/runtime.js`                                                          | Rustがstate・イベント・layout・Sceneを扱い、JSが取得とブラウザAPI・描画を担当                                                          |
+| JSON/YAML・Rhai | `src/package-format.js`、`engine/src/lib.rs:368,455-462`                                                                                    | YAMLはホストでJSON相当へ変換。RhaiはWASM内でASTへコンパイルして同期実行。RhaiからWASMバイナリを生成しない                              |
+| Hello World     | `public/screens/hello-world.json`、`public/screens/hello-world.rhai`、`tests/engine.test.js:43-62`                                          | nameInputのbind=name、helloButtonのhandler=sayHello、greetingLabelのbind=greeting。trimは変数を更新し、空白のみならWorld               |
+| 検証と確定      | `engine/src/lib.rs` のdispatch、`engine/src/abi.rs` のload、`src/runtime.js` のcompile/load                                                 | stateのコピーへ入力とRhaiを適用し、状態・UI・effectsの準備が通ってから確定。候補load失敗時は前の画面が残る                             |
+| 配置・描画      | `src/dom-renderer.js`、`src/canvas-renderer.js`、`src/field-control.js`                                                                     | layout(width)はScene生成。DOMはkeyで要素更新、Canvasは面を再描画し入力時はネイティブ欄を併用。幅が違えば座標も違う                     |
+| ABI             | `src/engine.js:45-67`、`engine/src/abi.rs`、`docs/architecture.md`                                                                          | UTF-8 JSON、入力はfinallyで解放、応答はエンジン所有で次requestまで有効。呼出後のmemory.bufferを参照                                    |
+| effectsとホスト | `engine/src/host.rs`、`src/host-effects.js`、`src/adapters/http.js`、`docs/http-adapter.md`                                                 | host_callのintentを状態検証後にkind=host/v=1のeffectsへ。登録アダプターへ配送しhost_resultから最新stateのhandlerへ                     |
+| 保存・RPC・転送 | `docs/files-cache-rpc.md`、`docs/opfs-file-transfer.md`、`src/adapters/http-download.js`、`src/opfs.js`、`tests/opfs-file-transfer.test.js` | 一般FileBytesの容量と大容量転送を区別。GET reader→OPFS writable、uploadはFile、multipartはFormData。ファイル本体はWASM/stateへ通さない |
+| WebMCP          | `docs/webmcp.md`、`src/main.js:224`、`src/application.js:61,159`、`src/ui-tools.js`、`tests/webmcp.test.js`                                 | 比較デモは起動時登録。独立アプリはwebmcp:true。5共通ツール、人と同じWASMイベント、token/revision/可視性の検査                          |
+| Workerモック    | `docs/worker-mock-api.md`、`public/mock/orders-api.yaml`、`public/screens/worker-orders.yaml`、`public/screens/worker-orders.rhai`          | 画面とは別DSLのcollections/routes/固定response/CRUD。workerMockAdapterを明示登録。画面のhost_callは維持してホスト接続を実HTTPへ切替    |
+| 描画なしUT      | `src/mock-api-model.js`、`tests/worker-mock.test.js:56-79`、`tests/engine.test.js:15-62`                                                    | MockApiModel.requestと実WASMのload/dispatch/layout。Worker代替のTestWorkerはメッセージ契約の試験で、実ブラウザの代替保証にはしない     |
+| AI運用          | `.agents/skills/gsd-lite-*/SKILL.md`、`.gsd-lite/archive/opfs-file-transfer/`、`.gsd-lite/reflect/20261005-0843-opfs-file-transfer.md`      | discuss→research→plan→impl→verify→reflect。要件・停止時の判断は人、記録と検証をループが引継ぐ                                          |
 
-## 公式資料からの技術前提
+## 再利用する設計・制作手段
 
-- [File System Standard: createWritable](https://fs.spec.whatwg.org/#api-filesystemfilehandle-createwritable): streamはcloseまで既存内容を更新せず、通常一時データを使う。keepExistingData=falseで置換する。close開始後の取消は巻き戻し保証に含めない。SyncAccessHandleの直接書き込みは旧内容保持の用途に採用しない。
-- [File System Standard: getFile](https://fs.spec.whatwg.org/#api-filesystemfilehandle-getfile): File取得後の元ファイル変更・削除で読み取りが失敗し得る。送信と応答処理が終わるまで領域ロックを保持する。
-- [Streams Standard](https://streams.spec.whatwg.org/): reader/writeを逐次awaitしbackpressureを保つ。pipeTo利用ならsignal、容量検査、close/abort責任を明確にする。全chunk蓄積やresponse.blob()/arrayBuffer()はダウンロード本体に使わない。
-- [Fetch Standard](https://fetch.spec.whatwg.org/): File/BlobとFormDataは標準本文型。転送容量は受信streamの実バイト数で判定する。Content-Encodingの復号でContent-Lengthと取得byte数は一致しないことがある。
-- [XMLHttpRequest Standard: FormData](https://xhr.spec.whatwg.org/#interface-formdata): appendはentry list末尾に追加する。順序と重複nameを維持し、setやobject化を使わない。型の自動文字列化に頼らず、value:stringを事前検証する。
-- [Web Locks API](https://w3c.github.io/web-locks/#api-lockmanager-request): ifAvailable=trueで非待機取得、取得不可はcallbackへnull。取得後のsignalはロックを強制解放しない。callbackの実処理promiseがsettleするまで保持する。ifAvailableとsignalの組み合わせ制約があるため、非待機取得ではsignalをrequest optionsへ渡さずcallback前後で中止を検査する。
-- [Bun HTTP Server](https://bun.sh/docs/runtime/http/server): テストサーバーはstream ResponseとRequest本文を利用できる。100 MiB級試験ではmaxRequestBodySizeを明示し、サーバー側の既定制限とクライアント制限を混同しない。
+- 記事はHello Worldの1本の流れを主軸にする。JSONは3部品の必要部分、RhaiはsayHelloを抜粋し、完全なファイルへリンクする。現行publicのHello WorldはJSON/Rhaiであり、別のskills同梱YAMLと混同しない。
+- UT例は `tests/engine.test.js:51-60` のload→名前入力→押下→state/Scene検証と、`tests/worker-mock.test.js:57-62` のモデルCRUDを短く抜粋できる。import・初期化・WASMビルド条件を省いた断片には「抜粋」と準備条件を添える。モデル例でrequestヘルパーを使うなら定義も含めるかmodel.requestへ明示する。
+- Worker定義は `public/mock/orders-api.yaml` または現行ガイドのcollections/seed/GETルートを縮める。画面DSLのoperationsとモックDSLのroutesを別々に示す。接続設定だけではモック登録にならない。
+- 新規ライブラリは不要。既存playwrightとHTML/SVGのブラウザ描画で日本語技術図をPNG化できる。図の制作ソースと検査スクリプトは `.gsd-lite/logs/development-retrospective-blog/scratch/` に置く。記事の確定出力は直下5ファイルだけ。
+- 撮影の参考は `scripts/test-transfer-browser.mjs` のChromium起動/終了方法、`index.html` の `#dom-stage` / `#canvas-stage`、`src/main.js` の両面への接続。実撮影前にplaywright-skillを読む。サーバーはREADMEのbuild→preview、Hello Worldは `/pages/hello-world`。画像内で両方の結果が見えるよう比較領域を切り出す。撮影はimplで行い、このresearchでは実施していない。
+- 技術図の矢印はarchitectureで「画面/Rhaiの取得→JS→共通WASM→Scene→DOM/Canvas」、event-flowで「どちらの入力→共通イベント→候補state/Rhai→検証→確定→両面」、host-effectsで「host_call→確定effects→ホスト/アダプター→host_result→最新stateのhandler→再検証」とする。WASMが直接fetchやCanvas APIを呼ぶ矢印を描かない。
 
-## 統合の変更箇所と実装提案
+## 履歴・数字の確定範囲
 
-1. `ResourceClient.fetch`は現在Uint8Arrayかつ1,010,000 bytes以下しか許容しない。転送専用の検証済みFile/FormData経路を追加し、一般JSON/RPC本文の上限を広げない。JWTのtoken取得と送信元チェックは既存経路を通す。3actionともretryAuthentication=false。事前のtoken取得/更新と、転送リクエストの再送を区別する。
-2. `httpAdapter`は現在http.requestのみ、options/argsとも未知属性拒否。actionごとの許可属性、download=GET、upload/multipart=POST/PUT、overwrite、timeout、progressHandlerを純粋検証する。ホスト容量設定はfiniteかつ正の安全な整数、既定104,857,600 bytes。URLとヘッダー検証・応答解析は共有化する。
-3. runtimeがロード時に確定したscope/files宣言を転送側へ渡す。volumeは宣言済みであることとread/readwriteをJS側でも検証する。FileClientの全量read/writeは転送に使わず、領域内handle/File/streamの限定された操作を共有する。
-4. `withFileLock`は現状Web Locksで待機する。通常filesと転送の同じscope/volumeキーに非待機方式を共有する。複数volumeを重複除去・固定ソートし、全取得後に処理開始、途中競合時は取得済みロックを解放してBUSY。ロックなし環境のactive Setも同じ規約で利用する。アプリ外での直接OPFS書き換えはこの協調排他の対象外。
-5. downloadはロック下で親を確認、既存entryを検査しoverwrite=falseなら副作用前に拒否。2xxだけを保存する。reader.read→容量加算→writer.writeをawait。EOFと中止状態確認後にcloseを一度だけ開始し、成功したcloseを確定点として扱う。失敗ではreader.cancelとwriter.abortを待ち、新規に作った未確定entryだけをremoveする。既存entryを失敗cleanupで削除しない。
-6. uploadはgetFile().sizeを送信前に検査し、Fileをそのまま本文にする。multipartは全partsを事前検証して全ファイルサイズ合計を検査し、append順に構築する。同じファイルが複数partに登場する場合も各送信partのサイズを加算する。filename既定はpath末尾、contentType既定application/octet-stream。必要ならFileをBlob.sliceで型指定し、arrayBuffer経由で作り直さない。multipartのトップレベルContent-Typeは大文字小文字を問わず拒否し、boundaryをブラウザに任せる。
-7. HostEffectsのPromise.raceはタイムアウト結果を先に返せるがadapter実処理を止めた証明にはならない。排他はadapterの実promise/cleanupに結び付け、race結果やresetによるactive Map消去で解放しない。処理状態にoperation名とgenerationを保持しhost_cancel(name)で同名を全中止する。engineの検証済みintent/effectとして追加し、host_callの戻り値と完了pendingを維持する。
-8. 進捗は別経路で現在のstateへhandler適用し、completionのpendingを消費しない。単調時刻で100 ms間隔、世代と完了状態を送出時にも検査、予約通知をcancelする。handler例外はonErrorへ報告して転送を継続する。旧世代の遅延完了・進捗は破棄する。
+- 起点はroot commit `868983e`（2026-10-02、既存試作の取り込み）。初期試作以前の制作過程は記録から分からない。終点は `a8fdffe`（2026-10-05、OPFS reflect）。今回の `f473db8` 以降は振り返る開発実績へ含めない。
+- 技術の経緯は `06f42f5` Hello World、`5dcac12` HTTP effects、`3a1eeca` YAML/保存/型、`eb9a0a2` files/cache/RPC、`04b3118` 共通runtime/独立アプリ、`8a9d943` host adapters、`cd92375` Workerモック、OPFSマイルストーンへつなげられる。コミット以前の動機や心情は補わない。
+- `.gsd-lite/logs/opfs-file-transfer/turns.jsonl` をJSON解析し、phaseがresearch/plan/impl/verifyの行だけを再集計した。20試行、5,697秒（94.95分）、内訳1/1/16/2。全21行の最後はreflectであり集計から除外する。停止・対話の待機時間と開発全体の時間は含まない。
+- BLOCKEDはturn3/T1（localhost EPERMと既存文書書式）、turn13/T10（Rhai CSV加工）、turn15/T11（ブラウザ認証fixture）の3回。根拠はarchiveのPROGRESSとreflect、必要なら `git show b88009e:.gsd-lite/BLOCKED.md` / `4c48111` / `f869419` の当時ファイルで追える。再開は `2f79ddf` / `f746985` / `5089c6d`。
+- `cc25ac4` の当時VERIFICATIONを確認。全試験成功でも、本文uploadのContent-Type欠落を既存試験が期待し、合意したapplication/octet-stream既定値を満たしていなかった。F1 `178a9ea` → verify `67c1d8f` で修正・確認。これはBLOCKEDではなくverify差し戻し。
+- ログのmodelは空、usageにtotal_tokensのみある。出力/キャッシュ内訳・費用は未記録。stateのClaude用model値は実行モデルの証拠にならない。リトライ0/progressed=trueも停止・手戻り0を意味しない。
 
-## 落とし穴と検証方法（planの完了基準候補）
+## 落とし穴と検証方法（planの完了基準へ）
 
-| 落とし穴                          | 回避・検証                                                                                                                                                                                                                    |
-| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 旧ファイル消失・空の新規entry残留 | write/createWritable/read/close各段階の失敗を注入。close開始前の中止で旧bytesを比較、新規pathは不存在を確認。close中に中止しclose成功したケースは確定済み扱いで消さない。abort/remove失敗も契約内エラーとなることを確認する。 |
-| cleanup前にロックが解放される     | reader/write/close/abortをgateで遅延。TIMEOUT/CANCELLEDを受けても実処理中は同領域の通常read/write/remove/転送がBUSY、settle後は成功。画面切替後の同scope/volumeでも試験。                                                     |
-| 複数領域の漏れ・デッドロック      | A+BとB+A、A+A、2番目の競合を試験。全取得前にfetchせず、先に取った領域は競合後に利用可能。Web Locks実装とfallback両方、実ブラウザ2タブでも確認。                                                                               |
-| 容量境界・圧縮・虚偽length        | limit-1/limit/limit+1、0 bytes、length有/無/不正、実stream超過、gzip復号後の超過を試験。超過chunkをwriteせず旧file保持。multipartは個別がlimit以下でも合計超過、同一file重複、parts32/33・files8/9を確認。                    |
-| 全量読み込みの混入                | 100 MiB級をホストでchunk生成し送受信hash/size比較。転送中arrayBuffer/text/blob全量読み取りを禁止するspyとコード確認。WASM buffer/stateに本体を渡さない。ブラウザ内部のバッファ量は保証対象外。                                |
-| FormDataによる型の黙認・順序喪失  | string以外のvalue、file/value両方、未知属性を送信前に拒否。文字列/ファイル混在・同名重複・Unicode filename・空文字をPOST/PUTサーバーで順序/内容/型/filename照合。                                                             |
-| 権限・パス・ヘッダーの迂回        | 未宣言/read-onlyへのdownload、未宣言upload、../・絶対パス・backslash・UTF-8上限、親未作成を拒否。未許可headers/Authorization/手動boundaryとURL範囲逸脱を副作用前に拒否。                                                      |
-| 認証更新後の自動再送              | JWTをホストのみで扱い、401/403とネットワーク切断で実送信回数1を確認。GET downloadでも401後に再送しない。事前token provider失敗と実送信後のunknownを区別。CORS preflight/許可応答headersを実サーバーで試験。                   |
-| 成功更新をfailed扱いにする        | upload送信後切断=unknown、2xx後のJSON/UTF-8/サイズ解析失敗=committed。HostEffects最終JSONサイズ検査もcommittedを落とさない。downloadはclose前failed、確定後に副作用を否定しない。非2xxは既存HTTP契約に整合し、bodyをcancel。  |
-| timeout・cancelが届かない         | 期限1/120/300秒と範囲外を検証。header待ち、reader待ち、write待ち、応答解析中で中止。同名全中止・別名継続、未知/終了済み名の安全な処理、終了一回を確認。                                                                       |
-| 古い進捗・handler例外             | 毎秒10回以下、byte単調増加、total不明=null、完了後0回、世代切替時の予約通知破棄。handler例外後もclose/完了成功、完了handlerのpendingが残ることを確認。圧縮やCORSで総量が信頼できない場合はtotal=nullを提案。                  |
-| mockだけでブラウザ仕様を誤認      | OPFS mockへ複数chunk、File、abort/close failureを追加。実localhostブラウザでcreateWritableとFile/FormDataを確認し、DOM/Canvas両方でdownload→小CSV加工→別名保存→複数file multipartまで実行。                                   |
+| 落とし穴                             | 回避策                                            | 踏んでいないことの確認方法                                                                                                                                                                                               |
+| ------------------------------------ | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 古い文書のコピー                     | 現行実装・契約を優先                              | READMEには画面数21と古い12が混在。testingには恒久ブラウザscriptなしとあるが転送scriptは実在。件数は避けるかcatalog/実ファイルから数え、記事の主張をパス別照合表へ記録                                                    |
+| 例が架空/実行不能                    | publicの例と既存UTを再利用                        | WASM生成後 `bunx vp test run tests/engine.test.js tests/worker-mock.test.js` など対象試験で確認。掲載断片の準備条件・対応行・出力を保存し、名前入力では挨拶を変えず押下でHello 太郎、空白だけでWorldを確認               |
+| 確定前と失敗時の保持を誤解           | candidate stateと確定stateを描き分ける            | lib.rs dispatch/commit、ABI load、runtime compileを照合。失敗したRhai/候補loadの保持は対応する既存試験を参照し、Hello World自体に未実装の失敗処理を足した説明にしない                                                    |
+| 非同期結果を古いstateへ戻す          | pending id・最新state・ホスト世代を説明           | host.rs/HostEffectsと既存host/転送試験を照合。画面切替後の通知破棄、中止後のcleanup完了までの排他、close後の取消不能を区別                                                                                               |
+| 大容量転送を全量WASM読込と説明       | File/reader/writable/FormDataのJSホスト経路を図示 | http-download/http/opfs実装と転送契約を照合。一般FileBytes上限は緩和されない。Web Locks未対応時はタブ間保証がなく、サーバー更新巻戻しも保証しない                                                                        |
+| モックを任意サーバー/認証検証と表現  | 宣言DSL・メモリCRUDの最小版と明記                 | model/worker/adapterを照合。Worker更新は送信後取消されない。UTのTestWorkerと実Worker、実HTTP/CORS、描画の確認を別の検証対象として記述                                                                                    |
+| WebMCPが全アプリで既定有効という断定 | demoと独立アプリの条件を分ける                    | main.jsの起動登録とapplication.jsのwebmcp===trueガードを照合。対応API/secure context/未対応時UI維持、5ツールの名称をui-toolsと照合。外部仕様の現況は今回調査していない                                                   |
+| 字数の測定が曖昧                     | 記事限定の計数をplanで固定                        | コードフェンス・末尾参考リンク一覧・画像alt・URL・Markdown装飾を除き、見出し/本文/図説明をUnicode文字数で数える。Python lenまたはJS Array.fromを使用し絵文字をUTF-16長で数えない。6,000〜8,000、AI部分2〜3割の結果を保存 |
+| docs:checkだけで画像を検査した扱い   | 記事を個別検査                                    | check-docs.mjsはdocs/skills等のみ走査しblog内部を対象にしない。docs入口リンクに加え記事内相対リンク/4画像の存在・PNG形式・直下5ファイルを別検査。外部URL/data URI/絶対画像パスがないことを確認                           |
+| 図・比較画像が読めない               | 日本語フォントを確認し実PNGを開く                 | 3図の欠字/重なり/切れ/矢印、本文幅縮小の可読性を目視。実Hello Worldを入力・押下し両面の同じ結果を撮影。Canvasの画素内容も確認し、stateだけで成功扱いにしない                                                             |
+| 整形/HMRで撮影が崩れる               | 文書整形後にサーバー起動                          | 前回reflectを採用。管理文書整形→撮影、cleanup失敗は元の失敗と別記。記事限定確認とcheck/docs:checkを行い、全ブラウザ回帰を追加しない                                                                                      |
+| 能力・時間を過大評価                 | 観測と考察を分ける                                | 8必須内容の照合表に実IME/アクセシビリティ/同期Rhai/GPU未対応、CPU再描画≠FPS、時間の対象、3停止と人の再開判断を含める。数字の時点とログ集計条件を添える                                                                   |
 
-## ローカル過去プロジェクトの探索
+## 要件への影響・planへの提案
 
-指定の`~/workspaces`を`/home/parallels/workspaces`として、OPFS/createWritable/FormData/withFileLockのJS・TS・MJS実装を検索した（node_modules/dist/target等の生成物を除外）。全ディレクトリを網羅した保証ではない。
-
-- `/home/parallels/workspaces/fuck-cheetar/client/src/services/CacheManager.js`: OPFS capability判定とcreateWritable→write→close、finallyで進行中集合を解除する雛形。JSON全量cache・read失敗をnullにする実装なので、大容量転送やエラー契約にはそのまま使わない。
-- `/home/parallels/workspaces/repounmix/src/adapters/FileSystemAdapter.ts`: FileSystemDirectoryHandle/getFile/createWritableのアダプター境界の参考。ユーザー選択のファイル領域、親自動作成、テキスト全量読込が本件と異なる。OPFS転送の置換候補ではない。
-- `/home/parallels/workspaces/file-io-component`と`concept-file-test`: 名前から候補として確認したがOPFS/FormData実装の一致なし。
-- 最も近い再利用元は対象リポジトリ自身の`src/opfs.js` / `src/file-client.js`とHTTP・host tests。既存設計案`docs/opfs-file-transfer-plan.md`の未確定記述より、今回の確定REQUIREMENTSを優先する。
-
-## 要件への影響（提案のみ）
-
-- close開始後・成功後の取消では旧file復元を保証しないことを試験でも区別する。既存合意の確定境界を具体化したものである。
-- 圧縮/CORSでContent-Lengthの総量が信頼できない場合のtotal=nullと、decoded bytesでの容量判定を明文化する。
-- BUSYの共有規約、cleanup完了までのロック保持、複数領域途中競合の解放を個別タスクの完了基準に含める。
-- 実装順候補: 契約/engine cancel+進捗 → 共通領域排他・handle API → 認証付きFile/FormData本文 → 3転送action → ライフサイクル・異常統合 → サーバー/DOM/Canvas/100 MiB実ブラウザ・文書。これはPLANではなく依存関係の申し送り。
-- 外部依存追加・要件変更・投資判断を要する発見なし。planへ遷移する。
+要件変更は不要。上記の「どう確認するか」を既存受け入れ基準の実行方法としてplanに採用することを提案する。特に記事限定検査（字数・直下5ファイル・4画像参照・ローカルリンク）、主張→根拠の照合表、対象UT、実画面撮影と目視の証跡を最終判定へ固定する。記事入口は `docs/README.md` に1件追加する。API変更・追加依存・外部公開は行わない。

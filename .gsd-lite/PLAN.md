@@ -1,163 +1,129 @@
-# PLAN — opfs-file-transfer
+# PLAN — development-retrospective-blog
 
-- 作成: 2026-10-04 / gsd-lite-plan
+- 作成: 2026-10-05 / gsd-lite-plan
 - 入力: REQUIREMENTS.md / DECISIONS.md / RESEARCH.md
-- 状態: 初回計画。subagents=auto、fix_round=0（state.json）。コード実装は次ターンから。
+- 実行設定: subagents=auto、fix_round=0。対象は `.`、成果物と状態は `.gsd-lite/`。
 
 ## 検証コマンド
 
-以下は対象リポジトリのルート `.` で実行する。
+以下はリポジトリルートで実行する。既存コマンドの根拠は `package.json` のscripts、`README.md:28-32`、`vite.config.js:14-16`。T1で記事限定の検査を作り、未完成段階は明示したstageで検査する。
 
 ```bash
-bun run build:wasm
-bunx vp test run tests/opfs-file-transfer.test.js
-bun run test:rust
-bun run test
-bun run check
+bun scripts/check-retrospective.mjs --stage draft
+bun scripts/check-retrospective.mjs --stage diagrams
+bun scripts/check-retrospective.mjs --stage complete
+bunx vp test run tests/engine.test.js tests/worker-mock.test.js
 bun run docs:check
-bun run build
+bun run check
 ```
 
-- 環境の初期化（テストの前に毎回）: WASMを変更した場合とクリーンな検査開始時は `bun run build:wasm`。各試験は固有scopeのOPFS、独立サーバー、認証設定、fake timerを作りfinallyで破棄する。共有データを前回実行から継承しない。DB初期化は不要。
-- 最終判定コマンド1本: `bun run verify:transfer`（T1で追加）。子プロセスを逐次実行し、WASM生成→全JS/Rustテスト→check→docs:check→build→T11のlocalhost実ブラウザ試験を走らせ、どれか失敗/ブラウザ未実行なら非0。ビルド済み成果物や稼働済みサーバーを前提にしない。サーバー/ブラウザは起動しfinallyで終了する。
-- 根拠: package.jsonのscripts（`rg -n 'build|test|check' package.json`）、vite.config.js:16の `tests/**/*.test.js`。既存の全検査用単一コマンド/ブラウザrunnerは未登録なのでT1/T11で補う。
+- 環境の初期化（テストの前に毎回）: DB初期化は不要。依存は既存lockfileに従う `bun install --frozen-lockfile`、WASMを使う検査の前は `bun run build:wasm`。最終判定はこれらを自分で実行する。ブラウザ撮影前は管理文書の整形を完了してから `bun run build` → `bun run preview`（127.0.0.1:4174、strictPort）を使用する。
+- 最終判定コマンド1本: **`bun scripts/verify-retrospective.mjs`**（T1で作成）。順番は依存確認 → WASMビルド → 対象UT → check → docs:check → 本番build → 記事complete検査 → 記事限定ブラウザ撮影確認。ブラウザ工程はT4で作る `scripts/capture-retrospective.mjs` を使い、なければ失敗する。最終ログは `.gsd-lite/logs/development-retrospective-blog/`、要約・主張照合・目視結果は `.gsd-lite/BLOG-EVIDENCE.md` に保存する。
+- クリーンなcheckoutで最終判定できるよう、検査2本と記事専用撮影1本を追跡する。図の制作ソースはscratchに置き、最終判定ではコミット済みPNGを検査する。汎用ブラウザ回帰基盤へ拡張しない。
+- 手動判定: PNGを実際に開き、幅約800pxでも日本語・矢印・両側の挨拶を確認する。主張→実物照合表と8必須内容のレビュー結果をBLOG-EVIDENCEへ記録する。機械検査の成功だけで文章の正しさ・画像の可読性を認定しない。
 
 ## 追従先チェックリスト
 
-| 変更の種類                 | 直す場所                                                                                                                                                                                                                                                                   | 確かめ方                                                                              |
-| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| cancel/進捗ABI・Rhai登録   | engine/src/host.rs、engine/src/lib.rs、engine/src/abi.rs、src/engine.js、src/runtime.js、src/host-effects.js、tests/abi.test.js、tests/host-adapters.test.js                                                                                                               | `rg -n 'host_result                                                                   | host_call     | host_cancel | host_progress' engine/src src tests` と実WASM試験 |
-| http action・ホスト設定    | src/adapters/http.js、src/resource-client.js、src/runtime.js、src/application.js、docs/http-adapter.md、docs/runtime-distribution.md                                                                                                                                       | `rg -n 'http.request                                                                  | http.download | http.upload | http.multipart                                    | transferLimit' src docs examples tests` と起動設定試験 |
-| 通常filesと転送の排他/権限 | src/opfs.js、src/file-client.js、src/runtime.js、engine/src/files.rs、tests/helpers/opfs.js、tests/files-cache-rpc.test.js、docs/files-cache-rpc.md                                                                                                                        | Web Locks/fallback競合試験。cacheの別namespaceの既存挙動も退行確認                    |
-| 現行API・制限の説明        | README.md、docs/README.md、docs/http-adapter.md、docs/files-cache-rpc.md、docs/authentication.md、docs/screen-format.md、docs/architecture.md、docs/runtime-distribution.md、docs/host-adapters-design.md、docs/opfs-file-transfer-plan.md、docs/platform-features-plan.md | `rg -n 'multipart.*未対応                                                             | 巨大ファイル  | 15秒        | 15 秒                                             | 900,000                                                | 1,000,000 | 100,000 | 最大.*件 | 最大.*本' README.md docs skills` を全件レビューし、転送にも適用と読める古い記述0件。一般HTTP/Rhaiの既存制限は明示して保持 |
-| AI向け参照・文書検証       | skills/uivolve-web-app-dev/references/http.md、references/io-extensions.md、skills/uivolve-web-engine-dev/references/host.md、scripts/check-docs.mjs、tests/documented-http.test.js                                                                                        | docs:check、文書例実行、必要なskills:bundle後の差分確認。無関係な部品件数は変更しない |
-| サンプル/サーバー/配布     | examples/opfs-file-transfer/、scripts/transfer-server.mjs、package.json、tests/distribution.test.js、docs/operations.md                                                                                                                                                    | DOM/Canvasの入口URL、サーバー停止、ビルド配布先、既存HTTPデモの退行試験               |
+| 変更の種類                   | 直す場所                                                    | 確かめ方                                                                                                           |
+| ---------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| 記事の追加                   | `blog/uivolve-web-retrospective/index.md`、`docs/README.md` | 入口は `../blog/uivolve-web-retrospective/index.md` への1件のみ。docs:checkと記事内全ローカルリンクの存在確認      |
+| 図・画面画像の追加           | 記事直下のPNG4枚、index.mdの参照/alt/説明                   | 直下は確定5ファイルのみ、画像参照は各1件の `./<name>.png`。PNG署名・デコード・寸法、外部/絶対/data画像の不在、目視 |
+| 記事の名前・数値・コード変更 | index.md、`.gsd-lite/BLOG-EVIDENCE.md`                      | 主張→根拠パス/行または実行コマンドを同時更新。`rg -n '21                                                           | 12  | 5,697 | 5697 | 95  | 20  | 無料 | FPS | GPU | 既定 | デフォルト' blog/uivolve-web-retrospective/index.md` をレビューし、古い画面件数や未記録値の断定を0件にする |
+| 文書/検査スクリプト変更      | 変更したMarkdown/JS、PROGRESS、state                        | 適用対象をvp fmtで整形してからcheck。既存契約・API・ランタイム・archive/reflect/logsは保持                         |
 
-探索根拠: `rg -n 'host_call|http.request|15秒|未対応|本|件' README.md docs/http-adapter.md skills`、`rg -n 'host_result|completeHost' src/engine.js engine/src/abi.rs`。転送action数を記した既存文書はない。文書の数値一覧は上記rgを最終タスクで再走査する。
+今回登録・権限・画面catalogの変更はない。画面件数を記事に載せないので既存READMEの件数整理は対象外。件数記述の実在確認は `rg -n '21|12' README.md`（RESEARCHの古い文書コピーの注意）。
 
 ## Tasks
 
-- [x] T1: 転送試験の基盤と最終判定runner
-  - 完了基準: OPFS mockが複数chunkを追記し、getFileがFile互換、close確定/abort破棄、0 bytesと段階別失敗・gateを表現する。既存files testsが通る。verify:transferが子検査の失敗を伝搬し、未完成のブラウザ試験を成功扱いにしない。初期runner試験で順序/非0/cleanupを検証。
-  - 対象: tests/helpers/opfs.js、tests/opfs-file-transfer.test.js（新規）、scripts/verify-transfer.mjs（新規）、package.json
+- [x] T1: 記事限定検査と根拠台帳の準備
+  - 完了基準: `scripts/check-retrospective.mjs` と `scripts/verify-retrospective.mjs` を追加。stage draftは本文/例/字数/相対ローカルリンクを、diagramsはさらに3図を、completeはさらに画面PNG/直下5ファイル/入口1件を検査する。未完成成果物をcompleteで成功させない。記事の各節とAI節を同じUnicode計数器で集計し6,000〜8,000字・AI20〜30%を判定する。フェンス、末尾「参考リンク」以下、画像alt、リンク先URL、装飾を除外し、空白/改行はレイアウトとして除外する。境界6,000/8,000、絵文字、リンク、コード、altの小さな自己検証をscratchで行い結果を保存。恒久的な実装コピーのテストは増やさない。最終判定は非0終了を伝播し元の失敗とcleanup失敗を分け、環境準備/全コマンド順を確認できる。BLOG-EVIDENCEに8内容/コード/画像/数値の照合欄を用意する。
+  - 対象: `scripts/check-retrospective.mjs`、`scripts/verify-retrospective.mjs`、`.gsd-lite/BLOG-EVIDENCE.md`、scratchの自己検証/ログ
   - 依存: なし
-  - 並列サブ作業: A: OPFS mockと基盤試験（tests/helpers/opfs.js、tests/opfs-file-transfer.test.js）。B: runnerとscript登録（scripts/verify-transfer.mjs、package.json）。
+  - 並列サブ作業: なし（検査仕様とstageを共有する）
 
-- [x] T2: host_cancelとpendingを消費しない進捗のengine契約
-  - 完了基準: host_cancel(name)をtransactional intentとして登録し、handler/state検証失敗時は中止effectも発行しない。host_callの戻り値/上限を維持。未知・終了済み操作名のcancelは安全なno-op、同名全中止/別名継続を配送側で可能にする。options.progressHandlerの存在をload前に検証。新host_progress ABIは進行中id/操作に照合し最新stateでhandlerを実行、完了pendingを保持し、終了後・不正payloadを拒否する。handler失敗でstate/effectsを確定しない。実WASMとRustで検証。
-  - 対象: engine/src/host.rs、engine/src/lib.rs、engine/src/abi.rs、src/engine.js、tests/host-adapters.test.js、tests/abi.test.js
+- [x] T2: 根拠付き日本語原稿と実行確認済みの短い例を書く
+  - 完了基準: 必須8内容を下記順で書き、ポップなです・ます/絵文字/短い段落、6,000〜8,000字、AI節20〜30%をdraft検査で満たす。Hello WorldのJSON/Rhai、Worker DSL、モデルUT/実WASM UTを「抜粋」・import/初期化/ビルド条件・完全な例へのリンク付きで載せる。`tests/engine.test.js` と `tests/worker-mock.test.js` をWASM生成後に実行し、掲載断片もscratchで実行、結果と対応行を台帳へ保存。入力時は挨拶不変、押下でHello 太郎、空白のみはHello Worldを確認。本文の失敗時保持/最新state/effects確定を実物へ照合し、Hello Worldに失敗処理が実装されているとは書かない。現行APIの説明と歴史的説明を区別し、3停止とContent-Type差し戻し・時間集計の根拠を台帳へ記録する。画像の相対参照/alt/説明はこの段階で配置し、未生成画像はdraft段階のみ許す。
+  - 対象: `blog/uivolve-web-retrospective/index.md`、`.gsd-lite/BLOG-EVIDENCE.md`、scratchの例実行/結果
   - 依存: T1
-  - 並列サブ作業: なし（ABIとengine登録が依存）。
+  - 並列サブ作業: なし（同じ本文と根拠台帳を一貫して編集する）
 
-- [x] T3: 共有領域ロックと転送用handle境界
-  - 完了基準: 通常filesと転送が同じscope/volumeキーを使用。複数領域を重複除去/固定順で非待機取得し競合はBUSY。A+B/B+A/A+A/第2領域競合で処理未開始と取得済み解放を確認。Web LocksはifAvailableを使用しsignalをrequest optionsへ併用しない。fallbackも同じ規約、実promiseのsettleまで保持。限定handle/File/writable取得はrelativePath、宣言権限、親事前mkdirを守り、既存全量read/write上限を変更しない。
-  - 対象: src/opfs.js、src/file-client.js、tests/opfs-file-transfer.test.js、tests/files-cache-rpc.test.js
-  - 依存: T1
-  - 並列サブ作業: なし（共通lockとhandle境界の同一ファイル）。
+- [x] T3: 責務・イベント・非同期effectsの日本語技術図を制作
+  - 完了基準: architecture/event-flow/host-effectsの3PNGを直下に生成しdiagrams検査が通る。日本語フォントを実描画で確認、画像を開いて欠字/切れ/重なり/矢印を点検、本文幅で読める結果を台帳へ記録。architectureはHTTP取得→JS→共通Rust/WASM→Scene→DOM/Canvas、event-flowはどちらの入力→候補state/Rhai→検証→確定→両描画、host-effectsはhost_call→確定effects→JS/アダプター→host_result→最新stateのhandler→再検証を表す。取得/描画APIをWASMが直接呼ぶ矢印を作らない。候補stateと確定state、JS側のファイル本体経路とWASM側のメタデータを区別する。制作ソース/手順をscratch、再作成情報と画像寸法を台帳へ保存する。ブラウザ描画を使う際はplaywright-skillを先に読む。
+  - 対象: 記事直下の`architecture.png`、`event-flow.png`、`host-effects.png`、`.gsd-lite/BLOG-EVIDENCE.md`、scratchの図制作ソース
+  - 依存: T2
+  - 並列サブ作業:
+    - A: architecture図（対象: architecture.png、scratchのarchitecture制作ソース）
+    - B: event-flow図（対象: event-flow.png、scratchのevent-flow制作ソース）
+    - C: host-effects図（対象: host-effects.png、scratchのhost-effects制作ソース）
+    - 親が根拠・PNGを確認し台帳を更新する。
 
-- [x] T4: 認証付きFile/FormData専用送信経路
-  - 完了基準: 一般fetchのUint8Array制限を維持し、転送専用の検証済みBlob/File/FormData経路を追加。既存URL/JWT/CORS/許可origin経路を共有し転送は3方式ともretryAuthentication=false。401/403/切断で送信1回、事前provider/refresh失敗はnot-started、送信後不明はunknownを区別できる。認証更新で古いpolicyを使わずトークンをstate/エラーへ漏らさない。ResourceClient/refresh既存試験も通る。
-  - 対象: src/resource-client.js、tests/resource-client.test.js、tests/resource-refresh.test.js、tests/opfs-file-transfer.test.js
-  - 依存: T1
-  - 並列サブ作業: なし
+- [x] T4: 実Hello WorldのDOM/Canvasを操作して撮影
+  - 完了基準: playwright-skillを読み、管理文書整形→build→previewの順で実ブラウザを起動。`/pages/hello-world` で実入力・押下し、両方式にHello 太郎が表示されることを確認した比較領域のdom-canvas.pngを保存する。DOM起点とCanvas起点を順に操作し双方の更新、入力のみで挨拶を変えないこと、空白入力のWorldも確認して撮影時は太郎へ戻す。Canvasの実画素を開いて読む。DOM文字列やstate検査だけで合格にしない。実在UIの切り出しに留め、合成しない。ブラウザ/OS/URL/viewport/操作/撮影方法、PNGの目視、サーバー終了を台帳/PROGRESSに記録。記事専用の `scripts/capture-retrospective.mjs` は最終判定でも使えるようサーバー起動/終了を自己管理し、失敗時cleanupが元の失敗を隠さない。秘密情報のない名前とlocalhostのみ使用する。
+  - 対象: `blog/uivolve-web-retrospective/dom-canvas.png`、`.gsd-lite/BLOG-EVIDENCE.md`、`scripts/capture-retrospective.mjs`、scratchの撮影ログ
+  - 依存: T3
+  - 並列サブ作業: なし（同じサーバー・画面・撮影証跡を扱う）
 
-- [x] T5: HTTP転送宣言・引数・ホスト設定の純粋検証
-  - 完了基準: http.download/upload/multipart登録。download=GET、upload/multipart=POST/PUTのみ。未知属性、型不正、未宣言volume、read領域download、パス/URL範囲/headers迂回をfetch/OPFS作成前に拒否。fileとpartsは要件の形、valueはstringのみ、file/value両方を拒否。parts32/33、files8/9、UTF-8 args上限を検証。overwriteはdownloadのみ、期限1/120/300秒と範囲外、ホスト容量設定の正の安全整数/既定値を試験。http.request既存契約を維持。
-  - 対象: src/adapters/http.js、src/runtime.js、src/application.js、tests/opfs-file-transfer.test.js、tests/host-adapters.test.js、tests/distribution.test.js
-  - 依存: T2、T3、T4
-  - 並列サブ作業: なし（準備contextの受け渡しが依存）。
-
-- [x] T6: downloadのストリーム保存と原子的確定
-  - 完了基準: 2xxのみreader.read→容量加算→writer.writeを逐次awaitし全量blob/arrayBuffer/textを使わない。既定上書き拒否/許可、親不足、0 bytes、limit-1/limit/limit+1、Content-Length有/無/不正/虚偽、gzip復号後超過を検証し超過chunkを保存しない。close前の通信/OPFS失敗・中止では旧bytes保持、新規未確定entryのみ削除。createWritable/read/write/close/abort/remove失敗をError/DOMException全体として扱い、代表と列挙外の例外を注入。reader.cancel/writer.abort/cleanupを待ち、close成功後の取消で確定fileを消さない。成功dataはstatus/headers/body:null/files。
-  - 対象: src/adapters/http.js、src/opfs.js、tests/opfs-file-transfer.test.js（必要なら内部転送helperを新規分離）
-  - 依存: T5
-  - 並列サブ作業: なし
-
-- [x] T7: 本文/multipart送信と応答outcome
-  - 完了基準: Fileを本文、FormData.appendをparts順で使用し全量JS読み込みなし。POST/PUT、複数ファイル、同名項目、Unicode filename、空文字、既定filename/Content-Typeを照合。合計容量は重複file partも加算し超過を送信前拒否。大小文字を問わずmultipartトップContent-Type手動指定拒否。json/text/empty、status/許可headers/filesを返す。送信後切断=unknown、2xx後JSON/UTF-8/容量解析失敗=committed、非2xxのbodyをcancelし既存HTTP結果契約に整合。lockは応答処理終了まで保持。
-  - 対象: src/adapters/http.js、tests/opfs-file-transfer.test.js
-  - 依存: T6
-  - 並列サブ作業: なし（action共有応答処理）。
-
-- [x] T8: 配送の中止・期限・進捗・世代を接続
-  - 完了基準: operation名/generation/実処理promiseを保持し同名全cancel・別名継続。転送既定120秒/options.timeoutを適用し既存一般host既定15秒を維持。header待ち/reader待ち/write待ち/応答解析待ちのTIMEOUT/CANCELLEDと完了一回を検証。reset/disposeで中止し旧世代の完了/進捗を破棄。受信進捗operation/transferred/totalは単調・100ms以上間隔、信頼できないtotal=null。予約通知を終端/世代変更で取消し、handler例外をonErrorへ報告して転送継続。pendingを消費せず最終JSON検査でもcommittedを保持。
-  - 対象: src/host-effects.js、src/runtime.js、tests/host-adapters.test.js、tests/runtime.test.js、tests/opfs-file-transfer.test.js
-  - 依存: T2、T7
-  - 並列サブ作業: なし（配送/実行contextの相互依存）。
-
-- [x] T9: 異常・並行性の統合回帰
-  - 完了基準: 実WASM→HostEffects→HTTP→OPFSでwrite/close/abort gate中にTIMEOUT/cancel/画面置換を起こし通常read/write/removeと重複転送がBUSY、実処理settle後のみ利用可能を確認。2つのruntimeでも同scope排他。close中取消・成功closeの確定outcome、cleanup失敗、handler失敗、認証変化、最終応答上限、頻度境界を交差試験。WASM bufferとstateに本体を通さず全量読込spyが転送中呼ばれない。既存テスト全体が通る。
-  - 対象: tests/opfs-file-transfer.test.js、tests/host-adapters.test.js、tests/files-cache-rpc.test.js、tests/runtime.test.js、発見した問題のsrc/engine修正
-  - 依存: T8
-  - 並列サブ作業: A: 排他/cleanup統合（tests/opfs-file-transfer.test.js）。B: 世代/handler回帰（tests/runtime.test.js、tests/host-adapters.test.js）。実装修正は親が統合。
-
-- [x] T10: テストサーバーとDOM/Canvasサンプル
-  - 完了基準: localhostサーバーにGET、POST/PUT本文、POST/PUT multipart、遅延/容量/非2xx/認証/不正応答のfixtureを用意。受信hash/sizeとmultipart entry順序・同名値・filename/typeを返しサーバー試験で一致確認。maxRequestBodySizeは大容量検証を許可。DOM/Canvas共通YAML/Rhaiでdownload→小CSV加工→別名保存→複数file multipartを表示し、中止/受信進捗/送信中・完了/失敗を扱う。100 MiBはホストがchunkで直接生成しRhai既存上限を迂回拡張しない。既存CRUDサーバーを維持。
-  - 対象: scripts/transfer-server.mjs、tests/transfer-server.test.js、examples/opfs-file-transfer/、package.json
-  - 依存: T9
-  - 並列サブ作業: A: サーバーと試験（scripts/transfer-server.mjs、tests/transfer-server.test.js）。B: サンプル（examples/opfs-file-transfer/）。親がpackage.json登録と結合確認。
-
-- [x] T11: 再実行可能な実ブラウザ検証
-  - 完了基準: localhost実OPFS/File/FormDataを使いDOM/Canvas両方で一連のCSV操作を実行。100 MiB級のGET/本文/multipartをsize/hash照合し全量JS読込禁止を確認。CORS preflight/Authorization/Expose-Headers、上書き/容量/中止/画面切替、2タブWeb LocksのA+B/B+A競合と解放を自動検証。ブラウザ/サーバー/OPFS試験namespaceを終了時cleanup。実行不能は非0、mockだけで合格しない。runnerに組み込み。
-  - 対象: scripts/test-transfer-browser.mjs、tests/browser/opfs-file-transfer.mjs、scripts/verify-transfer.mjs、package.json（必要なブラウザ開発依存）、examples/opfs-file-transfer/の試験入口
-  - 依存: T10
-  - 並列サブ作業: なし（browser runner/fixtures連携）。
-
-- [x] T12: 現行契約文書と最終判定
-  - 完了基準: docs/opfs-file-transfer.mdへ起動設定/YAML/Rhai/API/エラー/確定境界/容量/中止/進捗/サンプル/テスト実行を実装通り記載し、追従先の古い転送不可記述を更新。文書例を実WASMで実行。追従先rgの数値を全件照合。`bun run verify:transfer`をクリーン開始で合格し、実ブラウザ環境・コマンド・結果を記録。一般JSON/Rhai/Workerの上限と期限を維持し、アップロードbyte進捗やブラウザ内部buffer保証を追加しない。
-  - 対象: docs/opfs-file-transfer.md、追従先チェックリストの文書/skills、tests/documented-transfer.test.js、scripts/check-docs.mjs、必要な最終修正
-  - 依存: T11
-  - 並列サブ作業: A: 利用契約/入口文書（docs/opfs-file-transfer.md、README.md、docs/README.md、docs/http-adapter.md、docs/files-cache-rpc.md、docs/runtime-distribution.md）。B: ABI/認証/設計履歴/skills（残りの追従先文書）。C: 文書例と検証（tests/documented-transfer.test.js、scripts/check-docs.mjs）。親が統合して最終判定。
-
-- [x] F1: 本文アップロードの既定Content-Typeを要件どおり送信する
-  - 完了基準: 下表の送信結果を満たす。空typeのOPFS Fileにも既定ヘッダーを設定し、許可済みの明示Content-Typeを保持する。multipartのboundaryは引き続きブラウザ生成とする。既存の誤った欠落期待を修正し、サーバー受信ヘッダーまでPOST/PUTで確認する。File本文と全量JS読み込み禁止を維持する。
-  - 対象: src/adapters/http.js、tests/opfs-file-transfer.test.js、tests/browser/opfs-file-transfer.mjs（必要に応じscripts/transfer-server.mjs・tests/transfer-server.test.jsの受信ヘッダーfixture）
-  - 検証: 下表を参照する回帰試験と `bun run verify:transfer`。既存期待値変更をPROGRESSに記録する。
-
-  | 条件                                                      | exit     | stdout / HTTP送信結果                                                        | stderr / エラー                |
-  | --------------------------------------------------------- | -------- | ---------------------------------------------------------------------------- | ------------------------------ |
-  | http.upload POST/PUT、Content-Type省略、空typeのOPFS File | 試験成功 | サーバー受信Content-Type=application/octet-stream、本文一致                  | なし                           |
-  | http.upload POST/PUT、許可済みContent-Type明示            | 試験成功 | サーバー受信Content-Typeは明示値、本文一致                                   | なし                           |
-  | http.multipart POST/PUT、トップContent-Type省略           | 試験成功 | ブラウザ生成boundary、既定file partはapplication/octet-stream、順序/本文一致 | なし                           |
-  | http.multipart、トップContent-Type手動指定                | 試験成功 | fetch/OPFS副作用なし                                                         | INVALID_ARGUMENT / not-started |
+- [x] T5: 文書入口・推敲・最終要件照合を仕上げる
+  - 完了基準: docs/READMEに記事入口を1件追加しcomplete検査が成功。本文と図を照合して全8内容、ABI所有権、WebMCPの比較デモ/独立アプリ条件、明示モック登録/任意コード不可、UTと実Worker/CORS/描画の境界、ファイル本体をWASMへ渡さないこと、世代/中止/cleanupまでの排他/close後の境界/タブ間保証の制限を台帳の照合表で全て確認する。出発点・履歴範囲・20試行5,697秒・3停止/人の再開・verify差し戻し・未記録モデル/費用・実IME/アクセシビリティ/同期Rhai/GPU/CPU計測の境界を確認する。`bun scripts/verify-retrospective.mjs` をクリーンな準備から実行、check/docs:check/対象UT/build/記事/撮影の結果、字数とAI比率、実PNGの目視、未取得/残留制限をBLOG-EVIDENCEに保存。適用文書を整形して再撮影の前に完了させる。verifyが独立して再実行できるコマンド/手順を揃える。
+  - 対象: `docs/README.md`、記事直下5ファイル（必要な推敲のみ）、`.gsd-lite/BLOG-EVIDENCE.md`、検査スクリプト（必要な修正のみ）
+  - 依存: T4
+  - 並列サブ作業: なし（最終整形・画像・計数の順番を固定する）
 
 ## 決めた事項
 
-1. 新公開ホスト容量設定は `transferLimit`（bytes、既定104857600）、UiRuntime/createRuntime/createApplicationからHTTPへ渡す。画面に容量引き上げ権限を渡さない。根拠: REQUIREMENTS「ラウンド2」、src/runtime.js:80-85とsrc/application.js:78-79,121-122の起動設定経路。既存設定は追加ではなく実物照合して拡張する。
-2. 操作の `options.timeout` は秒（1〜300、既定120）、`options.overwrite` はbool（downloadのみ、既定false）。`options.progressHandler` はdownloadのみのRhai handler名。既存一般host timeoutのms単位と区別する。根拠: REQUIREMENTSラウンド3/4、src/host-effects.js:33,49-51、src/adapters/http.js:7。
-3. cancelはhost_cancel(name)→独立control effect、進捗は `host_progress` ABIとJS `progressHost` で配送し、完了consumeを使わない。id/operation/generationで照合する。根拠: engine/src/host.rs:34,90,114、engine/src/lib.rs:721-741、engine/src/abi.rs:77-87、src/engine.js:91-92。control effectの内部kindは `host_cancel`、runtimeでhostと一緒にHostEffectsへ送る。
-4. ロックキー `uivolve-web:file:<scope>:<volume>`、OPFS namespace `uivolve-web/fs/<scope>/<volume>`、scopeはロード済みscreen.idを再利用。prepared contextへfiles宣言とscopeをsnapshotで渡し置換前に純粋検証。根拠: src/file-client.js:25-30、src/runtime.js:275-287。storage/cacheのnamespaceは別として維持。
-5. downloadはclose成功を確定点とし、close開始前の失敗/取消では旧内容を保持。closeが開始した後の巻き戻しは保証しないが確定済みファイルをcleanupで削除しない。実処理/cleanupがsettleするまでロックを保持。根拠: REQUIREMENTSラウンド3、RESEARCH統合提案5/7、src/opfs.js:96-109、src/host-effects.js:115-137。
-6. 成功filesはpart順（download/uploadは1件）、重複送信partも別metadata/容量加算。filenameは末尾、typeはapplication/octet-stream。totalはContent-Encoding/CORS等で信頼できなければnull。根拠: REQUIREMENTS API/最終合意、RESEARCH統合提案6/8。
-7. 例外処理はJS Error/DOMException全体を境界で契約化し、途中処理失敗でcleanupを省略しない。NotFoundErrorだけを不存在判定に使い他の例外を不存在として隠さない。根拠: src/opfs.js:135-152、RESEARCH落とし穴表。
+1. 見出しは出発点→共通エンジン→Hello World→通信と保存→WebMCP→WorkerモックとUT→AI開発の振り返り→制限と次の実験→参考リンク。AI計数区間は「AI開発の振り返り」見出しから次の同階層見出しの直前。参考リンクは末尾で集計対象外（根拠: REQUIREMENTSの必須内容/分量、DECISIONSの文体・分量）。
+2. 記事直下はindex.mdとPNG4枚のみ、図は既存ブラウザ/HTML/SVGで制作し依存追加なし。技術図は横幅1600px程度を制作目安にし、800px表示で目視確認して調整する（根拠: REQUIREMENTSの配置/可読性、RESEARCHの制作手段）。
+3. API表記は実物に合わせる。JSは `load(screen, script, descriptors = {}, options = {})`、`dispatch(target, payload = {})`、`layout(width)`（`src/engine.js:70,89,143`）。モデルは `request({ method, path, query = {}, body })`（`src/mock-api-model.js:126`）。新APIの名前は発明しない。
+4. Hello WorldのitemId/bind/handlerはpublicの実物を抜粋し、Rhaiのtrimは `name.trim();` を保持する。全量掲載ではなく前提と完全例への相対リンクを添える（根拠: `cat public/screens/hello-world.json`、`cat public/screens/hello-world.rhai`、`tests/engine.test.js`のHello World試験）。
+5. 状態確定は `engine/src/lib.rs:598,718,930-982`、host完了の最新stateは同`:752-773`、候補画面は`engine/src/abi.rs:39`と`src/runtime.js:263-361`、ASTは`engine/src/lib.rs:462`を照合する。ABIは`src/engine.js:56-65`を根拠にメモリ所有権/寿命を説明する。
+6. WebMCP起動登録は`src/main.js:224`、独立アプリの明示有効化は`src/application.js:61,159`。ツール名/数を載せるなら`src/ui-tools.js`の宣言をimplで再確認する。画面件数は掲載しない。
+7. 転送の説明は世代ガード`src/host-effects.js:145,253`、GET reader/writable/close`src/adapters/http-download.js:51,73,99-100`、FormData`src/adapters/http.js:249`、排他`src/opfs.js:42-67`と現行契約で照合する。非同期/境界/異常系の担い手はT2の既存例確認とT5の主張照合であり、新たな全I/O試験は作らない。
+8. 数値は記事自身の作業を加算せず、既存OPFSログのresearch/plan/impl/verifyのみ再集計する。履歴は868983e〜a8fdffe。出力/キャッシュ/費用/正確な実行モデルの未取得を0と書かない（根拠: RESEARCH履歴・数字、DECISIONS根拠・履歴）。
 
 ## メモ
 
-- 受け入れ条件をまず契約/保存/排他/認証/通知/サンプル/大容量/文書へ分解し、同一境界の実装と試験を統合して12タスクにした。転送実装と競合統合/実ブラウザは切り戻し単位が異なるため分離。PLANターンではサブエージェント不要、implでは列挙した独立所有範囲をsubagents=autoで利用できる。
-- `.gsd-lite/reflect/` の直近2件: ファイルなし（`rg --files --hidden -g '.gsd-lite/reflect/**'`）。採用/不採用の提案なし。
+### 分割とゴール逆算
 
-| RESEARCHの盗める点                       | 採否と理由                                                                                        |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| happy-opfsのpath/writable/実ブラウザ試験 | 採用: T3/T6/T11で標準APIを利用。依存追加は却下: ホスト契約を置換しない                            |
-| drip-fsのstaging/cleanup                 | 採用: T6のclose/abort責任。全量memory fallback/SW保存は却下: 領域内ストリーム契約に不要           |
-| 既存FileClient/OpfsDirectory             | 採用: T3、権限/namespace/lockを共有。全量read/write転送利用は却下: 大容量と旧上限の分離           |
-| HTTP/ResourceClient/host実装             | 採用: T2/T4/T5/T8。転送時認証再送は却下: 結果不明と二重送信防止                                   |
-| mock/gate/既存HTTPデモ                   | 採用: T1/T9/T10。mockのみの合格は却下: T11で標準挙動を実測                                        |
-| ローカルCacheManager / FileSystemAdapter | capability/finallyとhandle境界のみ採用: T3/T6。read失敗null化/親自動作成/全量textは却下: 契約違反 |
+受け入れ基準を計数/配置/ローカルリンク/本文8内容/例/履歴/図3種/画面撮影/入口/整形/最終照合に分解し、同じファイル群を扱う本文と例、図3種、最終推敲と入口を統合した。5タスクで各1ターンを上限にし、小規模な文書マイルストーンを8件へ水増ししない。
 
-| RESEARCH落とし穴              | 機械検証するタスク |
-| ----------------------------- | ------------------ |
-| 旧ファイル消失・新規entry残留 | T6、T9、T11        |
-| cleanup前のロック解放         | T3、T8、T9         |
-| 複数領域漏れ/デッドロック     | T3、T9、T11        |
-| 容量境界/圧縮/虚偽length      | T5、T6、T7、T11    |
-| 全量読込/WASM経由             | T6、T7、T9、T11    |
-| FormData型/順序               | T5、T7、T10、T11   |
-| 権限/パス/ヘッダー迂回        | T3、T5、T11        |
-| 認証更新後の再送              | T4、T7、T11        |
-| 成功更新outcome               | T7、T8、T9         |
-| timeout/cancel不到達          | T2、T8、T9、T11    |
-| 古い進捗/handler例外          | T2、T8、T9         |
-| mockだけの仕様誤認            | T1、T10、T11       |
+| RESEARCHの落とし穴                  | 検証するタスク                                     |
+| ----------------------------------- | -------------------------------------------------- |
+| 古い文書のコピー                    | T2主張台帳、T5の現行実物照合/件数rg                |
+| 架空/実行不能例                     | T2対象UTと掲載抜粋実行、T4実入力                   |
+| 確定前/失敗時保持の誤解             | T2既存試験/実装照合、T3候補/確定図、T5照合         |
+| 非同期結果を古いstateへ戻す         | T2最新state/世代説明、T3effects図、T5排他/中止境界 |
+| 大容量転送を全量WASM読込と説明      | T2ホストの経路、T3図、T5現行契約                   |
+| モックを任意サーバー/認証検証と表現 | T2DSL/UTの準備条件と限界、T5照合                   |
+| WebMCPが全アプリで既定有効          | T2条件分離、T5実装照合                             |
+| 字数の測定が曖昧                    | T1境界/Unicode計数、T2/T5計数結果                  |
+| docs:checkのみで画像検査扱い        | T1記事限定検査、T3/T4目視、T5complete              |
+| 図・比較画像が読めない              | T3フォント/縮小目視、T4Canvas実画素、T5再確認      |
+| 整形/HMRで撮影が崩れる              | T4/T5整形→本番build→preview、cleanup別記           |
+| 能力・時間の過大評価                | T2履歴根拠/集計、T5制限/数値照合                   |
 
-ゴール逆算: GET保存=T6、本文/multipart=T7、通常files共有排他=T3/T9、認証=T4、cancel/期限/進捗/画面切替=T2/T8/T9、サーバーとDOM/Canvas/100MiB=T10/T11、契約文書と全退行=T12。全受け入れ基準に担当と検証を割り当て済み。
+### 参考実装の「盗める点」採否
+
+| 提案                                                | 採否と理由                                                        |
+| --------------------------------------------------- | ----------------------------------------------------------------- |
+| Hello Worldを1本の流れにしてpublic/既存UTを再利用   | 採用。前提付き実例と失敗時保持を混同せず説明できる                |
+| Worker DSLとモデルUT/実WASM UTの短い抜粋            | 採用。描画なし検証と実Workerの境界を具体化できる                  |
+| 既存playwrightとHTML/SVGによるPNG                   | 採用。日本語を確認でき、新依存が不要                              |
+| test-transfer-browserの起動/終了管理                | 採用。撮影中断時の後始末と元のエラーを保持する                    |
+| check-docsだけで記事検査                            | 却下。`scripts/check-docs.mjs:19`の走査はblogを含まない           |
+| verify-transferの全I/O/ブラウザ回帰を丸ごと実行     | 却下。文書マイルストーンは対象UT/記事撮影を最終コマンドへ限定する |
+| 原子的確定/世代/cleanupまでの排他の堅牢性を説明する | 採用。単純化で契約を落とさずT2/T3/T5で照合する                    |
+
+### 直近reflectの提案
+
+reflectは `.gsd-lite/reflect/20261005-0843-opfs-file-transfer.md` の1件のみ（`rg --files --hidden .gsd-lite/reflect`）。
+
+| 次回への提案                           | 採否と理由                                                                                        |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| PATH上のloop入口へ統一                 | 採用。次から `gsd-lite-loop.sh --where` のみ使用。本turnは誤った相対パス呼出しを1回修正した       |
+| 起動前localhost/checkプローブ          | 一部採用。T1でcheck、T4で実起動/終了。discuss/allowlistの変更は本スコープ外                       |
+| サーバーfixtureとWASMサンプルを分離    | 今回は不採用。転送fixtureを追加せず、既存UT/記事例をT2に集約                                      |
+| 整形→ブラウザ起動・cleanup失敗を別記   | 採用。T4/T5に固定。認証fixtureを使わない                                                          |
+| Content-Type期待値を要件から決定       | 説明へ採用。verify差し戻しの要件/試験の違いをT2/T5で照合。API試験追加は範囲外                     |
+| blocked/やり直し/未取得値/見出し一意性 | 採用。記事の数字をT2/T5で照合し、各turnはPROGRESS見出しとstate.turnを確認。ループ実装変更は範囲外 |
+
+図生成/ブラウザ依存で新たな判断が必要な障害が起きた場合は未検証を保持してBLOCKEDへ記録する。記事の機械検査結果、主張台帳、画像目視の三者を最終合否の根拠とする。
