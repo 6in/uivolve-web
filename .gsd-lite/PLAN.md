@@ -41,7 +41,7 @@ bun run check
   - 依存: なし
   - 並列サブ作業: なし（検査仕様とstageを共有する）
 
-- [ ] T2: 根拠付き日本語原稿と実行確認済みの短い例を書く
+- [x] T2: 根拠付き日本語原稿と実行確認済みの短い例を書く
   - 完了基準: 必須8内容を下記順で書き、ポップなです・ます/絵文字/短い段落、6,000〜8,000字、AI節20〜30%をdraft検査で満たす。Hello WorldのJSON/Rhai、Worker DSL、モデルUT/実WASM UTを「抜粋」・import/初期化/ビルド条件・完全な例へのリンク付きで載せる。`tests/engine.test.js` と `tests/worker-mock.test.js` をWASM生成後に実行し、掲載断片もscratchで実行、結果と対応行を台帳へ保存。入力時は挨拶不変、押下でHello 太郎、空白のみはHello Worldを確認。本文の失敗時保持/最新state/effects確定を実物へ照合し、Hello Worldに失敗処理が実装されているとは書かない。現行APIの説明と歴史的説明を区別し、3停止とContent-Type差し戻し・時間集計の根拠を台帳へ記録する。画像の相対参照/alt/説明はこの段階で配置し、未生成画像はdraft段階のみ許す。
   - 対象: `blog/uivolve-web-retrospective/index.md`、`.gsd-lite/BLOG-EVIDENCE.md`、scratchの例実行/結果
   - 依存: T1
