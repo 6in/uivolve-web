@@ -519,6 +519,22 @@ export async function createFontParityHarness({
         hostFrame: hostFrame(host),
       };
     },
+    // Both sides of a width boundary, as numbers. The DOM clips with `text-overflow`, which
+    // leaves the text's own advance width intact, so "was it cut" is the advance against the
+    // box it was given — not something a screenshot has to be trusted for. The Scene value is
+    // carried along because the Canvas side has to be compared with the full string.
+    boundaryText(targets) {
+      const widgets = sceneRecord(runtime.scenes[1])?.widgets ?? [];
+      return targets.map((spec) => {
+        const widget = widgets.find((entry) => entry.target === spec.target) ?? null;
+        return {
+          target: spec.target,
+          key: widget?.key ?? null,
+          value: widget?.value ?? null,
+          ...textInk(domStage, [`[data-target="${spec.target}"] ${spec.valuePart}`])[0],
+        };
+      });
+    },
     // Page coordinates for the centre of a Scene widget. Dragging needs pointer capture,
     // which only real browser input grants, so the caller drives the mouse from outside
     // the page and asks here where to put it.

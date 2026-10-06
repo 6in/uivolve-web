@@ -410,7 +410,15 @@ export function textInk(stage, selectors) {
   return selectors.map((selector) => {
     const element = stage.querySelector(selector);
     if (!element)
-      return { selector, found: false, text: null, width: null, scrollWidth: null, lineCount: 0 };
+      return {
+        selector,
+        found: false,
+        text: null,
+        width: null,
+        scrollWidth: null,
+        clientWidth: null,
+        lineCount: 0,
+      };
     const range = stage.ownerDocument.createRange();
     range.selectNodeContents(element);
     const rect = range.getBoundingClientRect();
@@ -426,6 +434,10 @@ export function textInk(stage, selectors) {
       text: (element.textContent ?? "").slice(0, 24),
       width: rect.width,
       scrollWidth: element.scrollWidth,
+      // The box the text was given. `text-overflow: ellipsis` is a paint-time effect, so
+      // the advance width above keeps its full value and only the comparison with this
+      // tells "fits" and "was cut" apart.
+      clientWidth: element.clientWidth,
       lineCount,
       fontSize: Number.parseFloat(style.fontSize),
       fontFamily: style.fontFamily,

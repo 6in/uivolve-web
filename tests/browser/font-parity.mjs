@@ -615,7 +615,16 @@ const ROLE_HOST_SIZES = ["16px", "20px"];
 const GALLERY_SCREEN = "screens/uivolve-gallery.json";
 const DIALOGS_SCREEN = "screens/dialogs.yaml";
 const STATES_SCREEN = "/tests/browser/font-parity-states.json";
+const TEXT_SHAPES_SCREEN = "/tests/browser/font-parity-text.json";
 const ICON_SELECT = '.ui-field[data-target="dialogIcon"] select';
+
+// The width boundary, as two fields of the same width holding a string that fits and a
+// string that does not. `valuePart` names the node the value is shown in, because a
+// displayfield keeps its caption in a sibling element.
+const BOUNDARY_FIELDS = [
+  { target: "boundaryFits", valuePart: "> div", truncated: false },
+  { target: "boundaryOverflows", valuePart: "> div", truncated: true },
+];
 
 // Steps are data, not functions: they cross into page.evaluate. Every overlay and popup
 // is opened with a real click so the measured node is the one the host builds.
@@ -662,9 +671,13 @@ const ROLE_FIXTURES = [
   // together, and asserting the conditions needs them actually painted.
   {
     name: "text-shapes",
-    screen: "/tests/browser/font-parity-text.json",
+    screen: TEXT_SHAPES_SCREEN,
     cases: "single",
     steps: [],
+    // The two fields that straddle the width boundary. Both sides are asserted rather than
+    // only counted: a `truncated` shape existing somewhere in the frame does not say that
+    // the string just inside the boundary survived, nor that the one just past it was cut.
+    boundary: BOUNDARY_FIELDS,
   },
   { name: "kanban", screen: "screens/kanban.yaml", cases: "single", steps: [] },
   { name: "orders", screen: "screens/orders.json", cases: "single", steps: [] },
@@ -836,8 +849,14 @@ async function captureRoles(page, { fixture, theme, hostFontSize }) {
     (input) => window.__fontParityHarness.roles(input.specs, input.noText),
     { specs: roleSpecs(), noText: Object.keys(KIND_NO_TEXT) },
   );
+  const boundary = fixture.boundary
+    ? await page.evaluate(
+        (targets) => window.__fontParityHarness.boundaryText(targets),
+        fixture.boundary,
+      )
+    : null;
   return {
-    capture: { fixture: fixture.name, mode: theme.mode, hostFontSize, ...observed },
+    capture: { fixture: fixture.name, mode: theme.mode, hostFontSize, boundary, ...observed },
     release,
   };
 }
@@ -1806,6 +1825,74 @@ function textShapes(records) {
   return counts;
 }
 
+// Both sides of the width boundary, asserted per field instead of counted over the frame.
+// The DOM cuts with `text-overflow: ellipsis`, which leaves the text's own advance width
+// intact, so the box it was given is what says whether anything was lost; the Canvas cuts
+// by painting a shorter string ending in an ellipsis. The claim is that the two agree:
+// a string that fits survives whole on both surfaces, and a string that does not is cut on
+// both — which is what the ledger says about the boundary and what nothing asserted.
+function assertBoundary(capture, records, problems) {
+  const where = `${capture.fixture}/${capture.mode}/host ${capture.hostFontSize}`;
+  const note = (message) => problems.push(`${where}: boundary ${message}`);
+  const rows = [];
+  for (const field of capture.boundary ?? []) {
+    const spec = BOUNDARY_FIELDS.find((entry) => entry.target === field.target);
+    if (!field.found || field.value === null) {
+      note(`${field.target} の値のノードが DOM/Scene に無い（${field.selector}）`);
+      continue;
+    }
+    const domCut = field.width > field.clientWidth + 0.5 || field.lineCount > 1;
+    const draws = records.filter((record) => record.target === field.target);
+    const whole = draws.filter((record) => record.text === field.value);
+    const cut = draws.filter((record) => record.text.endsWith("…"));
+    rows.push({
+      target: field.target,
+      expectTruncated: spec.truncated,
+      domInkWidth: Number(field.width.toFixed(2)),
+      domBoxWidth: field.clientWidth,
+      domLineCount: field.lineCount,
+      domTruncated: domCut,
+      canvasWhole: whole.length,
+      canvasTruncated: cut.length,
+      canvasTexts: draws.map((record) => record.text.slice(0, 20)),
+    });
+    if (domCut !== spec.truncated)
+      note(
+        `${field.target} の DOM は 送り幅 ${field.width.toFixed(2)}px / 枠 ${field.clientWidth}px / ` +
+          `${field.lineCount} 行 で ${domCut ? "省略されている" : "省略されていない"}` +
+          `（${spec.truncated ? "省略される" : "省略されない"}はず）`,
+      );
+    if (spec.truncated) {
+      if (!cut.length)
+        note(
+          `${field.target} の Canvas が省略していない（描画: ${
+            rows
+              .at(-1)
+              .canvasTexts.map((text) => `"${text}"`)
+              .join(", ") || "なし"
+          }）`,
+        );
+      if (whole.length) note(`${field.target} の Canvas が全文を描いている（枠を超えるはず）`);
+      for (const record of cut)
+        if (!field.value.startsWith(record.text.replace(/…+$/u, "")))
+          note(`${field.target} の省略された描画 "${record.text}" が値の先頭と一致しない`);
+    } else {
+      if (!whole.length)
+        note(
+          `${field.target} の Canvas が全文 "${field.value}" を描いていない` +
+            `（描画: ${
+              rows
+                .at(-1)
+                .canvasTexts.map((text) => `"${text}"`)
+                .join(", ") || "なし"
+            }）`,
+        );
+      if (cut.length) note(`${field.target} の Canvas が省略している（枠に収まるはず）`);
+    }
+  }
+  return rows;
+}
+
 // Flatten the per-surface role measurements into one list of asserted samples.
 // --- the two surfaces against each other, per component ----------------------------
 // Until verify round 1 the DOM and the Canvas were only checked separately against
@@ -2167,6 +2254,14 @@ async function runRoles({ context, origin, evidenceDir, viewport, log }) {
   );
   const parityRows = parity.flatMap((entry) => entry.rows);
   const parityWeightGaps = parity.flatMap((entry) => entry.weightGaps);
+  // Both sides of the width boundary. The fixture that owns them has to be there: a run
+  // whose boundary fields disappeared would otherwise assert nothing about truncation.
+  const boundary = captures.flatMap((capture, index) =>
+    assertBoundary(capture, canvas[index].records, problems),
+  );
+  for (const field of BOUNDARY_FIELDS)
+    if (!boundary.some((row) => row.target === field.target))
+      problems.push(`boundary: ${field.target} を実測していない`);
   // Parity must not be able to cover nothing: every kind that paints text owes at least one
   // paired slot, and a recorded weight difference nothing produces any more has to be
   // deleted rather than left standing as an unused exemption.
@@ -2268,6 +2363,7 @@ async function runRoles({ context, origin, evidenceDir, viewport, log }) {
       {
         wrapsLastSlot: [...CANVAS_WRAPS_LAST_SLOT],
         weightDifferences: WEIGHT_DIFFERENCES,
+        boundary,
         cases: captures.map((capture, index) => ({
           fixture: capture.fixture,
           mode: capture.mode,
@@ -2298,6 +2394,9 @@ async function runRoles({ context, origin, evidenceDir, viewport, log }) {
       `(${parityWeightGaps.length} recorded weight gaps), ` +
       `shapes ${Object.entries(shapes)
         .map(([name, count]) => `${name}=${count}`)
+        .join(" ")}, ` +
+      `boundary ${boundary
+        .map((row) => `${row.target}=${row.domTruncated ? "cut" : "whole"}`)
         .join(" ")}, ` +
       `contexts ${[...new Set(asserted.map((sample) => sample.context))].sort().join("/")}, ` +
       `${Object.keys(xtypeCoverage).length}/${XTYPE_KINDS.size} xtypes, ` +
@@ -2425,7 +2524,7 @@ const EDIT_FIXTURES = [
   // Monospace is the one family override the contract allows; the size must stay body.
   {
     name: "text-overlay-monospace",
-    screen: "/tests/browser/font-parity-text.json",
+    screen: TEXT_SHAPES_SCREEN,
     steps: [{ surface: "canvas", target: "codeArea" }],
     requires: ["overlay", "field-textarea"],
   },
@@ -2562,7 +2661,39 @@ const FIELD_OPERATIONS = [
     target: "customer",
     paths: ["draftCustomer"],
   },
+  // The DOM half of uivolve-forms. Until verify round 1 only its Canvas overlay was
+  // operated, so the screen the task names as representative had no DOM edit at all.
+  {
+    name: "forms-dom",
+    screen: FORMS_SCREEN,
+    surface: "dom",
+    target: "personName",
+    paths: ["name"],
+  },
+  // A field inside a window: the editor window of the components screen, opened with the
+  // same click a user makes. Both surfaces, because the window is laid out by each renderer.
+  ...["dom", "canvas"].map((surface) => ({
+    name: `components-window-${surface}`,
+    screen: "screens/components.json",
+    surface,
+    target: "draftName",
+    paths: ["draftName"],
+    steps: [{ surface: "dom", selector: '.ui-button[data-target="openEditor"]' }],
+  })),
+  // The gallery's editing tab. The code editor is a textarea, so Enter inserts a newline
+  // instead of closing the overlay — the same rule the forms textarea follows.
+  ...["dom", "canvas"].map((surface) => ({
+    name: `gallery-edit-${surface}`,
+    screen: GALLERY_SCREEN,
+    surface,
+    target: "codeSource",
+    paths: ["source"],
+    kind: "textarea",
+    steps: [{ surface: "dom", selector: ".ui-tab:nth-of-type(2)" }],
+  })),
 ];
+
+const GRID_SCREEN = "screens/grid-lab.json";
 
 const GRID_OPERATIONS = [
   { name: "grid-lab-dom", surface: "dom" },
@@ -2574,7 +2705,9 @@ const TYPED_TEXT = "日本語の入力";
 // Only the Canvas stage's controls are overlays; the DOM stage's inputs are always there.
 const overlays = (snapshot) => snapshot.editors.filter((editor) => editor.surface === "canvas");
 
-async function openHarness(page, screen) {
+// `steps` are the clicks that have to happen before the field exists at all: a window that
+// has to be opened, a tab that has to be selected. Real clicks, like everywhere else.
+async function openHarness(page, screen, steps = []) {
   await page.evaluate(
     async (input) => {
       const module = await import("/tests/browser/font-parity-harness.js");
@@ -2582,12 +2715,15 @@ async function openHarness(page, screen) {
       window.__fontParityHarness = harness;
       try {
         await harness.settle();
+        for (const step of input.steps)
+          if (step.surface === "dom") await harness.clickDom(step.selector);
+          else await harness.clickCanvas(step.target);
       } catch (error) {
         document.getElementById("font-parity-error").textContent = error.stack ?? String(error);
         throw error;
       }
     },
-    { screen },
+    { screen, steps },
   );
 }
 
@@ -2610,7 +2746,7 @@ async function runFieldOperation(page, operation, problems) {
     steps.push({ label, ...snapshot });
     return snapshot;
   };
-  await openHarness(page, operation.screen);
+  await openHarness(page, operation.screen, operation.steps ?? []);
   const start = await record("loaded");
   await page.evaluate((input) => window.__fontParityHarness.focusField(input), {
     surface: operation.surface,
@@ -2653,8 +2789,17 @@ async function runFieldOperation(page, operation, problems) {
     note("Escape で Canvas のオーバーレイが閉じていない");
   if (cancelled.state[operation.paths[0]] !== confirmed.state[operation.paths[0]])
     note("Escape が確定済みの値を変えた");
+  // No step of an ordinary edit may report an error. The Rhai refusal is the one place an
+  // error is the expected outcome, and it has its own script below; here a reported error
+  // means the operation only looked successful.
+  if (cancelled.errors.length) note(`errors: ${JSON.stringify(cancelled.errors)}`);
   await page.evaluate(() => window.__fontParityHarness.dispose());
-  return { operation: operation.name, surface: operation.surface, steps };
+  return {
+    operation: operation.name,
+    screen: operation.screen,
+    surface: operation.surface,
+    steps,
+  };
 }
 
 const GRID_PATHS = ["cellEdit", "records.1.customer", "records.1.quantity", "edited"];
@@ -2673,7 +2818,7 @@ async function runGridOperation(page, operation, problems) {
       column,
       index: 1,
     });
-  await openHarness(page, "screens/grid-lab.json");
+  await openHarness(page, GRID_SCREEN);
   const start = await record("loaded");
   await edit("customer");
   const opened = await record("begin-edit");
@@ -2721,17 +2866,23 @@ async function runGridOperation(page, operation, problems) {
     note(`拒否後の入力欄が ${refused.active.fontSize}px`);
   if (String(refusedDraft.state.cellEdit?.value) !== "600") note("拒否前の下書きが残っていない");
   // The refusal has to reach the host as an error; a silently dropped commit would leave
-  // the same state behind and pass every check above.
-  if (refused.errors.length <= refusedDraft.errors.length)
-    note(`拒否が報告されなかった（errors: ${JSON.stringify(refused.errors)}）`);
+  // the same state behind and pass every check above. Everything before it has to be
+  // error-free, and the refusal itself has to report exactly once: `errors` is cumulative,
+  // so the draft step carrying none covers every step up to it.
+  if (refusedDraft.errors.length)
+    note(`拒否の前に errors がある（${JSON.stringify(refusedDraft.errors)}）`);
+  if (refused.errors.length !== refusedDraft.errors.length + 1)
+    note(`拒否の報告が ${refused.errors.length - refusedDraft.errors.length} 件（1 件を期待）`);
   else if (!refused.errors.at(-1).includes("500"))
     note(`拒否の報告が想定外の内容（${refused.errors.at(-1)}）`);
   await page.keyboard.press("Escape");
   await page.evaluate(() => window.__fontParityHarness.afterFrame());
   const closed = await record("close");
   if (closed.state.cellEdit !== null) note("最後の Escape で編集が閉じていない");
+  if (closed.errors.length !== refused.errors.length)
+    note(`取消で errors が増えた（${JSON.stringify(closed.errors.slice(refused.errors.length))}）`);
   await page.evaluate(() => window.__fontParityHarness.dispose());
-  return { operation: operation.name, surface: operation.surface, steps };
+  return { operation: operation.name, screen: GRID_SCREEN, surface: operation.surface, steps };
 }
 
 // --- composition ------------------------------------------------------------------
@@ -2797,6 +2948,7 @@ async function runCompositionCase(page, { name, surface }, problems) {
   if (committed.state.name !== COMPOSITION.text)
     note(`変換確定後の state が ${JSON.stringify(committed.state.name)}`);
   if (!committed.active.same) note("変換確定で入力欄が作り直された");
+  if (committed.errors.length) note(`errors: ${JSON.stringify(committed.errors)}`);
   await page.evaluate(() => window.__fontParityHarness.dispose());
   return { case: name, surface, steps };
 }
@@ -2885,6 +3037,18 @@ async function runEditing({ context, origin, evidenceDir, viewport, log }) {
   );
   for (const kind of ["textfield", "numberfield", "datefield", "combobox", "checkbox"])
     if (!kinds.has(kind)) problems.push(`Grid 編集の ${kind} を実測していない`);
+  // Both surfaces per screen. Until verify round 1 uivolve-forms was only ever edited on
+  // the Canvas, so the representative screen the task names had no DOM edit at all, and a
+  // surface that is never operated cannot show a size that moves only while editing.
+  const operatedSurfaces = new Map();
+  for (const row of operations) {
+    const seen = operatedSurfaces.get(row.screen) ?? new Set();
+    seen.add(row.surface);
+    operatedSurfaces.set(row.screen, seen);
+  }
+  for (const [screen, seen] of operatedSurfaces)
+    for (const surface of ["dom", "canvas"])
+      if (!seen.has(surface)) problems.push(`${screen} の ${surface} 面で編集操作をしていない`);
   await writeFile(
     resolve(evidenceDir, "editing-parity.json"),
     `${JSON.stringify(
@@ -2904,8 +3068,9 @@ async function runEditing({ context, origin, evidenceDir, viewport, log }) {
       `${new Set(parityRows.map((row) => row.kind)).size} kinds, ` +
       `grid editor kinds ${[...kinds].sort().join("/")}, ` +
       `labelHeight ${[...strips].sort((a, b) => a - b).join("/")}, ` +
-      `${operations.length} operation scripts, ${compositions.length} composition probes ` +
-      `(real IME: ${COMPOSITION.realIme})`,
+      `${operations.length} operation scripts over ` +
+      `${operatedSurfaces.size} screens (both surfaces each), ` +
+      `${compositions.length} composition probes (real IME: ${COMPOSITION.realIme})`,
   );
   if (problems.length)
     throw new Error(`editing: ${problems.length} problems\n- ${problems.join("\n- ")}`);
@@ -3140,7 +3305,14 @@ function assertSurfaceWidget({ frame, widget, domSprites, canvasSprites, resolve
 function assertSurfaceCase(capture, problems) {
   const where = `${capture.fixture}/${capture.viewport}`;
   const note = (message) => problems.push(`${where}: ${message}`);
-  const result = { kinds: new Set(), sprites: [], notices: 0, icons: 0, multiline: 0 };
+  const result = {
+    kinds: new Set(),
+    sprites: [],
+    notices: 0,
+    shownNotices: 0,
+    icons: 0,
+    multiline: 0,
+  };
   if (capture.errors.length) note(`runtime errors: ${capture.errors.join("; ")}`);
   if (!capture.scene) {
     note("Scene が取得できなかった");
@@ -3214,11 +3386,26 @@ function assertSurfaceCase(capture, problems) {
       continue;
     }
     result.notices++;
-    if (domNotice.shown && domNotice.fontSize !== SIZE_CONTRACT.caption)
+    // Whether a notice is owed at all is the Scene's answer: no source, or a source that
+    // failed. The DOM shows it as generated content, so "it is there" is an assertion, not
+    // a precondition for measuring its size — a notice that silently stopped appearing
+    // used to leave the size check with nothing to look at.
+    const owesNotice = !widget.src || domNotice.error;
+    if (owesNotice && !domNotice.shown)
       note(
-        `${widget.kind} の DOM 案内が ${domNotice.fontSize}px` +
-          `（${SIZE_CONTRACT.caption}px のはず）`,
+        `${widget.kind} ${widget.key} は ${domNotice.error ? "エラー" : "空"} なのに DOM の案内が` +
+          `出ていない（content ${domNotice.content}、hidden ${domNotice.hidden}）`,
       );
+    if (!owesNotice && domNotice.shown)
+      note(`src があるのに ${widget.kind} ${widget.key} の DOM 案内が出ている`);
+    if (domNotice.shown) {
+      result.shownNotices++;
+      if (domNotice.fontSize !== SIZE_CONTRACT.caption)
+        note(
+          `${widget.kind} の DOM 案内が ${domNotice.fontSize}px` +
+            `（${SIZE_CONTRACT.caption}px のはず）`,
+        );
+    }
     // The Canvas surface keeps a native element for video and iframe; the image kind has
     // none, and its notice is painted onto the bitmap instead.
     // The Canvas overlays carry no widget key, so they are matched on the position the
@@ -3232,8 +3419,15 @@ function assertSurfaceCase(capture, problems) {
     } else if (!native) note(`Canvas 面に ${widget.kind} の native 要素が無い`);
     else {
       result.notices++;
-      if (native.shown && native.fontSize !== SIZE_CONTRACT.caption)
-        note(`${widget.kind} の native overlay が ${native.fontSize}px`);
+      // A Canvas overlay behind a modal collapses, so its notice legitimately disappears;
+      // a visible one owes the same notice the DOM shows.
+      if (owesNotice && !native.hidden && !native.shown)
+        note(`${widget.kind} ${widget.key} の native overlay に案内が出ていない`);
+      if (native.shown) {
+        result.shownNotices++;
+        if (native.fontSize !== SIZE_CONTRACT.caption)
+          note(`${widget.kind} の native overlay が ${native.fontSize}px`);
+      }
       if (native.mediaKind !== widget.kind) note(`native overlay の kind が ${native.mediaKind}`);
     }
     const painted = draws.filter((record) => record.key === widget.key);
@@ -3418,7 +3612,8 @@ async function runSurfaces({ context, origin, evidenceDir, viewport, log }) {
   log(
     `${captures.length} cases, ${sprites.length} sprite pairs over ` +
       `${[...kinds].sort().join("/")}, ` +
-      `${results.reduce((total, result) => total + result.notices, 0)} media notices, ` +
+      `${results.reduce((total, result) => total + result.notices, 0)} media frames ` +
+      `(${results.reduce((total, result) => total + result.shownNotices, 0)} showing a notice), ` +
       `${results.reduce((total, result) => total + result.icons, 0)} dialog icons, ` +
       `${scales.size} distinct scales, ` +
       `shapes ${Object.entries(shapes)
@@ -3495,7 +3690,7 @@ const LIFECYCLE_SCREEN = "screens/hello-world.json";
 // The arrival case needs Latin text on screen: the probe font has no CJK glyphs, so a
 // Japanese-only screen keeps the per-codepoint fallback and nothing it paints would move.
 // T3's text fixture carries both, plus an editable field for the draft.
-const ARRIVAL_SCREEN = "/tests/browser/font-parity-text.json";
+const ARRIVAL_SCREEN = TEXT_SHAPES_SCREEN;
 // `moves` says whether the probe font covers these codepoints. Both answers are checked: a
 // covered sample has to change, an uncovered one has to stay exactly where it was.
 const FONT_SAMPLES = [
@@ -4385,6 +4580,23 @@ function assertMatrixCase(capture, problems) {
 // pitch of the layout (tens of px), not by two.
 const CONTROL_SLACK = 4;
 
+// The Scene kinds that come with a native control. Whether a screen has input positions to
+// compare is read off the Scene rather than written down per screen, so a screen that stops
+// producing them fails instead of leaving a row that compared nothing. The list is the
+// engine's field kinds (src/widget-contract.js:2-12), every one of which createControl
+// mounts an input, select or textarea for (src/field-control.js:5-27).
+const CONTROL_KINDS = new Set([
+  "textfield",
+  "textarea",
+  "numberfield",
+  "datefield",
+  "checkbox",
+  "radio",
+  "combobox",
+  "listbox",
+  "slider",
+]);
+
 function assertMatrixControls(capture, problems) {
   if (!capture.domScene && !capture.scene) return null;
   const note = (message) => problems.push(`${capture.label}: ${message}`);
@@ -4419,7 +4631,18 @@ function assertMatrixControls(capture, problems) {
           `${over.toFixed(1)}px はみ出している`,
       );
   }
-  return { checked, slack: Number(slack.toFixed(2)) };
+  // A screen whose Scene carries field widgets owes at least one compared position. A
+  // screen with none records the reason instead of quietly contributing nothing.
+  const expected = [
+    ...new Set(
+      (capture.domScene?.widgets ?? [])
+        .filter((widget) => CONTROL_KINDS.has(widget.kind))
+        .map((widget) => widget.kind),
+    ),
+  ].sort();
+  if (expected.length && !checked)
+    note(`Scene に入力欄を持つ部品（${expected.join("/")}）があるのに位置を 1 件も照合していない`);
+  return { checked, slack: Number(slack.toFixed(2)), expected };
 }
 
 // The Canvas editing overlay has no widget ancestor: the renderer positions it from the Scene
@@ -4449,9 +4672,10 @@ function assertOverlayBox(capture, target, note) {
   return overlay;
 }
 
-// Text that reaches past its own widget box without being truncated: the pointers the visual
-// check follows. Recorded as data, not asserted — a narrower viewport legitimately truncates
-// more, and which of those is acceptable is what the eyes in the ledger decide.
+// Text that reaches past its own widget box without being truncated. The ledger claims none
+// of the conditions produces any, so on the surface that publishes its Scene this is
+// asserted empty rather than only reported (matrixRow). The comparison demo keeps no Scene,
+// so there the rows cannot be computed at all and the eyes in the ledger decide.
 function matrixOverflow(records, scene) {
   const widgets = new Map((scene?.widgets ?? []).map((widget) => [widget.key, widget]));
   const rows = [];
@@ -4531,6 +4755,13 @@ function matrixRow({ surface, screen, condition, mode, capture, canvas, image, p
   const before = problems.length;
   const sizes = assertMatrixCase(capture, problems);
   const boxes = assertMatrixControls(capture, problems);
+  // No condition may push an untruncated string out of its widget box. Only the standalone
+  // surface can say: `overflow` is null where there is no Scene to attribute a draw to.
+  for (const row of canvas.overflow ?? [])
+    problems.push(
+      `${capture.label}: ${row.kind} "${row.text}" (${row.fontSize}px) が部品の枠外へ ` +
+        `${row.over}px 出ている（省略されていない）`,
+    );
   return {
     surface,
     screen: screen.name,
@@ -4547,6 +4778,7 @@ function matrixRow({ surface, screen, condition, mode, capture, canvas, image, p
     roles: [...sizes.roles].sort(),
     controls: boxes?.checked ?? null,
     controlSlack: boxes?.slack ?? null,
+    controlKinds: boxes?.expected ?? null,
     ...canvas,
     image,
     problems: problems.length - before,
@@ -4664,8 +4896,28 @@ async function runMatrixStandalone({
       for (const screen of MATRIX_SCREENS) {
         await openMatrixHarness(page, screen, ROLE_THEMES[0]);
         for (const theme of ROLE_THEMES) {
-          if (theme !== ROLE_THEMES[0])
+          if (theme !== ROLE_THEMES[0]) {
+            // Empty the recorder first, then switch: what is measured for the second theme
+            // has to be a frame painted after the switch. Without this the dark case could
+            // read the light frame — the draws are kept per surface until a full clearRect
+            // starts the next one — and a theme that stopped repainting would pass.
+            await page.evaluate(() => window.__fontParity.reset());
             await page.evaluate((url) => window.__fontParityHarness.applyThemeUrl(url), theme.url);
+            await page
+              .waitForFunction(
+                () =>
+                  (window.__fontParity.forCanvas(window.__fontParityHarness.canvas)?.draws.length ??
+                    0) > 0,
+                undefined,
+                { timeout: 20000 },
+              )
+              .catch(() =>
+                problems.push(
+                  `standalone/${screen.name}/${condition.name}/${theme.mode}: ` +
+                    `テーマ切替後に Canvas が再描画しなかった`,
+                ),
+              );
+          }
           const observed = await observeMatrix(page);
           const capture = {
             ...observed,
@@ -4677,6 +4929,14 @@ async function runMatrixStandalone({
           };
           if (capture.environment.domStage.themeMode !== theme.mode)
             problems.push(`${capture.label}: テーマが ${capture.environment.domStage.themeMode}`);
+          // Both stages and the Scene the Canvas frame was painted from: a theme that only
+          // reached the DOM would otherwise be measured as if it had reached both.
+          if (capture.environment.canvasStage.themeMode !== theme.mode)
+            problems.push(
+              `${capture.label}: Canvas 面のテーマが ${capture.environment.canvasStage.themeMode}`,
+            );
+          if (capture.scene?.theme.mode !== theme.mode)
+            problems.push(`${capture.label}: Scene のテーマが ${capture.scene?.theme.mode}`);
           const canvas = assertCanvasRoles(capture, problems);
           // The per-component comparison over the whole grid: the standalone surface is the
           // one that publishes its Scene, so it is where a Canvas draw can be paired with
@@ -4904,6 +5164,7 @@ async function runMatrix({ context, origin, evidenceDir, viewport, log }) {
   const images = [];
   const journeys = [];
   const pageErrors = [];
+  let controlCoverage = {};
   try {
     const standalone = await runMatrixStandalone({
       context,
@@ -4949,10 +5210,33 @@ async function runMatrix({ context, origin, evidenceDir, viewport, log }) {
         log(`demo/${screen}: 独立 runtime だけが描いたサイズ ${missing.join("/")}`);
     }
   } finally {
+    // Input positions per screen: how many were compared, and — for a screen that compared
+    // none — the reason read off its own Scene instead of an unexplained zero.
+    controlCoverage = {};
+    for (const row of rows.filter((entry) => entry.surface === "standalone")) {
+      const entry = (controlCoverage[row.screen] ??= {
+        controlKinds: row.controlKinds ?? [],
+        cases: 0,
+        checked: 0,
+      });
+      entry.cases++;
+      entry.checked += row.controls ?? 0;
+    }
+    for (const entry of Object.values(controlCoverage))
+      if (!entry.controlKinds.length)
+        entry.reason = "Scene に入力欄を持つ部品が無いので、この画面に照合する入力位置は無い";
     await writeFile(
       file,
       `${JSON.stringify(
-        { limits: MATRIX_LIMITS, conditions, cases: rows, journeys, images, pageErrors },
+        {
+          limits: MATRIX_LIMITS,
+          conditions,
+          controlCoverage,
+          cases: rows,
+          journeys,
+          images,
+          pageErrors,
+        },
         null,
         2,
       )}\n`,
@@ -4983,6 +5267,11 @@ async function runMatrix({ context, origin, evidenceDir, viewport, log }) {
     if (!row.paired)
       problems.push(`${row.screen}/${row.condition}/${row.theme}: 突き合わせたスロットが 0 件`);
   const paired = standaloneRows.reduce((total, row) => total + row.paired, 0);
+  // The whole grid may not compare zero input positions: the per-case check above only
+  // fires for a screen whose Scene has fields, so this is what catches all of them losing
+  // their fields at once.
+  const checkedControls = standaloneRows.reduce((total, row) => total + (row.controls ?? 0), 0);
+  if (!checkedControls) problems.push("入力欄の位置をどの画面・どの条件でも照合していない");
   log(
     `${rows.length} cases (${MATRIX_SCREENS.length} screens × ${conditions.length} conditions × ` +
       `${ROLE_THEMES.length} themes × 2 surfaces), ` +
@@ -4991,7 +5280,10 @@ async function runMatrix({ context, origin, evidenceDir, viewport, log }) {
       `${paired} paired slots over ` +
       `${new Set(standaloneRows.flatMap((row) => row.pairedKinds)).size} kinds, ` +
       `${roleUnion.size} roles, viewports ${[...widths].sort((a, b) => a - b).join("/")}, ` +
-      `bitmap widths ${bitmaps.size}, ${journeys.length} edit journeys, ${images.length} images, ` +
+      `bitmap widths ${bitmaps.size}, ${checkedControls} control positions over ` +
+      `${Object.values(controlCoverage).filter((entry) => entry.checked).length}/` +
+      `${Object.keys(controlCoverage).length} screens, ` +
+      `${journeys.length} edit journeys, ${images.length} images, ` +
       `zoom ${MATRIX_ZOOM.method} (real browser zoom: ${MATRIX_ZOOM.realBrowserZoom})`,
   );
   if (problems.length)

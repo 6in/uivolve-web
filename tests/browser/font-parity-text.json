@@ -10,8 +10,8 @@
     "empty": "",
     "japanese": "日本語の見出しテキスト",
     "longAscii": "AVWijl0O ligature-heavy ASCII that overflows the field box by a wide margin",
-    "fitsExactly": "WWWWWWWWWWWWWW",
-    "overflowsByOne": "WWWWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+    "fitsInBox": "WWWWWWWWWWWWWW",
+    "overflowsBox": "WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW",
     "code": "fn init(s) {\n  let total = 0;\n  s\n}\nlet wrapped = \"この行は折り返しの境界を越える長さにしてあります\";\n"
   },
   "ui": {
@@ -52,14 +52,14 @@
         "xtype": "displayfield",
         "itemId": "boundaryFits",
         "fieldLabel": "幅境界の直前",
-        "bind": "fitsExactly",
+        "bind": "fitsInBox",
         "width": 220
       },
       {
         "xtype": "displayfield",
         "itemId": "boundaryOverflows",
         "fieldLabel": "幅境界の直後",
-        "bind": "overflowsByOne",
+        "bind": "overflowsBox",
         "width": 220
       },
       {
