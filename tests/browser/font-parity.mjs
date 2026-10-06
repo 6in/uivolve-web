@@ -1700,13 +1700,13 @@ export const STATE_CONTRACT = [
   {
     state: "media-empty-or-error",
     suite: "surfaces",
-    evidence: "surfaces suite（T5）: media 案内 46 件",
+    evidence: "surfaces suite（T5）: media 枠 46 件（DOM 30 ＋ Canvas overlay 16。案内 28 件）",
     why: "空・エラーの案内文は surfaces suite が DOM の 12px と直接比べる",
   },
   {
     state: "font-loaded",
     suite: "lifecycle",
-    evidence: "lifecycle suite（T6）: 遅延配信の前後 5 ケース",
+    evidence: "lifecycle suite（T6）: 字体の遅延配信 4 ケース ＋ 倍率 1 ケース",
     why: "字体の読込完了・失敗後の再描画は lifecycle suite が測る",
   },
 ];

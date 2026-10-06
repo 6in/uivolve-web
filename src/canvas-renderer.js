@@ -600,8 +600,10 @@ export class CanvasRenderer {
     if (!this.scene) return;
     // One resolution per frame, from the stage's computed style: every size below is a
     // role name, so the DOM declarations stay the only place the pixels are written.
-    // Resolved before the bitmap is touched, so a frame that is not painted also does not
-    // clear the frame that is currently on screen.
+    // Resolved before this method touches the bitmap, so a repaint with no new Scene (an
+    // image, a font, a ratio change, a drag) that cannot paint also does not clear the frame
+    // currently on screen. render() is the exception: it calls syncSurface() itself before
+    // getting here, so a Scene whose size changed has already rebuilt the bitmap.
     const fonts = this.resolveFonts();
     if (!fonts) return;
     this.fonts = fonts;
