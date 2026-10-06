@@ -42,20 +42,28 @@ bun scripts/test-font-parity-browser.mjs --suite lifecycle
 
 ## suite の一覧と実装状態
 
-| suite          | 担当  | 内容                                                            |
-| -------------- | ----- | --------------------------------------------------------------- |
-| `baseline`     | T1    | 修正前の台帳。差があっても報告のみで成功する                    |
-| `roles`        | T2/T3 | 役割別サイズと reset（T2 済）、Canvas 描画・計測の照合（T3 済） |
-| `editing`      | T4    | 通常値・編集オーバーレイ・Grid 編集（T4 済）                    |
-| `surfaces`     | T5    | document / figure / dialog / media の実効倍率（T5 済）          |
-| `lifecycle`    | T6    | フォント完了・DPR 変更時の再描画と解放（T6 済）                 |
-| `matrix`       | T8    | 幅・拡大・配色の行列と代表画像                                  |
-| `distribution` | T9    | 生成した配布物からの独立 runtime / minimal 確認                 |
+| suite          | 担当     | 内容                                                                                                    |
+| -------------- | -------- | ------------------------------------------------------------------------------------------------------- |
+| `baseline`     | T1       | 修正前の台帳。差があっても報告のみで成功する                                                            |
+| `roles`        | T2/T3/T7 | 役割別サイズと reset（T2 済）、Canvas 描画・計測の照合（T3 済）、kind と xtype の二層 coverage（T7 済） |
+| `editing`      | T4       | 通常値・編集オーバーレイ・Grid 編集（T4 済）                                                            |
+| `surfaces`     | T5       | document / figure / dialog / media の実効倍率（T5 済）                                                  |
+| `lifecycle`    | T6       | フォント完了・DPR 変更時の再描画と解放（T6 済）                                                         |
+| `matrix`       | T8       | 幅・拡大・配色の行列と代表画像                                                                          |
+| `distribution` | T9       | 生成した配布物からの独立 runtime / minimal 確認                                                         |
 
 未実装の suite は**成功として扱わず、非 0 で終了します**。登録されていない名前も非 0 です。
-どちらもサーバーとブラウザを起動する前に判定します。`roles` は T2 と T3 が分担する 1 つの
+どちらもサーバーとブラウザを起動する前に判定します。`roles` は T2・T3・T7 が分担する 1 つの
 suite です。T2 が DOM の宣言値・親コンテキスト・サイズ解決器を検査し、T3 が同じ suite へ
-Canvas の描画／計測との突き合わせを足しました（実行時のログに検査件数を出します）。
+Canvas の描画／計測との突き合わせを足し、T7 が kind と xtype の二層 coverage と状態の一覧を
+足しました（実行時のログに検査件数を出します）。
+
+**suite は 1 つずつ別プロセスで実行します。** `--suite` を重ねて 1 プロセスで続けて走らせると
+`lifecycle` の倍率ケースが落ちます（先行 suite の後だと CDP の倍率上書き後に再描画を待つ
+`waitForFunction` が 15 秒で切れる）。これは T7 以前からの既存の挙動で、T7 の変更を
+`git stash` した状態でも同じ失敗（むしろ 7 件）が出ることを確認しました。`verify-font-parity.mjs`
+は元から suite ごとに `bun scripts/test-font-parity-browser.mjs --suite <名前>` を 1 回ずつ
+起動するので、確定している実行経路には影響しません。
 
 ## 観測の方法と限界
 
@@ -662,6 +670,145 @@ T1 の `repaintAfterFonts()`（幅を実際に変えて再描画を起こす）�
 | 同上（単体） | `tests/runtime.test.js` が `expected "scheduleRender" to be called 2 times, but got 0 times` |
 
 確認後はすべて元へ戻しています。
+
+## 全共通部品の状態別 coverage（T7）
+
+### 決めたこと — 役割の一覧そのものを engine から導く
+
+T2〜T6 は「この役割はこの px」を実測してきました。T7 が閉じるのはその一段上、**一覧が
+揃っているか**です。役割（kind）は人が書くものではなく、engine が画面定義の xtype から
+導きます。だから一覧の正しさは kind だけでは示せません。T7 は二層で照合します。
+
+| 層       | 何を示すか                                               | どこで                                                      |
+| -------- | -------------------------------------------------------- | ----------------------------------------------------------- |
+| kind 層  | 描かれた文字のサイズがその kind の役割どれかに一致する   | `roles` suite（実ブラウザ・実 WASM）                        |
+| xtype 層 | kind の一覧そのものが engine の受け付ける全 xtype を覆う | `tests/font-parity-runner.test.js`（実 WASM・ブラウザ不要） |
+
+xtype 層は engine の許可リスト（`engine/src/lib.rs` から読み出す 48 件）を起点にし、各 xtype を
+**実 WASM で最小の形に描かせて**、出てきた Scene kind を宣言と**完全一致**で突き合わせます
+（`XTYPE_SHAPES`）。1 つの xtype に描画の形が 2 通りある場合は行を分けます（折りたたみの
+`panel` / `fieldset`、Grid の簡易と高機能、開いた `menu`、出ていない `toast`）。別名で
+展開されるだけの `messagebox` / `splitbutton` / `codeeditor` と、xtype ではなく **レイアウト**から
+出る `card`、xtype を通らない **dialog 面**（alert / prompt / icon 無し）も行を持ちます。
+
+これで失敗するのは 3 方向です。(1) shape の無い xtype、(2) どの表も担当しない kind、
+(3) どの shape も生まない kind。宣言と実測がずれたら即座に落ちます。
+
+### kind の担当表（53 件・重複なし）
+
+| 担当                       | 件数 | 内容                                                                 |
+| -------------------------- | ---- | -------------------------------------------------------------------- |
+| `roles` suite              | 37   | `CANVAS_KIND_CONTRACT`。文字を描き、サイズを役割として検査する       |
+| `surfaces` suite           | 6    | `figure` / `document` / `dialog-icon` / `image` / `video` / `iframe` |
+| 文字を描かない（理由付き） | 10   | `KIND_NO_TEXT`。下の表                                               |
+
+文字を描かない 10 件は、根拠を 2 つに分けて記録します。**「文字を持たない」と「文字を描かない」
+は別の主張**だからです。
+
+| 根拠             | kind                                                                                                  | 確かめ方                                                                                                                        |
+| ---------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `engine-empty`   | `backdrop` / `card` / `grid-head` / `grid-row` / `menuseparator` / `separator` / `tabbar` / `toolbar` | probe が `text` / `value` / `cells` を空だと実測する                                                                            |
+| `renderer-skips` | `grid-shell`（一覧の題）/ `menu-surface`（引き金の見出し）                                            | 文字列は持つが DOM は属性に載せて `textContent` を飛ばし、Canvas は枠だけを描く。probe は**逆に文字列が空でないこと**を確かめる |
+
+どちらも実ブラウザ側で裏を取ります。DOM は `observeDom` が拾った文字ノードの kind を照合し、
+Canvas はこの 10 件に対応づいた描画が**空文字であること**を要求します（`card` は汎用の label
+分岐を通るので `fillText("")` を実際に 1 件出します。実測 3 件）。
+
+### `roles` suite が T7 で確認していること
+
+28 ケース・DOM 1243 件・Canvas 描画 1276 件・**37 kind すべて描画あり**・**48/48 xtype**・
+**状態 18 件すべて観測**で green。T2 の時点から残っていた `fieldset` の穴も閉じました
+（states fixture が**折りたたまない** fieldset を書くので、見出しが `panel-toggle` へ移らず
+箱自身が描く）。
+
+xtype が「描かれた」と数える根拠は 2 段で、台帳（`roles-coverage.json`）に**どちらで示したか**を
+残します。
+
+| 根拠     | 件数 | 内容                                                                                                                                                                                                      |
+| -------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `target` | 40   | Scene widget の `target` が画面定義の `itemId` に戻る（1 件単位で確実）                                                                                                                                   |
+| `kind`   | 6    | その画面が xtype を書いていて、その kind が Scene にある（`dialogbutton` / `menuseparator` / `metric` / `progressbar` / `tbseparator` / `tbtext`）。節点に `itemId` が無いか normalize が id を書き換える |
+| 対象外   | 2    | `tbfill` / `tbspacer` は widget を 1 つも生まないのでブラウザから観測できない。probe が `kinds: []` を実測する                                                                                            |
+
+`kind` 根拠は 1 件単位の対応付けではありません。その代わり、**xtype ごとの厳密な kind の証明は
+probe 側**にあります（上の完全一致）。ブラウザ側は「本当に描画まで届いたか」を示す役割です。
+
+normalize が合成する xtype（画面定義に書けないもの）は、**入口の記述から**数えます
+（`screenCoverage` が `extras::normalize` のこの一部だけを再現する）。これをやらないと
+`tbtext` の kind 根拠が `label` になり、どの画面の label でも「証明」できてしまいます。
+
+| 合成される xtype | 入口の記述                           |
+| ---------------- | ------------------------------------ |
+| `tbtext`         | toolbar の文字列項目（`"帯の文字"`） |
+| `tbfill`         | toolbar の `"->"`                    |
+| `tbseparator`    | toolbar の `"-"`                     |
+| `tbspacer`       | toolbar の空白だけの項目             |
+| `dialogbutton`   | messagebox の `buttons`              |
+| `menuseparator`  | menu の `"-"` 項目                   |
+
+### 状態の一覧（18 件・担当 suite 付き）
+
+| 状態                   | 担当        | 観測した fixture / 証跡                               |
+| ---------------------- | ----------- | ----------------------------------------------------- |
+| `selected`             | `roles`     | grid-lab ほか（Grid 行・カレンダーの選択日・タブ）    |
+| `disabled`             | `roles`     | components / grid-lab / forms / states                |
+| `collapsed-panel`      | `roles`     | components ほか（`panel-toggle` が見出しを描く）      |
+| `popup-open`           | `roles`     | grid-lab（親コンテキストが `popup` になる）           |
+| `toast`                | `roles`     | gallery                                               |
+| `dialog-standard-icon` | `roles`     | dialogs（組み込み SVG。文字を描かないことを実測）     |
+| `dialog-image-icon`    | `roles`     | dialogs-image-icon（同上）                            |
+| `dialog-text-icon`     | `roles`     | dialogs-text-icon（30px の実測は `surfaces`）         |
+| `messagebox-answers`   | `roles`     | states-answer（`-answer-N` の target で 1 件単位）    |
+| `drag-ghost`           | `roles`     | kanban-drag-dom / kanban-drag-canvas                  |
+| `field-without-label`  | `roles`     | forms / kanban / gallery / states（`labelHeight: 0`） |
+| `grid-empty`           | `roles`     | kanban ほか（一致 0 件の案内）                        |
+| `calendar-month-shift` | `roles`     | states-month-shift（実クリックで `2026年 11月` へ）   |
+| `calendar-long-title`  | `roles`     | states（`9999年 12月`。対応範囲で最長）               |
+| `calendar-month-edge`  | `roles`     | states（前後月の muted 日と、戻れない月の `‹` 無効）  |
+| `editing-overlay`      | `editing`   | T4: Grid 編集中 11 件を含む 16 ケース                 |
+| `media-empty-or-error` | `surfaces`  | T5: media 案内 46 件                                  |
+| `font-loaded`          | `lifecycle` | T6: 遅延配信の前後 5 ケース                           |
+
+担当が `roles` 以外の 3 件を二重に測り直してはいません。測り直すと同じ検査が 2 か所にでき、
+片方だけ直されたときに食い違います。`stateTableProblems()` が「担当 suite の無い状態」と
+「`roles` 担当なのに判定の無い状態」を落とします。
+
+### T7 で足した fixture
+
+| ファイル                                          | 置いた理由                                                                                                                                                                          |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/browser/font-parity-states.json` / `.rhai` | 折りたたまない fieldset、文字列項目の toolbar、card レイアウト、pagingtoolbar、messagebox、3 つのカレンダー（通常月・`0001-01`・`9999-12`）。どのアプリ画面にもこれらが揃って出ない |
+
+gallery は 6 タブすべてを開くようにしました（タブは開くまで widget を 1 つも生まないので、
+エディター・グラフ・会話ログ・メディアの xtype が「書いてあるが描かれていない」ままになる）。
+dialogs はアイコンの 3 形（標準 / 画像 / 絵文字）を、**combobox を選んでからボタンを押す**
+実操作で開きます（`selectDom`）。
+
+### 既存の表現差として記録すること（変更しない）
+
+| 差                                         | 内容                                                                                                                                                                                                              |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 使用不可のカレンダー日の濃さ               | DOM は `:disabled` に `opacity: 0.5`（`src/runtime.css:35-38`）、Canvas は muted 色のみで薄くしない。**色・不透明度の差でサイズの差ではない**（両面とも 11px の label 役割で一致）。この milestone はサイズが対象 |
+| `grid-shell` / `menu-surface` の読み上げ名 | 両面とも文字としては描かない（上の `renderer-skips`）                                                                                                                                                             |
+
+### T7 の時点で未実施（理由付き）
+
+| 未実施                               | 理由                                                                                                             |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| 幅・拡大・配色の行列と代表画像の目視 | T8 の担当。T7 は light / 16px の 1 条件で coverage を閉じる（テーマ・ホストサイズ独立性は T2 の 8 ケースが担保） |
+| 生成配布物からの確認                 | T9 の担当                                                                                                        |
+
+### 検査に歯があることの確認
+
+| 外したもの                              | 出た失敗                                                                                |
+| --------------------------------------- | --------------------------------------------------------------------------------------- |
+| `tbtext` の shape 1 行                  | `xtype tbtext に shape が無い`（vitest・2 件）                                          |
+| `KIND_NO_TEXT` から `card`              | `kind card を担当する表が無い`（vitest）                                                |
+| `grid-shell` を `engine-empty` 扱い     | `grid-shell は文字を持たないはず: expected 'データ一覧' to be ''`（実装中に実際に出た） |
+| states fixture 3 件すべて               | `canvas kind fieldset was never painted` ＋ 状態 3 件が未観測（ブラウザ）               |
+| states fixture 2 件（送りのケースだけ） | `state calendar-month-shift ... was never observed`（ブラウザ）                         |
+
+確認後はすべて元へ戻し、`git diff` と `vp test` で復元を確かめています。
 
 ## 実行環境（T1 で確定）
 

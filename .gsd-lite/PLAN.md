@@ -142,11 +142,33 @@ bun run docs:check
     （実測: 日本語テキスト 84.00px → 84.00px、ラテン `iiiii` 17.87px → 39.00px）。
     他の 4 ケースは hello-world のまま。
 
-- [ ] T7: 全共通部品の状態別coverageを閉じる
+- [x] T7: 全共通部品の状態別coverageを閉じる
   - 完了基準: DomRendererのcreate/render、CanvasRendererのpaint/paintField、extrasのnormalize/arrange、実生成Sceneからkindとxtypeの二層で全役割を照合し、対応無しを黙ってskipしない。文字なし・対象外・既存の表現差は理由付きで台帳に残す。gallery全タブ、popup/menu、toast、dialog標準/画像/絵文字、media error、drag、selected/disabled、calendar月移動/長い月名/月端、label無しfieldを網羅する。代表画面だけにないroleは実WASM補助fixtureで検証する。台帳の全対象roleが実測結果を持ち、不一致0件。既存描画差を理由にサイズ不一致を免除しない。不足修正は既に確定したサイズ/倍率方針内に限定する。
   - 対象: `tests/browser/font-parity.mjs`、`tests/browser/font-parity-harness.js`、`docs/renderer-font-parity.md`、実測で残差がある場合のみ `src/runtime.css` / `src/canvas-renderer.js` / `src/dom-renderer.js` / `src/surfaces.js` / `src/dialog-icons.js`。
   - 依存: T6
   - 並列サブ作業: なし（coverage集計と残差修正を単一台帳へ統合）。
+  - **PLAN 訂正（turn 10 / T7 実測）**: 対象ファイルに新設 `tests/browser/font-parity-states.json`
+    ＋ `.rhai`（実WASMの補助fixture）と、既存 `tests/font-parity-runner.test.js` を追加した。
+    前者は「折りたたまない fieldset・文字列項目の toolbar・card レイアウト・pagingtoolbar・
+    messagebox・月端と最長見出しのカレンダー」が**どのアプリ画面にも揃って出ない**ため。
+    後者は、完了基準の「kind と xtype の二層」のうち **xtype 層はブラウザを必要としない**ため
+    （engine の許可リスト48件を起点に、各 xtype を実WASMで描かせて Scene kind を完全一致で
+    突き合わせる）。この二層のデータ表は `tests/browser/font-parity.mjs` に 1 つだけ置き、
+    `roles` suite と vitest の双方が同じ表を読む。製品コードへ検査専用の公開APIは足していない。
+  - **PLAN 訂正（turn 10 / T7 実測）**: 「extras の normalize」から照合する範囲を、
+    **合成される6つの xtype の入口だけ**に限定した（`tbtext`/`tbfill`/`tbseparator`/`tbspacer` は
+    toolbar の文字列項目、`dialogbutton` は messagebox の `buttons`、`menuseparator` は menu の
+    `"-"`）。normalize 全体を再現すると engine の二重実装になるため。これを入れないと
+    `tbtext` の根拠が「どの画面の label でもよい」になり証明が空になることを実測で確認した。
+  - **PLAN 訂正（turn 10 / T7 実測）**: 完了基準の「文字なし…は理由付きで台帳に残す」は、
+    **根拠を2種類に分けた**。`engine-empty`（8件、engine が text を空にする）と
+    `renderer-skips`（2件、`grid-shell`/`menu-surface` は読み上げ名としての文字列を持つが
+    どちらの面も描かない）。「文字を持たない」と「文字を描かない」は別の主張で、前者で
+    一括りにすると `grid-shell` の実測（`データ一覧`）で落ちる。
+  - **PLAN 訂正（turn 10 / T7 実測）**: 残差修正は **0 件**だった（`src/` は 1 行も変えていない）。
+    37 kind・48 xtype・18 状態すべてで不一致 0 件。唯一見つかった両面の差は
+    **使用不可のカレンダー日の濃さ**（DOM は `:disabled` に `opacity: 0.5`、Canvas は薄くしない）で、
+    色・不透明度の差でありサイズは両面とも一致するため、既存の表現差として台帳に記録した。
 
 - [ ] T8: 幅・拡大・配色の行列を実行し代表画像を目視する
   - 完了基準: Hello World、uivolve-forms、orders/grid-lab、components、uivolve-galleryについて、比較デモ/独立runtime × desktop/約390px × DPR1/2 × light/darkで全可視roleのCSS pxと入力位置を検証。viewportを狭めるだけでなく100/200%相当の拡大を別条件として実施し、方法とCSS座標換算を記録する。可能なら実ブラウザ100→200→100%も実施し、DPRエミュレーションやCSS拡大と別記録にする。focus/編集中にtheme/resize/拡大を変え、状態同期とnode/selectionを確認。修正前後の代表画像を同じ字体ロード後に撮影し、目視でサイズ差解消と長文/22px metric/30px icon/狭いセルの新たな欠け・重なりなしを記録する。自動数値結果、画像パス、目視結果、実IME/実ズームの限界を台帳に分けて残す。matrix suite成功。

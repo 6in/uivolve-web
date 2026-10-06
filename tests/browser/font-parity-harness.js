@@ -702,6 +702,21 @@ export async function createFontParityHarness({
       await runtime.whenIdle();
       await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
     },
+    // Choose a combobox option the way a user does: set the native select's value and let
+    // the host's own change listener run. Building the state change by hand would skip the
+    // renderer path that produces the widget being measured.
+    async selectDom(selector, value) {
+      const node = domStage.querySelector(selector);
+      if (!node) throw new Error(`DOM側に ${selector} に一致する選択欄がありません`);
+      if (![...node.options].some((option) => option.value === value))
+        throw new Error(
+          `${selector} に value="${value}" の選択肢がありません` +
+            `（候補: ${[...node.options].map((option) => option.value).join(", ")}）`,
+        );
+      node.value = value;
+      node.dispatchEvent(new Event("change", { bubbles: true }));
+      await this.afterFrame();
+    },
     async clickCanvas(target) {
       const scene = runtime.scenes[1];
       const widget = scene?.widgets.find((entry) => entry.target === target);
@@ -935,13 +950,27 @@ export async function createFontParityHarness({
       await runtime.whenIdle();
       await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
     },
-    roles(specs) {
+    // `noText` names the kinds that must paint no characters. Only the offending nodes
+    // travel back: the question is whether any of them put a character on screen, and
+    // shipping the whole DOM text dump per case would bury the answer.
+    roles(specs, noText = []) {
       // The Canvas frame currently on screen, recorded by the init script through the
       // original fillText/measureText, paired with the Scene those calls were painted from.
       // Asked for by element: earlier harnesses left behind buckets under the same id.
       return {
         dom: measureRoles(domStage, specs),
         canvasStage: measureRoles(canvasStage, specs),
+        textFreeViolations: [domStage, canvasStage].flatMap((stage) =>
+          observeDom(stage, "roles")
+            .filter((record) => noText.includes(record.kind))
+            .map(({ selector, kind, text, part, stage: where }) => ({
+              stage: where,
+              selector,
+              kind,
+              part,
+              text,
+            })),
+        ),
         canvasSurface: window.__fontParity?.forCanvas(canvas) ?? null,
         scene: sceneRecord(runtime.scenes[1]),
         resolved: { dom: resolvedMetrics(domStage), canvas: resolvedMetrics(canvasStage) },

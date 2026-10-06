@@ -1,7 +1,8 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
+import { packageFormat, parsePackage } from "../../src/package-format.js";
 
 // Browser-side Canvas observation. Installed through addInitScript so it is in place
 // before the first paint, and every patched method delegates to the original: the
@@ -134,7 +135,15 @@ function toCss(draw) {
 function attribute(draw, widgets) {
   const point = toCss(draw);
   const scaled = Math.abs(point.localScale - 1) > 0.001;
-  const owners = scaled ? SURFACE_KINDS : TEXT_PAINTING_KINDS;
+  // A text-free kind can still reach fillText with an empty string — the `card` box goes
+  // through the generic label branch — so those kinds join the candidates for empty draws
+  // only. Keeping them out of the candidates for real text is what stops a container box
+  // from absorbing a smaller widget's characters.
+  const owners = scaled
+    ? SURFACE_KINDS
+    : draw.text === ""
+      ? TEXT_OR_FREE_KINDS
+      : TEXT_PAINTING_KINDS;
   const inside = widgets.filter(
     (widget) =>
       owners.has(widget.kind) &&
@@ -553,6 +562,11 @@ const ROLE_THEMES = [
 ];
 const ROLE_HOST_SIZES = ["16px", "20px"];
 
+const GALLERY_SCREEN = "screens/uivolve-gallery.json";
+const DIALOGS_SCREEN = "screens/dialogs.yaml";
+const STATES_SCREEN = "/tests/browser/font-parity-states.json";
+const ICON_SELECT = '.ui-field[data-target="dialogIcon"] select';
+
 // Steps are data, not functions: they cross into page.evaluate. Every overlay and popup
 // is opened with a real click so the measured node is the one the host builds.
 //
@@ -606,7 +620,7 @@ const ROLE_FIXTURES = [
   { name: "orders", screen: "screens/orders.json", cases: "single", steps: [] },
   {
     name: "gallery",
-    screen: "screens/uivolve-gallery.json",
+    screen: GALLERY_SCREEN,
     cases: "single",
     steps: [{ surface: "dom", selector: '.ui-button[data-target="showToast"]' }],
   },
@@ -614,15 +628,79 @@ const ROLE_FIXTURES = [
   // exemption is backed by measured draws instead of only being declared.
   {
     name: "gallery-chart",
-    screen: "screens/uivolve-gallery.json",
+    screen: GALLERY_SCREEN,
     cases: "single",
     steps: [{ surface: "dom", selector: ".ui-tab:nth-of-type(3)" }],
   },
+  // The remaining four gallery tabs. A tab that is never opened renders no widgets at all,
+  // so the editors, the graphs, the conversation log and the media notices its xtypes
+  // author would otherwise stay authored-but-unrendered.
+  {
+    name: "gallery-edit",
+    screen: GALLERY_SCREEN,
+    cases: "single",
+    steps: [{ surface: "dom", selector: ".ui-tab:nth-of-type(2)" }],
+  },
+  {
+    name: "gallery-graph",
+    screen: GALLERY_SCREEN,
+    cases: "single",
+    steps: [{ surface: "dom", selector: ".ui-tab:nth-of-type(4)" }],
+  },
+  {
+    name: "gallery-chat",
+    screen: GALLERY_SCREEN,
+    cases: "single",
+    steps: [{ surface: "dom", selector: ".ui-tab:nth-of-type(5)" }],
+  },
+  {
+    name: "gallery-media",
+    screen: GALLERY_SCREEN,
+    cases: "single",
+    steps: [{ surface: "dom", selector: ".ui-tab:nth-of-type(6)" }],
+  },
+  // The three dialog icon shapes, chosen the way a user does: the combobox first, then the
+  // button. Only the character icon paints text; the other two have to be *measured* as
+  // text-free rather than assumed to be.
   {
     name: "dialogs",
-    screen: "screens/dialogs.yaml",
+    screen: DIALOGS_SCREEN,
     cases: "single",
     steps: [{ surface: "dom", selector: '.ui-button[data-target="showAlert"]' }],
+  },
+  {
+    name: "dialogs-image-icon",
+    screen: DIALOGS_SCREEN,
+    cases: "single",
+    steps: [
+      { surface: "dom", selector: ICON_SELECT, value: "custom-image" },
+      { surface: "dom", selector: '.ui-button[data-target="showAlert"]' },
+    ],
+  },
+  {
+    name: "dialogs-text-icon",
+    screen: DIALOGS_SCREEN,
+    cases: "single",
+    steps: [
+      { surface: "dom", selector: ICON_SELECT, value: "custom-text" },
+      { surface: "dom", selector: '.ui-button[data-target="showConfirm"]' },
+    ],
+  },
+  // The states and the xtypes no application screen renders: a fieldset that keeps its own
+  // title, a toolbar built from string items, a card layout, a paging toolbar and three
+  // calendars (a normal month and both ends of the supported range).
+  { name: "states", screen: STATES_SCREEN, cases: "single", steps: [] },
+  {
+    name: "states-month-shift",
+    screen: STATES_SCREEN,
+    cases: "single",
+    steps: [{ surface: "dom", selector: '[data-key="monthPicker:next"]' }],
+  },
+  {
+    name: "states-answer",
+    screen: STATES_SCREEN,
+    cases: "single",
+    steps: [{ surface: "dom", selector: '.ui-button[data-target="barButton"]' }],
   },
   // The drag ghost only exists while a pointer is held down, and pointer capture needs
   // real input, so these two cases drive the mouse instead of dispatching events.
@@ -688,7 +766,8 @@ async function captureRoles(page, { fixture, theme, hostFontSize }) {
       try {
         await harness.settle();
         for (const step of input.steps)
-          if (step.surface === "dom") await harness.clickDom(step.selector);
+          if (step.value !== undefined) await harness.selectDom(step.selector, step.value);
+          else if (step.surface === "dom") await harness.clickDom(step.selector);
           else await harness.clickCanvas(step.target);
       } catch (error) {
         document.getElementById("font-parity-error").textContent = error.stack ?? String(error);
@@ -704,8 +783,8 @@ async function captureRoles(page, { fixture, theme, hostFontSize }) {
   );
   const release = fixture.drag ? await holdDrag(page, fixture.drag) : null;
   const observed = await page.evaluate(
-    (contract) => window.__fontParityHarness.roles(contract),
-    roleSpecs(),
+    (input) => window.__fontParityHarness.roles(input.specs, input.noText),
+    { specs: roleSpecs(), noText: Object.keys(KIND_NO_TEXT) },
   );
   return {
     capture: { fixture: fixture.name, mode: theme.mode, hostFontSize, ...observed },
@@ -815,19 +894,763 @@ const REQUIRED_CANVAS_KINDS = [
   "grid-select",
   "tree-toggle",
   "empty",
+  // T7 closes this one: the states fixture authors a fieldset that is *not* collapsible, so
+  // the box keeps its own title instead of handing it to a panel-toggle.
+  "fieldset",
 ];
-const CANVAS_COVERAGE_GAPS = {
-  fieldset:
-    "uivolve-forms の fieldset は collapsible で、タイトルは panel-toggle が描く。本体の描画は" +
-    "空文字なので内容では対応付けられない。canvas-renderer では panel と同じ分岐（kind === " +
-    '"panel" || kind === "fieldset"）なので panel の実測が同じコードを通る。T7 が kind 単位で閉じる',
-};
+// Every contracted kind is now reached by a fixture; the table is kept so a kind that
+// stops being reachable has to be recorded with a reason instead of dropping out.
+const CANVAS_COVERAGE_GAPS = {};
 
 for (const kind of REQUIRED_CANVAS_KINDS)
   if (!CANVAS_KIND_CONTRACT[kind]) throw new Error(`Required Canvas kind ${kind} has no contract`);
 for (const kind of Object.keys(CANVAS_KIND_CONTRACT))
   if (!REQUIRED_CANVAS_KINDS.includes(kind) && !CANVAS_COVERAGE_GAPS[kind])
     throw new Error(`Canvas kind ${kind} is neither required nor recorded as a gap`);
+
+// --- the second layer: xtypes ------------------------------------------------------
+// The contract above is the kind layer, and on its own it cannot answer whether the kind
+// list is complete: kinds are not authored, the engine derives them from the DSL's xtypes.
+// So the xtypes are enumerated from the engine's own allowlist and each one is rendered
+// through the real WASM engine (tests/font-parity-runner.test.js). Three things fail there
+// instead of quietly leaving a role unchecked: an xtype with no shape, a produced kind no
+// table owns, and an owned kind nothing produces.
+
+// Scene kinds that paint no characters on either surface, with how that is established.
+// `engine-empty`: the engine leaves text/value/cells empty, so there is nothing to paint;
+// the probe asserts it. `renderer-skips`: the widget does carry a string, but it is an
+// accessible name — the DOM renderer puts it on an attribute and skips `textContent`, and
+// the Canvas renderer draws only the box. Those two are the ones worth stating explicitly,
+// because "has no text" and "paints no text" are different claims.
+export const KIND_NO_TEXT = {
+  backdrop: { basis: "engine-empty", why: "モーダルの背面。文字を持たない" },
+  card: {
+    basis: "engine-empty",
+    why: "card レイアウトの面。engine が text を空にする（layouts::describe_card）",
+  },
+  "grid-head": { basis: "engine-empty", why: "Grid の見出し帯。文字は子の grid-column が描く" },
+  "grid-row": { basis: "engine-empty", why: "Grid の行帯。文字は子の grid-cell が描く" },
+  "grid-shell": {
+    basis: "renderer-skips",
+    why:
+      "Grid の外枠。text は一覧の題だが DOM は aria-label に載せて textContent を飛ばし" +
+      "（src/dom-renderer.js の除外一覧）、Canvas は枠だけを描く。文字は子の grid-cell が描く",
+  },
+  "menu-surface": {
+    basis: "renderer-skips",
+    why:
+      "ポップアップの面。text は引き金の見出しだが DOM は role=menu の面に textContent を" +
+      "入れず、Canvas も枠だけを描く。文字は子の menu-item が描く",
+  },
+  menuseparator: { basis: "engine-empty", why: "メニューの区切り線。文字を持たない" },
+  separator: {
+    basis: "engine-empty",
+    why: "ツールバーの区切り線（tbseparator）。engine が text を空にする",
+  },
+  tabbar: { basis: "engine-empty", why: "タブ帯。文字は子の tab が描く" },
+  toolbar: { basis: "engine-empty", why: "ツールバーの外枠。engine が text を空にする" },
+};
+
+// Authored alias -> canonical xtype. Used to canonicalise what a screen definition writes
+// before it is matched against the allowlist; every key is asserted to load through the
+// engine, and every value to be an allowlisted xtype.
+export const XTYPE_ALIASES = {
+  box: "component",
+  tbar: "toolbar",
+  imagecomponent: "image",
+  uxiframe: "iframe",
+  cartesian: "chart",
+  polar: "chart",
+  forcegraph: "networkgraph",
+  chat: "chatpanel",
+  console: "terminal",
+  code: "textarea",
+  codeeditor: "textarea",
+  htmleditor: "textarea",
+  diff: "diffeditor",
+  msgbox: "window",
+  messagebox: "window",
+  splitbutton: "container",
+  form: "panel",
+  fieldcontainer: "container",
+  textareafield: "textarea",
+  checkboxfield: "checkbox",
+  radiofield: "radio",
+  combo: "combobox",
+  multiselect: "listbox",
+  sliderfield: "slider",
+  progress: "progressbar",
+  gridpanel: "grid",
+  tree: "treepanel",
+};
+
+export const canonicalXtype = (xtype) => {
+  let name = xtype;
+  for (let hops = 0; hops < 8 && XTYPE_ALIASES[name]; hops += 1) name = XTYPE_ALIASES[name];
+  return name;
+};
+
+// The allowlist the engine validates against, read out of its source so the shape table
+// below cannot fall behind a new xtype. A parse that stops matching throws rather than
+// silently shrinking the list it is compared against.
+export function engineXtypes() {
+  const source = readFileSync(new URL("../../engine/src/lib.rs", import.meta.url), "utf8");
+  const block = source.match(/if !\[\n((?:\s+"[a-z]+",\n)+)\s*\]\n\s*\.contains\(&node\.xtype/);
+  if (!block) throw new Error("engine/src/lib.rs の xtype 許可リストを読み取れない");
+  return block[1].match(/"([a-z]+)"/g).map((quoted) => quoted.slice(1, -1));
+}
+
+// One row per xtype, plus one more wherever an xtype has a second rendering shape (a
+// collapsible panel, the two Grid renderings, an open menu, a hidden toast). The nodes are
+// the smallest thing that renders; `kinds` is the Scene kind set the real engine produces,
+// asserted for exact equality. The three rows with a `handler` are the dialog surfaces and
+// the alias expansions, which no xtype of their own reaches.
+export const XTYPE_PROBE_STATE = {
+  open: true,
+  closed: false,
+  num: 1,
+  count: 100,
+  text: "値",
+  day: "2026-10-06",
+  on: true,
+  pick: "rb",
+  ratio: 0.5,
+  rows: [{ id: "1", name: "名前", qty: 2 }],
+  none: [],
+  cards: [{ id: "c1", title: "札", lane: "a", description: "説明" }],
+  tree: [{ id: "a", text: "節", children: [{ id: "b", text: "子", children: [] }] }],
+  month: "2026-10",
+  page: 0,
+  sort: { column: "name", direction: "asc" },
+  editing: null,
+  selectedIds: ["1"],
+  expanded: ["a"],
+};
+
+const CHILD_LABEL = [{ xtype: "label", text: "子" }];
+const PROBE_COLUMNS = [{ dataIndex: "name", text: "名前" }];
+
+export const XTYPE_SHAPES = [
+  { xtype: "container", node: { items: CHILD_LABEL }, kinds: ["label"] },
+  {
+    xtype: "panel",
+    shape: "plain",
+    node: { title: "枠", items: CHILD_LABEL },
+    kinds: ["label", "panel"],
+  },
+  {
+    xtype: "panel",
+    shape: "collapsible",
+    node: { itemId: "pc", title: "枠", collapsible: true, items: CHILD_LABEL },
+    kinds: ["label", "panel", "panel-toggle"],
+  },
+  {
+    xtype: "window",
+    node: { itemId: "win", title: "窓", visibleBind: "open", items: CHILD_LABEL },
+    kinds: ["backdrop", "label", "window", "window-close"],
+  },
+  { xtype: "label", node: { text: "文字" }, kinds: ["label"] },
+  { xtype: "metric", node: { text: "指標", bind: "num" }, kinds: ["metric"] },
+  {
+    xtype: "textfield",
+    node: { itemId: "tf", fieldLabel: "文字", bind: "text" },
+    kinds: ["textfield"],
+  },
+  {
+    xtype: "textarea",
+    node: { itemId: "ta", fieldLabel: "複数行", bind: "text" },
+    kinds: ["textarea"],
+  },
+  {
+    xtype: "numberfield",
+    node: { itemId: "nf", fieldLabel: "数値", bind: "num" },
+    kinds: ["numberfield"],
+  },
+  {
+    xtype: "datefield",
+    node: { itemId: "df", fieldLabel: "日付", bind: "day" },
+    kinds: ["datefield"],
+  },
+  { xtype: "checkbox", node: { itemId: "cb", boxLabel: "選択", bind: "on" }, kinds: ["checkbox"] },
+  { xtype: "radio", node: { itemId: "rb", boxLabel: "単一", bind: "pick" }, kinds: ["radio"] },
+  {
+    xtype: "combobox",
+    node: { itemId: "co", fieldLabel: "選択", bind: "text", options: [{ value: "a", text: "A" }] },
+    kinds: ["combobox"],
+  },
+  {
+    xtype: "listbox",
+    node: { itemId: "lb", fieldLabel: "一覧", bind: "text", options: [{ value: "a", text: "A" }] },
+    kinds: ["listbox"],
+  },
+  { xtype: "displayfield", node: { fieldLabel: "表示", value: "値" }, kinds: ["displayfield"] },
+  { xtype: "slider", node: { itemId: "sl", fieldLabel: "量", bind: "num" }, kinds: ["slider"] },
+  { xtype: "progressbar", node: { bind: "ratio", text: "進捗" }, kinds: ["progressbar"] },
+  {
+    xtype: "fieldset",
+    shape: "plain",
+    node: { title: "群", items: CHILD_LABEL },
+    kinds: ["fieldset", "label"],
+  },
+  {
+    xtype: "fieldset",
+    shape: "collapsible",
+    node: { itemId: "fc", title: "群", collapsible: true, items: CHILD_LABEL },
+    kinds: ["fieldset", "label", "panel-toggle"],
+  },
+  { xtype: "button", node: { itemId: "bt", text: "押す" }, kinds: ["button"] },
+  {
+    xtype: "grid",
+    shape: "basic",
+    node: { itemId: "gr", bind: "rows", columns: PROBE_COLUMNS },
+    kinds: ["grid-header", "row"],
+  },
+  {
+    xtype: "grid",
+    shape: "basic-empty",
+    node: { itemId: "gre", bind: "none", columns: PROBE_COLUMNS },
+    kinds: ["empty", "grid-header"],
+  },
+  {
+    xtype: "grid",
+    shape: "advanced",
+    node: {
+      itemId: "ga",
+      bind: "rows",
+      pageBind: "page",
+      sortBind: "sort",
+      editingBind: "editing",
+      selectedBind: "selectedIds",
+      multiSelect: true,
+      pageSize: 1,
+      columns: [
+        { dataIndex: "name", text: "名前", editor: { xtype: "textfield" } },
+        { dataIndex: "qty", text: "数量", align: "right" },
+      ],
+    },
+    kinds: [
+      "grid-cell",
+      "grid-column",
+      "grid-head",
+      "grid-page",
+      "grid-row",
+      "grid-select",
+      "grid-shell",
+      "label",
+    ],
+  },
+  {
+    xtype: "grid",
+    shape: "advanced-empty",
+    node: {
+      itemId: "gae",
+      bind: "none",
+      pageBind: "page",
+      columns: [{ dataIndex: "name", text: "名前", editor: { xtype: "textfield" } }],
+    },
+    kinds: ["empty", "grid-column", "grid-head", "grid-page", "grid-shell", "label"],
+  },
+  {
+    xtype: "kanban",
+    node: { itemId: "kb", bind: "cards", lanes: [{ id: "a", title: "レーン" }] },
+    kinds: ["kanban-card", "kanban-lane"],
+  },
+  {
+    xtype: "tabpanel",
+    node: { items: [{ xtype: "container", title: "タブ", items: [] }] },
+    kinds: ["tab", "tabbar"],
+  },
+  {
+    xtype: "treepanel",
+    node: { itemId: "tp", bind: "tree" },
+    kinds: ["tree-node", "tree-shell", "tree-toggle"],
+  },
+  {
+    xtype: "menu",
+    shape: "closed",
+    node: {
+      itemId: "mn",
+      text: "メニュー",
+      openBind: "closed",
+      items: [{ xtype: "button", itemId: "mi", text: "項目" }],
+    },
+    kinds: ["menu-trigger"],
+  },
+  {
+    xtype: "menu",
+    shape: "open",
+    node: {
+      itemId: "mo",
+      text: "メニュー",
+      openBind: "open",
+      items: [{ xtype: "button", itemId: "mi2", text: "項目" }, { xtype: "menuseparator" }],
+    },
+    kinds: ["menu-item", "menu-surface", "menu-trigger", "menuseparator"],
+  },
+  { xtype: "menuseparator", node: {}, kinds: ["menuseparator"] },
+  {
+    xtype: "toolbar",
+    node: { items: [{ xtype: "button", itemId: "tbb", text: "押す" }] },
+    kinds: ["button", "toolbar"],
+  },
+  { xtype: "tbfill", node: {}, kinds: [] },
+  { xtype: "tbseparator", node: {}, kinds: ["separator"] },
+  { xtype: "tbspacer", node: {}, kinds: [] },
+  { xtype: "tbtext", node: { text: "帯の文字" }, kinds: ["label"] },
+  {
+    xtype: "radiogroup",
+    node: { itemId: "rg", fieldLabel: "群", bind: "pick", items: [{ boxLabel: "甲" }] },
+    kinds: ["label", "radio"],
+  },
+  {
+    xtype: "checkboxgroup",
+    node: { itemId: "cg", fieldLabel: "群", items: [{ boxLabel: "甲", bind: "on" }] },
+    kinds: ["checkbox", "label"],
+  },
+  {
+    xtype: "datepicker",
+    node: { itemId: "dp", bind: "day", pageBind: "month", showToday: true, today: "2026-10-06" },
+    kinds: ["extra-button", "label"],
+  },
+  {
+    xtype: "pagingtoolbar",
+    node: { itemId: "pt", bind: "count", pageBind: "page" },
+    kinds: ["extra-button", "label"],
+  },
+  {
+    xtype: "dialogbutton",
+    node: { itemId: "db", text: "答", inputValue: "答" },
+    kinds: ["button"],
+  },
+  {
+    xtype: "toast",
+    shape: "visible",
+    node: { itemId: "ts", title: "通知", message: "本文", visibleBind: "open" },
+    kinds: ["extra-button", "toast"],
+  },
+  {
+    xtype: "toast",
+    shape: "hidden",
+    node: { itemId: "ts2", title: "通知", message: "本文", visibleBind: "closed" },
+    kinds: [],
+  },
+  { xtype: "component", node: { value: "本文" }, kinds: ["document"] },
+  { xtype: "markdown", node: { title: "文書", value: "# 見出し\n本文" }, kinds: ["document"] },
+  { xtype: "diffeditor", node: { title: "差分", value: "- 旧\n+ 新" }, kinds: ["document"] },
+  { xtype: "chatpanel", node: { title: "会話", items: [] }, kinds: ["document"] },
+  { xtype: "terminal", node: { title: "端末", value: "$ echo" }, kinds: ["document"] },
+  { xtype: "image", node: { itemId: "im", src: "/missing.png", alt: "画像" }, kinds: ["image"] },
+  { xtype: "video", node: { itemId: "vd", src: "/missing.mp4", alt: "動画" }, kinds: ["video"] },
+  {
+    xtype: "iframe",
+    node: { itemId: "ifr", src: "https://example.test/", alt: "枠" },
+    kinds: ["iframe"],
+  },
+  {
+    xtype: "chart",
+    node: { title: "図", series: [{ type: "line", data: [1, 2] }] },
+    kinds: ["figure"],
+  },
+  {
+    xtype: "draw",
+    node: { title: "描画", sprites: [{ type: "text", x: 4, y: 12, text: "文字" }] },
+    kinds: ["figure"],
+  },
+  {
+    xtype: "gitgraph",
+    node: { title: "履歴", commits: [{ id: "a", message: "初回" }] },
+    kinds: ["figure"],
+  },
+  {
+    xtype: "networkgraph",
+    node: { title: "網", nodes: [{ id: "a", label: "甲" }], edges: [] },
+    kinds: ["figure"],
+  },
+  { xtype: "mermaid", node: { title: "図式", value: "graph TD; A-->B;" }, kinds: ["figure"] },
+  // The `card` kind comes from a *layout*, not an xtype, so no row above reaches it.
+  {
+    xtype: "container",
+    shape: "card-layout",
+    node: {
+      itemId: "deck",
+      layout: "card",
+      activeItem: 0,
+      items: [
+        { xtype: "container", title: "甲", items: CHILD_LABEL },
+        { xtype: "container", title: "乙", items: [] },
+      ],
+    },
+    kinds: ["card", "label"],
+  },
+  // The two alias expansions that do not simply rename: a messagebox becomes a window with
+  // a document body and dialogbutton answers, a splitbutton becomes a button plus a menu.
+  {
+    xtype: "messagebox",
+    node: {
+      itemId: "mb",
+      title: "確認",
+      message: "本文",
+      buttons: "okcancel",
+      visibleBind: "open",
+      handler: "noted",
+    },
+    kinds: ["backdrop", "button", "document", "window", "window-close"],
+  },
+  {
+    xtype: "splitbutton",
+    node: {
+      itemId: "sb",
+      text: "保存",
+      handler: "noted",
+      menu: { items: [{ xtype: "button", itemId: "sb1", text: "下書き" }] },
+    },
+    kinds: ["button", "menu-trigger"],
+  },
+  {
+    xtype: "codeeditor",
+    node: { itemId: "ce", fieldLabel: "コード", bind: "text", language: "javascript" },
+    kinds: ["textarea"],
+  },
+  // The dialog surfaces: reached through the dialog API, never through an xtype. The icon
+  // is a separate widget only when the operation has one, which is what makes the
+  // "standard / image / emoji / none" states distinguishable in the ledger.
+  {
+    source: "dialogs.alert",
+    node: { itemId: "ask", text: "開く", handler: "openIt" },
+    xtype: "button",
+    dispatch: "ask",
+    script: 'fn openIt(s, e) { alert("本文のメッセージ", "noted"); s }',
+    kinds: ["backdrop", "button", "dialog-icon", "dialog-message", "window", "window-close"],
+  },
+  {
+    source: "dialogs.prompt",
+    node: { itemId: "ask", text: "開く", handler: "openIt" },
+    xtype: "button",
+    dispatch: "ask",
+    script: 'fn openIt(s, e) { prompt("入力のメッセージ", "noted"); s }',
+    kinds: [
+      "backdrop",
+      "button",
+      "dialog-icon",
+      "dialog-message",
+      "textfield",
+      "window",
+      "window-close",
+    ],
+  },
+  {
+    source: "dialogs.icon-none",
+    node: { itemId: "ask", text: "開く", handler: "openIt" },
+    xtype: "button",
+    dispatch: "ask",
+    script: 'fn openIt(s, e) { alert("案内", "noted", #{icon: "none"}); s }',
+    kinds: ["backdrop", "button", "dialog-message", "window", "window-close"],
+  },
+];
+
+export const shapeLabel = (shape) =>
+  shape.source ?? (shape.shape ? `${shape.xtype}/${shape.shape}` : shape.xtype);
+
+// Who checks a kind's painted size. Exactly one of the three, and the probe asserts the
+// three tables together account for every kind the engine can produce.
+export function kindOwner(kind) {
+  if (CANVAS_KIND_CONTRACT[kind]) return { suite: "roles", roles: CANVAS_KIND_CONTRACT[kind] };
+  if (CANVAS_DEFERRED_KINDS[kind]) return { suite: "surfaces", why: CANVAS_DEFERRED_KINDS[kind] };
+  if (KIND_NO_TEXT[kind]) return { suite: "none", ...KIND_NO_TEXT[kind] };
+  return null;
+}
+
+// The pure half of the closure: it needs no engine and no browser, so it runs in the unit
+// tests as well as in the suite below.
+export function xtypeTableProblems() {
+  const problems = [];
+  const allowed = engineXtypes();
+  const shaped = new Set(XTYPE_SHAPES.map((shape) => shape.xtype));
+  for (const xtype of allowed)
+    if (!shaped.has(xtype)) problems.push(`xtype ${xtype} に shape が無い`);
+  for (const shape of XTYPE_SHAPES)
+    if (!allowed.includes(shape.xtype) && !XTYPE_ALIASES[shape.xtype])
+      problems.push(`shape ${shapeLabel(shape)} の xtype は許可リストにも別名表にも無い`);
+  for (const [alias, target] of Object.entries(XTYPE_ALIASES))
+    if (!allowed.includes(target))
+      problems.push(`別名 ${alias} の正規名 ${target} は許可リストに無い`);
+  // No kind may be owned twice, and none of the three tables may hold a dead entry.
+  const produced = new Set(XTYPE_SHAPES.flatMap((shape) => shape.kinds));
+  for (const kind of produced)
+    if (!kindOwner(kind)) problems.push(`kind ${kind} を担当する表が無い`);
+  for (const table of [CANVAS_KIND_CONTRACT, CANVAS_DEFERRED_KINDS, KIND_NO_TEXT])
+    for (const kind of Object.keys(table))
+      if (!produced.has(kind)) problems.push(`kind ${kind} を生む shape が無い`);
+  for (const kind of produced) {
+    const tables = [CANVAS_KIND_CONTRACT, CANVAS_DEFERRED_KINDS, KIND_NO_TEXT].filter(
+      (table) => table[kind],
+    );
+    if (tables.length > 1) problems.push(`kind ${kind} の担当が ${tables.length} 表に重なる`);
+  }
+  return problems;
+}
+
+// The kinds each xtype can produce, folded over its shapes.
+export const XTYPE_KINDS = new Map(
+  engineXtypes().map((xtype) => [
+    xtype,
+    [
+      ...new Set(
+        XTYPE_SHAPES.filter((shape) => shape.xtype === xtype).flatMap((shape) => shape.kinds),
+      ),
+    ],
+  ]),
+);
+
+// What a screen definition authors: the canonical xtypes, and the itemId -> xtype map that
+// lets a Scene widget be traced back to the node that asked for it (`widget.target` is the
+// authoring node's itemId). The walk follows every key that can hold child nodes, so a
+// component on an unopened tab counts as authored — the suite then has to prove it was
+// actually *rendered*, which is what the per-tab fixtures are for.
+const NODE_CHILD_KEYS = ["items", "columns", "menu", "tbar", "bbar", "buttons", "lanes"];
+
+// The one slice of extras::normalize the walk has to reproduce: the xtypes a screen cannot
+// write down. A toolbar's string items become four different nodes depending on the string
+// and a messagebox's `buttons` become dialogbuttons, so without this the authored set would
+// miss five xtypes and the kind-level proof for them would be vacuous (a `label` from any
+// screen at all would "prove" tbtext).
+function synthesizedFrom(node, into) {
+  const xtype = canonicalXtype(node.xtype);
+  if (xtype === "toolbar")
+    for (const child of node.items ?? [])
+      if (typeof child === "string")
+        into.add(
+          child === "->"
+            ? "tbfill"
+            : child === "-"
+              ? "tbseparator"
+              : child.trim() === ""
+                ? "tbspacer"
+                : "tbtext",
+        );
+  if (xtype === "menu")
+    for (const child of node.items ?? [])
+      if (typeof child === "string" && child === "-") into.add("menuseparator");
+  // A messagebox always gets answer buttons, named or defaulted to a single OK.
+  if (node.xtype === "messagebox" || node.xtype === "msgbox") into.add("dialogbutton");
+}
+
+export function screenCoverage(screen) {
+  const path = screen.startsWith("/")
+    ? new URL(`../..${screen}`, import.meta.url)
+    : new URL(`../../public/${screen}`, import.meta.url);
+  const definition = parsePackage(readFileSync(path, "utf8"), packageFormat(screen));
+  const xtypes = new Set();
+  const targets = new Map();
+  const walk = (node) => {
+    if (Array.isArray(node)) {
+      for (const child of node) walk(child);
+      return;
+    }
+    if (!node || typeof node !== "object") return;
+    if (typeof node.xtype === "string" && node.xtype) {
+      const canonical = canonicalXtype(node.xtype);
+      xtypes.add(canonical);
+      synthesizedFrom(node, xtypes);
+      if (typeof node.itemId === "string" && node.itemId) targets.set(node.itemId, canonical);
+    }
+    for (const key of NODE_CHILD_KEYS) if (node[key] !== undefined) walk(node[key]);
+  };
+  walk(definition.ui);
+  return { xtypes, targets };
+}
+
+// xtypes normalize synthesises: a screen cannot author them, so a fixture authors the
+// trigger instead. Named with that trigger, because the authored-xtype walk above will
+// never see them and "not authored" must not read as "not covered".
+export const XTYPE_SYNTHESIZED = {
+  tbtext: 'toolbar の文字列項目（states fixture の "帯の文字"）',
+  tbfill: 'toolbar の "->"',
+  tbseparator: 'toolbar の "-"',
+  tbspacer: "toolbar の空白だけの項目",
+  dialogbutton: "messagebox の buttons（states fixture の answerBox）",
+};
+
+// The two xtypes no browser check can observe: they produce no Scene widget at all, so
+// there is nothing on either surface to measure. The engine probe records that as the
+// measured fact (kinds: []) rather than leaving it implied.
+export const XTYPE_RENDER_EXEMPT = {
+  tbfill: "widget を 1 つも生まない（残り幅の配分だけ）。probe が kinds:[] を実測する",
+  tbspacer: "widget を 1 つも生まない（固定幅の間隔だけ）。probe が kinds:[] を実測する",
+};
+
+// An xtype counts as rendered when a widget traces back to one of its authored itemIds, or
+// — for nodes the screen left unnamed and for the ids normalize rewrites — when the screen
+// authors the xtype and one of its kinds is in the Scene. Both are recorded, so the ledger
+// shows which xtypes only carry the weaker proof; the exact per-xtype kind proof is the
+// engine probe in tests/font-parity-runner.test.js.
+export function renderedXtypes(capture, coverage) {
+  const byTarget = new Set();
+  const byKind = new Set();
+  const kinds = new Set(capture.scene?.widgets.map((widget) => widget.kind) ?? []);
+  for (const widget of capture.scene?.widgets ?? []) {
+    const xtype = coverage.targets.get(widget.target);
+    if (xtype) byTarget.add(xtype);
+  }
+  for (const xtype of coverage.xtypes)
+    if ((XTYPE_KINDS.get(xtype) ?? []).some((kind) => kinds.has(kind))) byKind.add(xtype);
+  return { byTarget, byKind };
+}
+
+// --- state coverage ----------------------------------------------------------------
+// The temporary and conditional states every role has to have been measured in at least
+// once. A state nothing matched is a hole in the check, not a pass; a state another suite
+// owns names that suite and its evidence instead of being measured twice.
+//
+// The month the calendar fixture starts on is 2026-10, so one real click on `›` has to
+// land here; the longest heading the engine can format is the end of the supported range.
+const CALENDAR_AFTER_SHIFT = "2026年 11月";
+const CALENDAR_LONGEST_TITLE = "9999年 12月";
+
+export const STATE_CONTRACT = [
+  {
+    state: "selected",
+    suite: "roles",
+    detect: ({ capture }) => capture.scene.widgets.some((widget) => widget.selected),
+    why: "選択中でもサイズは変わらない（Grid 行・カレンダーの選択日・タブ）",
+  },
+  {
+    state: "disabled",
+    suite: "roles",
+    detect: ({ capture }) => capture.scene.widgets.some((widget) => widget.disabled),
+    why: "使用不可でもサイズは変わらない（disabled のボタン・カレンダーの前後月）",
+  },
+  {
+    state: "collapsed-panel",
+    suite: "roles",
+    detect: ({ canvas }) => canvas.some((record) => record.kind === "panel-toggle"),
+    why: "折りたたみの見出しは panel-toggle が描く",
+  },
+  {
+    state: "popup-open",
+    suite: "roles",
+    detect: ({ samples }) => samples.some((sample) => sample.context === "popup"),
+    why: "開いたメニューの中は親コンテキストが変わる",
+  },
+  {
+    state: "toast",
+    suite: "roles",
+    detect: ({ canvas }) => canvas.some((record) => record.kind === "toast"),
+    why: "一時通知。visibleBind が真のときだけ出る",
+  },
+  {
+    state: "dialog-standard-icon",
+    suite: "roles",
+    detect: ({ capture, deferred }) =>
+      capture.scene.widgets.some(
+        (widget) => widget.kind === "dialog-icon" && typeof widget.icon === "string",
+      ) && !deferred.some((record) => record.kind === "dialog-icon"),
+    why: "組み込みの SVG アイコン。文字を描かないことを実測で確かめる",
+  },
+  {
+    state: "dialog-image-icon",
+    suite: "roles",
+    detect: ({ capture, deferred }) =>
+      capture.scene.widgets.some((widget) => widget.kind === "dialog-icon" && widget.icon?.src) &&
+      !deferred.some((record) => record.kind === "dialog-icon"),
+    why: "任意の画像アイコン。文字を描かないことを実測で確かめる",
+  },
+  {
+    state: "dialog-text-icon",
+    suite: "roles",
+    detect: ({ capture, deferred }) =>
+      capture.scene.widgets.some((widget) => widget.kind === "dialog-icon" && widget.icon?.text) &&
+      deferred.some((record) => record.kind === "dialog-icon"),
+    why: "絵文字・任意文字のアイコン。30px の実測は surfaces suite が持つ",
+  },
+  {
+    state: "messagebox-answers",
+    suite: "roles",
+    detect: ({ capture }) =>
+      capture.scene.widgets.some(
+        (widget) => widget.kind === "button" && /-answer-\d+$/.test(widget.target ?? ""),
+      ),
+    why: "messagebox の応答ボタン。normalize が dialogbutton を合成し button として描く",
+  },
+  {
+    state: "drag-ghost",
+    suite: "roles",
+    detect: ({ samples }) =>
+      samples.some((sample) => sample.role === "ghost-title" || sample.role === "ghost-detail"),
+    why: "押下中だけ存在する。実マウスで保持したまま計測する",
+  },
+  {
+    state: "field-without-label",
+    suite: "roles",
+    detect: ({ capture }) =>
+      capture.scene.widgets.some((widget) => widget.labelHeight === 0 && !widget.gridEditor),
+    why: "ラベル帯が 0 の field（fieldLabel の無い checkbox / radio）",
+  },
+  {
+    state: "grid-empty",
+    suite: "roles",
+    detect: ({ canvas }) => canvas.some((record) => record.kind === "empty"),
+    why: "一致 0 件の案内文",
+  },
+  {
+    state: "calendar-month-shift",
+    suite: "roles",
+    detect: ({ capture }) =>
+      capture.scene.widgets.some((widget) => widget.text === CALENDAR_AFTER_SHIFT),
+    why: "実クリックで月を送った後の見出し。初期の月とは別の月であること",
+  },
+  {
+    state: "calendar-long-title",
+    suite: "roles",
+    detect: ({ capture }) =>
+      capture.scene.widgets.some((widget) => widget.text === CALENDAR_LONGEST_TITLE),
+    why: "対応範囲でいちばん長い月見出し",
+  },
+  {
+    state: "calendar-month-edge",
+    suite: "roles",
+    detect: ({ capture }) =>
+      capture.scene.widgets.some((widget) => widget.variant === "muted") &&
+      capture.scene.widgets.some(
+        (widget) => widget.kind === "extra-button" && widget.disabled && widget.text === "‹",
+      ),
+    why: "前後月のはみ出し日と、これ以上戻れない月での送りボタン",
+  },
+  {
+    state: "editing-overlay",
+    suite: "editing",
+    evidence: "editing suite（T4）: Grid 編集中 11 件を含む 16 ケース",
+    why: "編集中のサイズと下書き保持は editing suite が実操作で測る",
+  },
+  {
+    state: "media-empty-or-error",
+    suite: "surfaces",
+    evidence: "surfaces suite（T5）: media 案内 46 件",
+    why: "空・エラーの案内文は surfaces suite が DOM の 12px と直接比べる",
+  },
+  {
+    state: "font-loaded",
+    suite: "lifecycle",
+    evidence: "lifecycle suite（T6）: 遅延配信の前後 5 ケース",
+    why: "字体の読込完了・失敗後の再描画は lifecycle suite が測る",
+  },
+];
+
+export function stateTableProblems() {
+  const problems = [];
+  const seen = new Set();
+  for (const entry of STATE_CONTRACT) {
+    if (seen.has(entry.state)) problems.push(`状態 ${entry.state} が重複している`);
+    seen.add(entry.state);
+    if (!entry.suite) problems.push(`状態 ${entry.state} に担当 suite が無い`);
+    if (!entry.why) problems.push(`状態 ${entry.state} に理由が無い`);
+    if (entry.suite === "roles" && !entry.detect)
+      problems.push(`状態 ${entry.state} は roles suite 担当なのに判定が無い`);
+    if (entry.suite !== "roles" && !entry.evidence)
+      problems.push(`状態 ${entry.state} は他 suite 担当なのに証跡の指し先が無い`);
+  }
+  return problems;
+}
 
 // Used by attribute(): a draw belongs to a kind that paints characters, and a scaled draw
 // belongs to the surface that scaled it.
@@ -836,6 +1659,7 @@ const TEXT_PAINTING_KINDS = new Set([
   ...Object.keys(CANVAS_KIND_CONTRACT),
   ...Object.keys(CANVAS_DEFERRED_KINDS),
 ]);
+const TEXT_OR_FREE_KINDS = new Set([...TEXT_PAINTING_KINDS, ...Object.keys(KIND_NO_TEXT)]);
 
 const sizeRoleOf = (px) =>
   Object.entries(SIZE_CONTRACT).find(([, value]) => value === px)?.[0] ?? null;
@@ -847,19 +1671,31 @@ function assertCanvasRoles(capture, problems) {
   const note = (message) => problems.push(`${where}: canvas ${message}`);
   if (!capture.scene) {
     note("Scene が取得できなかった");
-    return { asserted: [], deferred: [] };
+    return { asserted: [], deferred: [], textFree: [] };
   }
   if (!capture.canvasSurface?.draws.length) {
     note("描画が記録されなかった");
-    return { asserted: [], deferred: [] };
+    return { asserted: [], deferred: [], textFree: [] };
   }
   const records = canvasRecords(capture.canvasSurface, capture.scene.widgets, capture.fixture);
   const family = capture.resolved.canvas.ok ? capture.resolved.canvas.family : null;
   const asserted = [];
   const deferred = [];
+  const textFree = [];
   for (const record of records) {
     if (record.kind && CANVAS_DEFERRED_KINDS[record.kind]) {
       deferred.push({ ...record, reason: CANVAS_DEFERRED_KINDS[record.kind] });
+      continue;
+    }
+    // A kind recorded as painting no characters may reach fillText, but only with an empty
+    // string. A character here would mean the ledger's reason is wrong.
+    if (record.kind && KIND_NO_TEXT[record.kind]) {
+      if (record.text !== "")
+        note(
+          `文字を描かないはずの ${record.kind} が "${record.text.slice(0, 18)}" を描いた` +
+            `（${record.declaredFontSize}px）`,
+        );
+      textFree.push({ ...record, reason: KIND_NO_TEXT[record.kind].why });
       continue;
     }
     if (!record.kind) {
@@ -897,7 +1733,7 @@ function assertCanvasRoles(capture, problems) {
   for (const measurement of capture.canvasSurface.measurements)
     if (!painted.has(measurement.font))
       note(`計測 font "${measurement.font}" ("${measurement.text.slice(0, 18)}") で描画していない`);
-  return { asserted, deferred, shapes: textShapes(records) };
+  return { asserted, deferred, textFree, shapes: textShapes(records) };
 }
 
 // The text shapes the measure/draw agreement has to be shown for. Counted over the real
@@ -942,6 +1778,14 @@ function assertRoleCase(capture, problems) {
   const where = `${capture.fixture}/${capture.mode}/host ${capture.hostFontSize}`;
   const note = (message) => problems.push(`${where}: ${message}`);
   if (capture.errors.length) note(`runtime errors: ${capture.errors.join("; ")}`);
+  // The DOM half of the text-free claim: a kind recorded as painting no characters must
+  // have put none into the document either. The Canvas half is the contract lookup in
+  // assertCanvasRoles — a draw attributed to one of these kinds has no allowed role.
+  for (const offender of capture.textFreeViolations ?? [])
+    note(
+      `文字を描かないはずの ${offender.kind} が ${offender.stage} に ` +
+        `"${offender.text.slice(0, 18)}" を出している（${offender.selector}）`,
+    );
   // The resolver must work on both stages and agree with the contract, or the Canvas
   // side would later read sizes nobody declared.
   for (const [surface, resolved] of Object.entries(capture.resolved)) {
@@ -1004,7 +1848,7 @@ async function runRoles({ context, origin, evidenceDir, viewport, log }) {
         await page.locator("#font-parity-host").screenshot({ path: image });
         await release?.();
         await page.evaluate(() => window.__fontParityHarness?.dispose());
-        captures.push({ ...capture, image });
+        captures.push({ ...capture, screen: fixture.screen, image });
       }
   } finally {
     await writeFile(
@@ -1045,16 +1889,81 @@ async function runRoles({ context, origin, evidenceDir, viewport, log }) {
   // The page outside the runtime must read the same before and after the fix.
   const bodySizes = [...new Set(captures.map((capture) => capture.hostFrame.bodyFontSize))];
   if (bodySizes.length !== 1) problems.push(`host page font-size moved: ${bodySizes.join(", ")}`);
+  // --- the coverage closure (T7) ---------------------------------------------------
+  // One bundle per case: what was measured, what was painted, and what was deferred. The
+  // state detectors and the xtype trace both read these rather than re-querying the page.
+  const bundles = captures.map((capture, index) => ({
+    capture,
+    samples: roleSamples(capture).filter((sample) => sample.visible),
+    canvas: canvas[index].asserted,
+    deferred: canvas[index].deferred,
+    textFree: canvas[index].textFree,
+  }));
+  const canvasTextFree = bundles.flatMap((bundle) => bundle.textFree);
+  problems.push(...xtypeTableProblems(), ...stateTableProblems());
+  const stateCoverage = {};
+  for (const entry of STATE_CONTRACT) {
+    if (entry.suite !== "roles") {
+      stateCoverage[entry.state] = { suite: entry.suite, evidence: entry.evidence };
+      continue;
+    }
+    const matched = bundles.filter((bundle) => entry.detect(bundle));
+    stateCoverage[entry.state] = {
+      suite: "roles",
+      cases: matched.map((bundle) => bundle.capture.fixture),
+    };
+    if (!matched.length) problems.push(`state ${entry.state} (${entry.why}) was never observed`);
+  }
+  const screens = new Map();
+  for (const fixture of ROLE_FIXTURES)
+    if (!screens.has(fixture.screen)) screens.set(fixture.screen, screenCoverage(fixture.screen));
+  const xtypeCoverage = {};
+  for (const bundle of bundles) {
+    const { byTarget, byKind } = renderedXtypes(bundle.capture, screens.get(bundle.capture.screen));
+    for (const xtype of new Set([...byTarget, ...byKind])) {
+      const row = (xtypeCoverage[xtype] ??= { kinds: XTYPE_KINDS.get(xtype), proof: {} });
+      row.proof[bundle.capture.fixture] = byTarget.has(xtype) ? "target" : "kind";
+    }
+  }
+  for (const xtype of XTYPE_KINDS.keys()) {
+    if (xtypeCoverage[xtype]) continue;
+    if (XTYPE_RENDER_EXEMPT[xtype]) {
+      xtypeCoverage[xtype] = { kinds: [], exempt: XTYPE_RENDER_EXEMPT[xtype] };
+      continue;
+    }
+    const trigger = XTYPE_SYNTHESIZED[xtype];
+    problems.push(
+      `xtype ${xtype} was never rendered by a fixture` +
+        (trigger ? `（合成の入口: ${trigger}）` : ""),
+    );
+  }
+  await writeFile(
+    resolve(evidenceDir, "roles-coverage.json"),
+    `${JSON.stringify(
+      {
+        kinds: Object.fromEntries(
+          [...XTYPE_KINDS.values()].flat().map((kind) => [kind, kindOwner(kind)]),
+        ),
+        xtypes: xtypeCoverage,
+        synthesized: XTYPE_SYNTHESIZED,
+        states: stateCoverage,
+      },
+      null,
+      2,
+    )}\n`,
+  );
   log(
     `${captures.length} cases, ${asserted.length} DOM role samples, ` +
       `${canvasAsserted.length} Canvas draws over ` +
       `${new Set(canvasAsserted.map((record) => record.kind)).size} kinds ` +
-      `(${canvasDeferred.length} deferred to the surfaces suite), ` +
+      `(${canvasDeferred.length} deferred to the surfaces suite, ` +
+      `${canvasTextFree.length} empty draws from text-free kinds), ` +
       `shapes ${Object.entries(shapes)
         .map(([name, count]) => `${name}=${count}`)
         .join(" ")}, ` +
       `contexts ${[...new Set(asserted.map((sample) => sample.context))].sort().join("/")}, ` +
-      `host page ${bodySizes.join(",")}`,
+      `${Object.keys(xtypeCoverage).length}/${XTYPE_KINDS.size} xtypes, ` +
+      `${STATE_CONTRACT.length} states, host page ${bodySizes.join(",")}`,
   );
   if (problems.length)
     throw new Error(`roles: ${problems.length} problems\n- ${problems.join("\n- ")}`);
@@ -1653,7 +2562,6 @@ async function runEditing({ context, origin, evidenceDir, viewport, log }) {
 // transform, never on a recomputed scale.
 
 const SURFACE_FIXTURE_SCREEN = "/tests/browser/font-parity-surface.json";
-const GALLERY_SCREEN = "screens/uivolve-gallery.json";
 
 // The document sizes from DECISIONS. Each painted sprite is checked against what the
 // engine's own line flags say it must be, so this is the rule and not a copy of the output.
@@ -2847,8 +3755,9 @@ async function runLifecycle({ context, origin, evidenceDir, viewport, log }) {
 export const SUITES = [
   { name: "baseline", owner: "T1", run: runBaseline },
   // T2 covers the DOM declarations, the parent contexts and the shared size source;
-  // T3 adds the Canvas draw/measure comparison for the same roles.
-  { name: "roles", owner: "T2/T3", run: runRoles },
+  // T3 adds the Canvas draw/measure comparison for the same roles; T7 closes the kind and
+  // xtype layers and the state list over the same cases.
+  { name: "roles", owner: "T2/T3/T7", run: runRoles },
   { name: "editing", owner: "T4", run: runEditing },
   { name: "surfaces", owner: "T5", run: runSurfaces },
   { name: "lifecycle", owner: "T6", run: runLifecycle },
