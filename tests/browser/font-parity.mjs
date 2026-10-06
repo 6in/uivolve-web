@@ -1,8 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { packageFormat, parsePackage } from "../../src/package-format.js";
+import { createStaticHandler } from "../../scripts/serve-minimal.mjs";
 
 // Browser-side Canvas observation. Installed through addInitScript so it is in place
 // before the first paint, and every patched method delegates to the original: the
@@ -3208,14 +3210,14 @@ const loadedFrame = (page) =>
     { timeout: 15000 },
   );
 
-const ratioFrame = (page, ratio) =>
+const ratioFrame = (page, ratio, timeout = 15000) =>
   page.waitForFunction(
     (expected) => {
       const draws = window.__fontParity.forCanvas(window.__fontParityHarness.canvas)?.draws ?? [];
       return draws.length > 0 && draws.every((draw) => draw.devicePixelRatio === expected);
     },
     ratio,
-    { timeout: 15000 },
+    { timeout },
   );
 
 // Equal advances for the narrow and the wide sample: true only while the monospaced probe
@@ -3251,9 +3253,13 @@ function assertSizesHeld(label, capture, note) {
 
 // `locator.screenshot()` waits for the web fonts to settle, which is precisely the state
 // these cases hold on purpose, so a frame with bytes still in flight is grabbed through CDP.
-async function captureHeldFrame(page, context, path) {
+// `session` lets a caller that already holds one reuse it. That matters when an emulation
+// override is in force: attaching a second session resets the override the first one
+// installed (measured: devicePixelRatio 2 -> 1), while shooting through the same session
+// leaves it alone.
+async function captureHeldFrame(page, context, path, session = null) {
   const box = await page.locator("#font-parity-host").boundingBox();
-  const cdp = await context.newCDPSession(page);
+  const cdp = session ?? (await context.newCDPSession(page));
   try {
     const shot = await cdp.send("Page.captureScreenshot", {
       format: "png",
@@ -3262,7 +3268,7 @@ async function captureHeldFrame(page, context, path) {
     });
     await writeFile(path, Buffer.from(shot.data, "base64"));
   } finally {
-    await cdp.detach().catch(() => {});
+    if (!session) await cdp.detach().catch(() => {});
   }
   return path;
 }
@@ -3579,10 +3585,17 @@ async function runPixelRatio(page, context, { evidenceDir, problems }) {
   const cdp = await context.newCDPSession(page);
   const phases = [];
   const images = [];
+  // Which transitions the browser reported on its own and which needed the synthetic
+  // delivery, kept in the ledger so the substitute is never mistaken for a real event.
+  const deliveries = [];
   const capture = async (ratio) => {
     const observed = await observeLifecycle(page);
     const image = resolve(evidenceDir, `lifecycle-dpr-${String(ratio).replace(".", "_")}.png`);
-    await page.locator("#font-parity-host").screenshot({ path: image });
+    // Through this case's own CDP session, not `locator.screenshot()` and not a fresh
+    // session: both drop the deviceScaleFactor override (measured: 2 -> 1,
+    // `(resolution: 2dppx)` stops matching). The next phase would then ask for a ratio the
+    // page is already at, nothing would be scheduled, and the repaint wait would time out.
+    await captureHeldFrame(page, context, image, cdp);
     images.push(image);
     phases.push({ ratio, image, observed });
     return observed;
@@ -3593,6 +3606,14 @@ async function runPixelRatio(page, context, { evidenceDir, problems }) {
       note("開始時の devicePixelRatio が 1 ではない");
     await capture(1);
     for (const ratio of PIXEL_RATIOS) {
+      const armedQuery = `(resolution: ${armed}dppx)`;
+      const nextQuery = `(resolution: ${ratio}dppx)`;
+      const countQuery = (list, media) => list.filter((entry) => entry === media).length;
+      const queriesBefore = await page.evaluate(() => window.__fontParityMedia.list());
+      // Cleared before the override, not after it: returning to the natural ratio is the one
+      // transition Chromium reports by itself, and a reset placed after that event would
+      // throw away the very frame being waited for.
+      await page.evaluate(() => window.__fontParity.reset());
       // A real ratio change: width/height 0 leaves the viewport override alone, so no CSS
       // size moves and the resize observation has nothing to report.
       await cdp.send("Emulation.setDeviceMetricsOverride", {
@@ -3603,18 +3624,33 @@ async function runPixelRatio(page, context, { evidenceDir, problems }) {
       });
       const live = await page.evaluate(() => window.devicePixelRatio);
       if (live !== ratio) note(`devicePixelRatio が ${live}（${ratio} を要求）`);
-      await page.evaluate(() => window.__fontParity.reset());
-      const fired = await page.evaluate(
-        (media) => window.__fontParityMedia.fire(media),
-        `(resolution: ${armed}dppx)`,
+      // Chromium delivers `change` for some of these transitions and not for others
+      // (measured: silent when overriding away from the natural ratio, delivered when
+      // returning to it). So the host's own repaint is awaited first and the delivery is
+      // synthesized only when it does not come — firing unconditionally would dispatch on a
+      // query the host has already released, and nothing would repaint.
+      let delivery = "browser";
+      const repainted = await ratioFrame(page, ratio, 1500).then(
+        () => true,
+        () => false,
       );
-      if (fired.matches)
-        note(`(resolution: ${armed}dppx) がまだ一致している（倍率が変わっていない）`);
-      await ratioFrame(page, ratio).catch((error) =>
-        note(`倍率 ${ratio} で再描画されなかった: ${error.message}`),
-      );
+      if (!repainted) {
+        delivery = "synthetic";
+        const fired = await page.evaluate(
+          (media) => window.__fontParityMedia.fire(media),
+          armedQuery,
+        );
+        if (fired.matches) note(`${armedQuery} がまだ一致している（倍率が変わっていない）`);
+        await ratioFrame(page, ratio).catch((error) =>
+          note(`倍率 ${ratio} で再描画されなかった: ${error.message}`),
+        );
+      }
+      deliveries.push({ ratio, delivery });
+      // The host arms a fresh query on every change, so re-arming shows up as one more
+      // recording of this ratio's query than before the transition. Mere presence cannot say
+      // that for ratio 1, which is already queried once at start-up.
       const queries = await page.evaluate(() => window.__fontParityMedia.list());
-      if (!queries.includes(`(resolution: ${ratio}dppx)`))
+      if (countQuery(queries, nextQuery) <= countQuery(queriesBefore, nextQuery))
         note(
           `倍率 ${ratio} で解像度クエリが張り直されていない（${queries.slice(-3).join(" / ")}）`,
         );
@@ -3702,7 +3738,7 @@ async function runPixelRatio(page, context, { evidenceDir, problems }) {
     phases.map((phase) => phase.observed.environment.canvasStage.canvas.bitmapWidth),
   );
   if (bitmaps.size < 3) note(`bitmap 幅が ${bitmaps.size} 種類しかない（倍率が効いていない）`);
-  return { name: "pixel-ratio", phases, images, ratios: PIXEL_RATIOS };
+  return { name: "pixel-ratio", phases, images, ratios: PIXEL_RATIOS, deliveries };
 }
 
 async function runLifecycle({ context, origin, evidenceDir, viewport, log }) {
@@ -4605,6 +4641,731 @@ async function runMatrix({ context, origin, evidenceDir, viewport, log }) {
   return { cases: rows.length, images: images.length, journeys: journeys.length, file };
 }
 
+// --- distribution ---------------------------------------------------------------------
+// Every suite above measures this repository's own sources through the dev server. This
+// one measures what a user actually installs: the files `build:runtime` and `build:minimal`
+// generate. They are served from a static server this suite owns, and the pages reach no
+// `src/` module at all — the observation code served beside them (observe.js) imports
+// nothing, so the stylesheet and the renderer under measurement are the generated ones.
+
+const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
+
+const DIST_BUILDS = [
+  {
+    dir: "runtime-dist",
+    command: "bun run build:runtime",
+    files: ["index.js", "index.css", "engine.wasm", "THIRD_PARTY_NOTICES.txt"],
+  },
+  {
+    dir: "app-dist",
+    command: "bun run build:minimal",
+    files: [
+      "index.html",
+      "boot.js",
+      "app.json",
+      "pages/home.yaml",
+      "pages/home.rhai",
+      "pages/home/index.html",
+      "runtime/index.js",
+      "runtime/index.css",
+      "runtime/engine.wasm",
+    ],
+  },
+];
+
+// Run before the fixture server and the browser start. A missing build is reported as the
+// command that produces it and never built here: the final gate already runs build:runtime
+// and build:minimal ahead of this suite, so a rebuild at this point would hide the gap
+// between what was built and what is being measured.
+export function requireDistributionBuilds(root = repoRoot) {
+  const missing = [];
+  for (const build of DIST_BUILDS)
+    for (const file of build.files) {
+      if (!existsSync(resolve(root, build.dir, file)))
+        missing.push(`${build.dir}/${file} — ${build.command}`);
+    }
+  if (missing.length)
+    throw new Error(
+      'Suite "distribution" needs the generated artifacts. Run `bun run build:runtime` and ' +
+        `\`bun run build:minimal\` first.\nMissing:\n- ${missing.join("\n- ")}`,
+    );
+}
+
+const DIST_HOST_DIR = "dist-host";
+// The roles Hello World renders, plus the Canvas editing overlay. Their sizes come from
+// ROLE_CONTRACT, so the generated stylesheet is held to the same numbers as the source one.
+const DIST_ROLE_NAMES = ["field-label", "field-input", "button", "label", "canvas-editor"];
+const DIST_ROLES = DIST_ROLE_NAMES.map((role) => {
+  const entry = ROLE_CONTRACT.find((candidate) => candidate.role === role);
+  if (!entry) throw new Error(`distribution names an unknown role: ${role}`);
+  return entry;
+});
+// Present in every resting frame; `canvas-editor` only exists while an edit is open.
+const DIST_RESTING_ROLES = DIST_ROLE_NAMES.filter((role) => role !== "canvas-editor");
+const DIST_SAME_SIZE = 0.01;
+const DIST_GREETING = "Hello ";
+// One name per surface, so "the greeting changed" can only have been produced by the
+// surface the edit was driven on.
+const DIST_TYPED = { dom: "太郎", canvas: "花子" };
+const DIST_EMBED = { dom: "#dist-dom", canvas: "#dist-canvas", shot: "#dist-host" };
+const DIST_MINIMAL = { stage: "#app", shot: "main" };
+
+// What this suite cannot reach, written down instead of left out of the ledger.
+const DIST_LIMITS = {
+  minimalSurfaces:
+    "createApplication paints one renderer per page, so the minimal app is loaded twice " +
+    "(?renderer=dom / ?renderer=canvas) and the DOM load's widget boxes carry the Scene " +
+    "geometry into the Canvas load. Both loads use the same viewport and host font-size.",
+  minimalTheme:
+    "The generated app.json names no theme and is never edited. The dark minimal case is a " +
+    "second host configuration (dist-host/minimal-dark/app.json) over an unmodified copy of " +
+    "app-dist, with theme pointing at the copied dark theme JSON.",
+  hostDeclaration:
+    "The host font-size is a host-page declaration, so it is added as page CSS: ?host= on " +
+    "the embed page, and a body rule on the minimal page whose generated HTML declares none.",
+};
+
+async function buildDistHost(evidenceDir) {
+  const base = resolve(evidenceDir, DIST_HOST_DIR);
+  // Rebuilt every run so a stale copy can never be the thing that was measured.
+  await rm(base, { recursive: true, force: true });
+  await mkdir(resolve(base, "themes"), { recursive: true });
+  await cp(resolve(repoRoot, "runtime-dist"), resolve(base, "runtime"), { recursive: true });
+  await cp(resolve(repoRoot, "app-dist"), resolve(base, "minimal"), { recursive: true });
+  await cp(resolve(repoRoot, "app-dist"), resolve(base, "minimal-dark"), { recursive: true });
+  // Host configuration, not an edit of the artifact: the copy under minimal-dark/ gets the
+  // app.json a host would write to ask for a theme, and minimal/ stays byte-identical.
+  const config = JSON.parse(await readFile(resolve(repoRoot, "app-dist/app.json"), "utf8"));
+  await writeFile(
+    resolve(base, "minimal-dark/app.json"),
+    `${JSON.stringify({ ...config, theme: "../themes/dark.json" }, null, 2)}\n`,
+  );
+  for (const theme of ROLE_THEMES)
+    await copyFile(
+      resolve(repoRoot, "public/themes", `${theme.mode}.json`),
+      resolve(base, "themes", `${theme.mode}.json`),
+    );
+  await copyFile(
+    resolve(repoRoot, "tests/browser/font-parity-observe.js"),
+    resolve(base, "observe.js"),
+  );
+  await copyFile(
+    resolve(repoRoot, "tests/browser/font-parity-dist-embed.html"),
+    resolve(base, "embed.html"),
+  );
+  // Measuring one copy only says something about the other if they are the same bytes.
+  const digest = async (path) =>
+    createHash("sha256")
+      .update(await readFile(path))
+      .digest("hex");
+  const files = {};
+  for (const name of ["index.js", "index.css", "engine.wasm"])
+    files[name] = {
+      runtimeDist: await digest(resolve(repoRoot, "runtime-dist", name)),
+      appDistRuntime: await digest(resolve(repoRoot, "app-dist/runtime", name)),
+    };
+  return { base, files };
+}
+
+// Wait until the frame on screen was painted with the fonts already loaded, so a stale
+// pre-font frame is never the one the ledger records.
+const distFrame = (page, canvasSelector) =>
+  page.waitForFunction(
+    (selector) => {
+      const canvas = document.querySelector(selector);
+      const entry = canvas ? window.__fontParity.forCanvas(canvas) : null;
+      return (
+        (entry?.draws.length ?? 0) > 0 && entry.draws.every((draw) => draw.fontsStatus === "loaded")
+      );
+    },
+    canvasSelector,
+    { timeout: 30000 },
+  );
+
+// One observation call for both faces. The side a page does not mount comes back empty
+// rather than missing, so a stage that failed to render is a count of zero, not a crash.
+const observeDist = (page, probe) =>
+  page.evaluate(async (input) => {
+    const module = await import("/observe.js");
+    const pick = (selector) => (selector ? document.querySelector(selector) : null);
+    const domStage = pick(input.domSelector);
+    const canvasStage = pick(input.canvasSelector);
+    const canvas = canvasStage?.querySelector("canvas") ?? null;
+    const stage = domStage ?? canvasStage;
+    if (!stage)
+      throw new Error(`ステージがありません: ${input.domSelector ?? input.canvasSelector}`);
+    const origin = domStage?.getBoundingClientRect();
+    const scene = window.__distEmbed?.runtime.scenes[1] ?? null;
+    return {
+      label: input.label,
+      dom: domStage ? module.observeDom(domStage, input.label) : [],
+      roles: {
+        dom: domStage ? module.measureRoles(domStage, input.specs) : [],
+        canvasStage: canvasStage ? module.measureRoles(canvasStage, input.specs) : [],
+      },
+      controls: [
+        ...(domStage ? module.controlBoxes(domStage, "dom") : []),
+        ...(canvasStage ? module.controlBoxes(canvasStage, "canvas") : []),
+      ],
+      font: module.fontEvidence(stage),
+      hostFrame: module.hostFrame(stage.parentElement ?? stage),
+      environment: {
+        domStage: domStage ? module.environment(domStage, null) : null,
+        canvasStage: canvasStage ? module.environment(canvasStage, canvas) : null,
+      },
+      // Widget boxes in Scene coordinates, read off the DOM stage. Both renderers lay out
+      // from the same Scene, so these attribute a Canvas draw and aim a Canvas click on a
+      // page that exposes no Scene of its own.
+      widgets: domStage
+        ? [...domStage.querySelectorAll(".ui-widget")].map((element, index) => {
+            const rect = element.getBoundingClientRect();
+            const kind =
+              [...element.classList]
+                .find((name) => name.startsWith("ui-") && name !== "ui-widget")
+                ?.slice(3) ?? null;
+            return {
+              key: element.dataset.key ?? null,
+              target: element.dataset.target ?? null,
+              kind,
+              x: rect.x - origin.x,
+              y: rect.y - origin.y,
+              width: rect.width,
+              height: rect.height,
+              layer: index,
+            };
+          })
+        : [],
+      // The embed page owns its runtime, so its Scene is available and carries the strings
+      // a draw is attributed by.
+      scene: scene
+        ? {
+            width: scene.width,
+            height: scene.height,
+            widgets: scene.widgets.map((widget) => ({
+              key: widget.key,
+              target: widget.target,
+              kind: widget.kind,
+              x: widget.x,
+              y: widget.y,
+              width: widget.width,
+              height: widget.height,
+              layer: widget.layer,
+              strings: [
+                widget.text,
+                widget.value,
+                widget.config?.placeholder,
+                widget.config?.boxLabel,
+              ].filter((value) => typeof value === "string" && value !== ""),
+            })),
+          }
+        : null,
+      canvasSurface: canvas ? window.__fontParity.forCanvas(canvas) : null,
+      errors: [...(window.__distEmbed?.errors ?? [])],
+      bootError: window.__distEmbedError ?? null,
+    };
+  }, probe);
+
+// The control that currently has focus, read without any runtime API: an editing size has
+// to be measurable on a page that exposes nothing but its DOM.
+const distActive = (page) =>
+  page.evaluate(() => {
+    const element = document.activeElement;
+    if (!element || element === document.body) return { present: false };
+    const style = getComputedStyle(element);
+    return {
+      present: true,
+      tag: element.tagName.toLowerCase(),
+      classes: [...element.classList],
+      value: element.value ?? null,
+      fontSize: Number.parseFloat(style.fontSize),
+      fontFamily: style.fontFamily,
+    };
+  });
+
+// Page coordinates for the centre of a Scene widget on a Canvas stage. The canvas is sized
+// in CSS px to the Scene, so the Scene box maps onto it directly; the ratio is taken from
+// the live box anyway so a clipped stage cannot silently shift the click.
+const distPoint = (page, canvasSelector, box) =>
+  page.evaluate(
+    (input) => {
+      const canvas = document.querySelector(input.canvas);
+      if (!canvas) throw new Error(`Canvas がありません: ${input.canvas}`);
+      const rect = canvas.getBoundingClientRect();
+      const cssWidth = Number.parseFloat(canvas.style.width) || rect.width;
+      const cssHeight = Number.parseFloat(canvas.style.height) || rect.height;
+      return {
+        x: rect.left + (input.box.x + input.box.width / 2) * (rect.width / cssWidth),
+        y: rect.top + (input.box.y + input.box.height / 2) * (rect.height / cssHeight),
+      };
+    },
+    { canvas: canvasSelector, box },
+  );
+
+// A real Hello World edit on one surface: type the name with real keys, press the greeting
+// button, and wait until that surface shows the new greeting. Nothing reaches into the
+// runtime — the minimal app exposes none — so the proof is the characters on screen.
+async function runDistEdit(page, options) {
+  const { surface, domSelector, canvasSelector, label, specs, widgets, problems } = options;
+  const note = (message) => problems.push(`${label}: ${message}`);
+  const name = DIST_TYPED[surface];
+  const greeting = `${DIST_GREETING}${name}`;
+  const stage = surface === "dom" ? domSelector : canvasSelector;
+  const boxOf = (target) => {
+    const widget = widgets.find((entry) => entry.target === target);
+    if (!widget) throw new Error(`${label}: target="${target}" の部品が見つかりません`);
+    return widget;
+  };
+  if (surface === "dom") {
+    await page.click(`${stage} .ui-field[data-target="nameInput"] input`);
+  } else {
+    const point = await distPoint(page, stage, boxOf("nameInput"));
+    await page.mouse.click(point.x, point.y);
+    await page.waitForSelector(`${stage} .canvas-editor`, { timeout: 15000 });
+  }
+  const opened = await distActive(page);
+  if (!opened.present) note(`${surface} の編集で入力欄に focus が入らなかった`);
+  else if (surface === "canvas" && !opened.classes.includes("canvas-editor"))
+    note(`Canvas の編集オーバーレイが開かなかった（${opened.classes.join(".")}）`);
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.type(name, { delay: 10 });
+  const typing = await distActive(page);
+  if (typing.value !== name) note(`入力後の値が ${JSON.stringify(typing.value)}`);
+  if (typing.fontSize !== SIZE_CONTRACT.body)
+    note(`編集中の入力欄が ${typing.fontSize}px（field は ${SIZE_CONTRACT.body}px）`);
+  // What the editing frame looks like while the overlay is still open.
+  const editing = await observeDist(page, {
+    domSelector,
+    canvasSelector,
+    label: `${label}/editing`,
+    specs,
+  });
+  if (surface === "dom") {
+    await page.click(`${stage} .ui-button[data-target="helloButton"]`);
+    await page
+      .waitForFunction(
+        (input) =>
+          [...document.querySelectorAll(`${input.stage} .ui-label`)].some((element) =>
+            (element.textContent ?? "").includes(input.text),
+          ),
+        { stage, text: greeting },
+        { timeout: 20000 },
+      )
+      .catch(() => note(`DOM 面に "${greeting}" が現れなかった`));
+  } else {
+    // Enter closes the overlay the way a user confirms, then the painted button is pressed.
+    await page.keyboard.press("Enter");
+    const point = await distPoint(page, stage, boxOf("helloButton"));
+    await page.mouse.click(point.x, point.y);
+    await page
+      .waitForFunction(
+        (input) => {
+          const canvas = document.querySelector(`${input.stage} canvas`);
+          const entry = canvas ? window.__fontParity.forCanvas(canvas) : null;
+          return (entry?.draws ?? []).some((draw) => draw.text.includes(input.text));
+        },
+        { stage, text: greeting },
+        { timeout: 20000 },
+      )
+      .catch(() => note(`Canvas 面に "${greeting}" が描かれなかった`));
+  }
+  return {
+    label,
+    surface,
+    name,
+    greeting,
+    opened,
+    typing,
+    editorFontSize: typing.fontSize,
+    overlays: editing.controls.filter((control) => control.overlay),
+    roles: editing.roles,
+  };
+}
+
+function assertDistRoles(label, groups, required, problems) {
+  const note = (message) => problems.push(`${label}: ${message}`);
+  const sizes = {};
+  for (const group of groups) {
+    const entry = DIST_ROLES.find((candidate) => candidate.role === group.role);
+    if (!entry) continue;
+    for (const sample of group.samples.filter((candidate) => candidate.visible)) {
+      if (sample.fontSize !== entry.px)
+        note(`${group.role} が ${sample.fontSize}px（宣言は ${entry.px}px・${sample.path}）`);
+      if (entry.weight && sample.fontWeight !== entry.weight)
+        note(`${group.role} の weight が ${sample.fontWeight}（${entry.weight} を期待）`);
+      sizes[group.role] = [...new Set([...(sizes[group.role] ?? []), sample.fontSize])].sort(
+        (a, b) => a - b,
+      );
+    }
+  }
+  for (const role of required) if (!sizes[role]) note(`役割 ${role} を 1 件も実測していない`);
+  return sizes;
+}
+
+function assertDistParity(label, capture, problems) {
+  const note = (message) => problems.push(`${label}: ${message}`);
+  try {
+    assertCaptured(capture);
+  } catch (error) {
+    note(error.message);
+  }
+  const unattributed = capture.canvas.filter((record) => record.text !== "" && !record.key);
+  for (const record of unattributed.slice(0, 6))
+    note(`Canvas の描画 "${record.text.slice(0, 18)}" をどの部品にも結び付けられない`);
+  const compared = capture.comparisons.filter((row) => row.delta !== null);
+  const mismatched = compared.filter((row) => Math.abs(row.delta) > DIST_SAME_SIZE);
+  for (const row of mismatched.slice(0, 8))
+    note(
+      `${row.kind ?? "?"} "${row.canvasText.slice(0, 18)}" が canvas ${row.canvasFontSize}px / ` +
+        `dom ${row.domFontSize}px（${row.matchedBy}）`,
+    );
+  if (mismatched.length) note(`DOM と Canvas の実効サイズ差が ${mismatched.length} 件`);
+  if (compared.length < 3) note(`DOM と対応付いた Canvas 描画が ${compared.length} 件しかない`);
+  return {
+    compared: compared.length,
+    mismatched: mismatched.length,
+    unattributed: unattributed.length,
+  };
+}
+
+async function runDistEmbedCase(options) {
+  const { context, origin, viewport, evidenceDir, hostFontSize, theme, specs, problems } = options;
+  const label = `embed/${hostFontSize}/${theme.mode}`;
+  const note = (message) => problems.push(`${label}: ${message}`);
+  const url = `${origin}/embed.html?host=${hostFontSize}&theme=${theme.mode}`;
+  const { page, pageErrors } = await instrument(context, url, viewport);
+  const cdp = await context.newCDPSession(page);
+  const journeys = [];
+  try {
+    await page.waitForFunction(
+      () => Boolean(window.__distEmbed) || Boolean(window.__distEmbedError),
+      undefined,
+      { timeout: 60000 },
+    );
+    const bootError = await page.evaluate(() => window.__distEmbedError ?? null);
+    if (bootError) {
+      note(`組み込みホストが起動しなかった: ${bootError}`);
+      return {
+        row: { face: "embed", label, hostFontSize, theme: theme.mode },
+        journeys,
+        pageErrors,
+      };
+    }
+    // Repaint once the fonts settled, so the recorded frame is the one on screen.
+    await page.evaluate(async () => {
+      window.__fontParity.reset();
+      window.__distEmbed.runtime.render();
+      await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+      await document.fonts.ready;
+    });
+    await distFrame(page, `${DIST_EMBED.canvas} canvas`);
+    const observed = await observeDist(page, {
+      domSelector: DIST_EMBED.dom,
+      canvasSelector: DIST_EMBED.canvas,
+      label,
+      specs,
+    });
+    const widgets = observed.scene?.widgets ?? [];
+    if (!widgets.length) note("Canvas の Scene に部品が無い");
+    const capture = {
+      source: `runtime-dist embed (${label})`,
+      url,
+      pageErrors,
+      runtimeErrors: observed.errors,
+      dom: observed.dom,
+      canvas: canvasRecords(observed.canvasSurface ?? { draws: [] }, widgets, `${label}-canvas`),
+      font: observed.font,
+      environment: observed.environment,
+    };
+    capture.comparisons = compare(capture.dom, capture.canvas);
+    const parity = assertDistParity(label, capture, problems);
+    const roleSizes = assertDistRoles(label, observed.roles.dom, DIST_RESTING_ROLES, problems);
+    if (observed.hostFrame.hostFontSize !== hostFontSize)
+      note(`ホスト要素が ${observed.hostFrame.hostFontSize}（${hostFontSize} を宣言）`);
+    if (observed.environment.domStage.themeMode !== theme.mode)
+      note(`DOM 面のテーマが ${observed.environment.domStage.themeMode}`);
+    if (observed.environment.canvasStage.themeMode !== theme.mode)
+      note(`Canvas 面のテーマが ${observed.environment.canvasStage.themeMode}`);
+    const image = resolve(evidenceDir, `distribution-embed-${hostFontSize}-${theme.mode}.png`);
+    await shootMatrix(page, cdp, DIST_EMBED.shot, image);
+    // One edit per surface, in this order: the DOM edit then has to be visible to the
+    // Canvas surface's own greeting before the Canvas edit replaces it with another name.
+    for (const surface of ["dom", "canvas"])
+      journeys.push(
+        await runDistEdit(page, {
+          surface,
+          domSelector: DIST_EMBED.dom,
+          canvasSelector: DIST_EMBED.canvas,
+          label: `${label}/${surface}`,
+          specs,
+          widgets,
+          problems,
+        }),
+      );
+    return {
+      row: {
+        face: "embed",
+        label,
+        url,
+        hostFontSize,
+        measuredHostFontSize: observed.hostFrame.hostFontSize,
+        bodyFontSize: observed.hostFrame.bodyFontSize,
+        theme: theme.mode,
+        themeMode: observed.environment.domStage.themeMode,
+        domRecords: capture.dom.length,
+        canvasDraws: capture.canvas.length,
+        ...parity,
+        roleSizes,
+        bitmap: observed.environment.canvasStage.canvas,
+        images: [image],
+      },
+      capture,
+      journeys,
+      pageErrors,
+    };
+  } finally {
+    await cdp.detach().catch(() => {});
+    await page.close();
+  }
+}
+
+async function runDistMinimalCase(options) {
+  const { context, origin, viewport, evidenceDir, hostFontSize, theme, specs, problems } = options;
+  const directory = theme.mode === "light" ? "minimal" : "minimal-dark";
+  const label = `minimal/${hostFontSize}/${theme.mode}`;
+  const note = (message) => problems.push(`${label}: ${message}`);
+  const stage = DIST_MINIMAL.stage;
+  const pageErrors = [];
+  const journeys = [];
+  const images = [];
+  const loads = {};
+  for (const renderer of ["dom", "canvas"]) {
+    const url = `${origin}/${directory}/?renderer=${renderer}`;
+    const opened = await instrument(context, url, viewport);
+    const page = opened.page;
+    const cdp = await context.newCDPSession(page);
+    pageErrors.push(...opened.pageErrors);
+    try {
+      // The host declares the size. The generated HTML declares none and is never edited,
+      // so the declaration is added as page CSS the way an embedding site writes it.
+      await page.addStyleTag({ content: `body { font-size: ${hostFontSize}; }` });
+      if (renderer === "dom") await page.waitForSelector(`${stage} .ui-widget`, { timeout: 60000 });
+      await page.evaluate(() => document.fonts.ready);
+      if (renderer === "canvas") await distFrame(page, `${stage} canvas`);
+      const bootError = await page.evaluate(() => {
+        const box = document.getElementById("error");
+        return box && !box.hidden ? (box.textContent ?? "") : null;
+      });
+      if (bootError) note(`${renderer} 読み込みが失敗した: ${bootError}`);
+      const observed = await observeDist(page, {
+        domSelector: renderer === "dom" ? stage : null,
+        canvasSelector: renderer === "canvas" ? stage : null,
+        label: `${label}/${renderer}`,
+        specs,
+      });
+      const image = resolve(
+        evidenceDir,
+        `distribution-minimal-${renderer}-${hostFontSize}-${theme.mode}.png`,
+      );
+      await shootMatrix(page, cdp, DIST_MINIMAL.shot, image);
+      images.push(image);
+      loads[renderer] = { observed, bootError, url };
+      journeys.push(
+        await runDistEdit(page, {
+          surface: renderer,
+          domSelector: renderer === "dom" ? stage : null,
+          canvasSelector: renderer === "canvas" ? stage : null,
+          label: `${label}/${renderer}`,
+          specs,
+          // The Canvas load exposes no Scene, so it is aimed by the DOM load's widget boxes.
+          widgets: renderer === "dom" ? observed.widgets : loads.dom.observed.widgets,
+          problems,
+        }),
+      );
+    } finally {
+      await cdp.detach().catch(() => {});
+      await page.close();
+    }
+  }
+  const capture = {
+    source: `app-dist minimal (${label})`,
+    url: loads.dom.url,
+    pageErrors,
+    runtimeErrors: [loads.dom.bootError, loads.canvas.bootError].filter(Boolean),
+    dom: loads.dom.observed.dom,
+    canvas: canvasRecords(
+      loads.canvas.observed.canvasSurface ?? { draws: [] },
+      loads.dom.observed.widgets,
+      `${label}-canvas`,
+    ),
+    font: loads.dom.observed.font,
+    environment: {
+      domStage: loads.dom.observed.environment.domStage,
+      canvasStage: loads.canvas.observed.environment.canvasStage,
+    },
+  };
+  capture.comparisons = compare(capture.dom, capture.canvas);
+  const parity = assertDistParity(label, capture, problems);
+  const roleSizes = assertDistRoles(
+    label,
+    loads.dom.observed.roles.dom,
+    DIST_RESTING_ROLES,
+    problems,
+  );
+  for (const [renderer, load] of Object.entries(loads))
+    if (load.observed.hostFrame.hostFontSize !== hostFontSize)
+      note(`${renderer} のホスト要素が ${load.observed.hostFrame.hostFontSize}`);
+  for (const [renderer, load] of Object.entries(loads)) {
+    const seen = load.observed.environment[renderer === "dom" ? "domStage" : "canvasStage"];
+    if (seen.themeMode !== theme.mode) note(`${renderer} 面のテーマが ${seen.themeMode}`);
+  }
+  return {
+    row: {
+      face: "minimal",
+      label,
+      url: loads.dom.url,
+      hostFontSize,
+      measuredHostFontSize: loads.dom.observed.hostFrame.hostFontSize,
+      bodyFontSize: loads.dom.observed.hostFrame.bodyFontSize,
+      theme: theme.mode,
+      themeMode: loads.dom.observed.environment.domStage.themeMode,
+      domRecords: capture.dom.length,
+      canvasDraws: capture.canvas.length,
+      ...parity,
+      roleSizes,
+      bitmap: loads.canvas.observed.environment.canvasStage.canvas,
+      images,
+    },
+    capture,
+    journeys,
+    pageErrors,
+  };
+}
+
+async function runDistribution({ context, evidenceDir, viewport, log }) {
+  // Belt and braces: the runner already refuses before the server and the browser start.
+  requireDistributionBuilds();
+  const file = resolve(evidenceDir, "distribution.json");
+  const specs = roleSpecs();
+  const problems = [];
+  const rows = [];
+  const journeys = [];
+  const images = [];
+  const pageErrors = [];
+  const captures = [];
+  let builds = null;
+  let server;
+  try {
+    const host = await buildDistHost(evidenceDir);
+    builds = host.files;
+    for (const [name, pair] of Object.entries(builds))
+      if (pair.runtimeDist !== pair.appDistRuntime)
+        problems.push(`app-dist/runtime/${name} が runtime-dist/${name} と別物`);
+    // The OS picks the port; this suite owns the server and stops nothing it did not start.
+    server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: createStaticHandler(host.base),
+    });
+    const origin = `http://127.0.0.1:${server.port}`;
+    log(`Distribution host: ${origin} (${host.base})`);
+    for (const hostFontSize of ROLE_HOST_SIZES)
+      for (const theme of ROLE_THEMES)
+        for (const run of [runDistEmbedCase, runDistMinimalCase]) {
+          const result = await run({
+            context,
+            origin,
+            viewport,
+            evidenceDir,
+            hostFontSize,
+            theme,
+            specs,
+            problems,
+          });
+          rows.push(result.row);
+          journeys.push(...result.journeys);
+          images.push(...(result.row.images ?? []));
+          pageErrors.push(...result.pageErrors);
+          if (result.capture) captures.push(result.capture);
+        }
+  } finally {
+    await writeFile(
+      file,
+      `${JSON.stringify(
+        {
+          limits: DIST_LIMITS,
+          builds,
+          cases: rows,
+          journeys,
+          images,
+          pageErrors,
+          // The raw per-draw comparison, kept per case so a size difference is readable.
+          comparisons: captures.map((capture) => ({
+            source: capture.source,
+            url: capture.url,
+            environment: capture.environment,
+            font: capture.font,
+            rows: capture.comparisons,
+          })),
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    log(`Distribution ledger: ${file}`);
+    try {
+      server?.stop(true);
+    } catch (error) {
+      problems.push(`配信サーバーを閉じられなかった: ${error.message}`);
+    }
+  }
+  if (pageErrors.length) problems.push(`page errors: ${pageErrors.join("; ")}`);
+  const expected = ROLE_HOST_SIZES.length * ROLE_THEMES.length * 2;
+  if (rows.length !== expected) problems.push(`ケース数が ${rows.length}（${expected} を期待）`);
+  for (const size of ROLE_HOST_SIZES)
+    if (!rows.some((row) => row.measuredHostFontSize === size))
+      problems.push(`ホスト font-size ${size} を実測した面が無い`);
+  for (const theme of ROLE_THEMES)
+    if (!rows.some((row) => row.themeMode === theme.mode))
+      problems.push(`テーマ ${theme.mode} を実測した面が無い`);
+  // The claim the host size has to fail: within one face, no role's size moves between
+  // conditions. The absolute numbers are already pinned to ROLE_CONTRACT per case; this is
+  // what proves the two host sizes and the two themes produced the same ledger.
+  const seenByRole = new Map();
+  for (const row of rows)
+    for (const [role, sizes] of Object.entries(row.roleSizes ?? {})) {
+      const key = `${row.face}/${role}`;
+      const seen = seenByRole.get(key) ?? new Map();
+      const value = sizes.join("/");
+      seen.set(value, [...(seen.get(value) ?? []), row.label]);
+      seenByRole.set(key, seen);
+    }
+  for (const [key, seen] of seenByRole)
+    if (seen.size !== 1)
+      problems.push(
+        `${key} のサイズが条件で変わる: ` +
+          [...seen].map(([sizes, labels]) => `${sizes}px (${labels.join(", ")})`).join(" / "),
+      );
+  // Both surfaces were really edited, and the open editor is the same size on both.
+  if (journeys.length !== expected * 2)
+    problems.push(`編集が ${journeys.length} 本（${expected * 2} 本を期待）`);
+  const editorSizes = new Set(journeys.map((journey) => journey.editorFontSize));
+  if (editorSizes.size !== 1 || !editorSizes.has(SIZE_CONTRACT.body))
+    problems.push(`編集中の入力欄が ${[...editorSizes].join("/")}px`);
+  if (!images.length) problems.push("代表画像を 1 枚も撮っていない");
+  log(
+    `${rows.length} cases (2 faces × ${ROLE_HOST_SIZES.length} host sizes × ` +
+      `${ROLE_THEMES.length} themes), ` +
+      `${rows.reduce((total, row) => total + (row.domRecords ?? 0), 0)} DOM records, ` +
+      `${rows.reduce((total, row) => total + (row.canvasDraws ?? 0), 0)} Canvas draws, ` +
+      `${rows.reduce((total, row) => total + (row.compared ?? 0), 0)} compared, ` +
+      `${rows.reduce((total, row) => total + (row.mismatched ?? 0), 0)} size differences, ` +
+      `${journeys.length} edits at ${[...editorSizes].join("/")}px, ${images.length} images`,
+  );
+  if (problems.length)
+    throw new Error(`distribution: ${problems.length} problems\n- ${problems.join("\n- ")}`);
+  return { cases: rows.length, journeys: journeys.length, images: images.length, file };
+}
+
 // Every suite named by the plan is registered. Suites a later task owns have no runner
 // and must fail loudly: an unimplemented check is never reported as a pass.
 export const SUITES = [
@@ -4618,15 +5379,25 @@ export const SUITES = [
   { name: "lifecycle", owner: "T6", run: runLifecycle },
   // T8 holds the same roles over the width / zoom / ratio / theme grid, on both surfaces.
   { name: "matrix", owner: "T8", run: runMatrix },
-  { name: "distribution", owner: "T9", run: null },
+  // T9 measures the generated runtime-dist / app-dist artifacts instead of src/. Its
+  // precheck runs before the fixture server and the browser, so a missing build is a
+  // message naming the command rather than a half-started run.
+  {
+    name: "distribution",
+    owner: "T9",
+    run: runDistribution,
+    precheck: requireDistributionBuilds,
+  },
 ];
 
-export function selectSuites(names) {
+// `table` exists so the "a suite without a runner is refused" guard stays testable now that
+// every registered suite has one. Callers pass nothing; only the tests pass a table.
+export function selectSuites(names, table = SUITES) {
   if (!names.length) throw new Error("Pass at least one --suite <name>");
-  const known = SUITES.map((suite) => suite.name);
+  const known = table.map((suite) => suite.name);
   const selected = [];
   for (const name of names) {
-    const suite = SUITES.find((entry) => entry.name === name);
+    const suite = table.find((entry) => entry.name === name);
     if (!suite) throw new Error(`Unknown suite "${name}". Known suites: ${known.join(", ")}`);
     if (!suite.run)
       throw new Error(

@@ -197,11 +197,29 @@ bun run docs:check
     条件で隣のボタンへ吸われ「button が 13px」として落ちた。文字列で対応付くときは従来どおり
     （ツリーの開閉印は自分で `▾` を持つ）。
 
-- [ ] T9: 独立配布と最終検査を通し検証手順を文書化する
+- [x] T9: 独立配布と最終検査を通し検証手順を文書化する
   - 完了基準: build:runtime/build:minimalの生成物を実ブラウザへ読み込み、ホスト16/20pxのDOM/Canvas、Hello World編集、日本語、dark切替とサイズ一致を確認する。全suiteは未実装skipなし、台帳の全対象roleに実測値・差・状態を持つ。`bun scripts/verify-font-parity.mjs` がクリーンなcontext/所有サーバーから非0検査を隠さず成功。README/配布/検証文書へ既存DOM基準・検証方法・限界を反映し、追従先の旧文言残存0件とdocs:checkを確認する。新依存・DSL/テーマのfont API・公開/デプロイなし。最終証跡と目視結果をまとめてverifyへ渡す。
   - 対象: `scripts/verify-font-parity.mjs`、`scripts/test-font-parity-browser.mjs`、`tests/browser/font-parity.mjs`、`tests/browser/font-parity-harness.js`、`docs/renderer-font-parity.md`、`docs/testing.md`、`docs/runtime-distribution.md`、`docs/README.md`、必要なら `README.md`。
   - 依存: T8
   - 並列サブ作業: A: 文書の追従先確認・入口更新（対象: `docs/testing.md`、`docs/runtime-distribution.md`、`docs/README.md`、`README.md`）。B: 生成配布物のブラウザsuiteと最終runnerを完成（対象: `scripts/verify-font-parity.mjs`、`scripts/test-font-parity-browser.mjs`、`tests/browser/font-parity.mjs`、`tests/browser/font-parity-harness.js`）。親が `docs/renderer-font-parity.md` の最終証跡を統合して全検査・コミット。両作業はT8までの確定結果を共有する。
+  - **PLAN 訂正（turn 12 / T9 実測）**: 対象ファイルに新設 `tests/browser/font-parity-observe.js`
+    と `tests/browser/font-parity-dist-embed.html` を追加した。配布物のページは `src/` を 1 つも
+    読んではいけないので、観測関数を**何も import しない形**で `font-parity-observe.js` へ切り出し、
+    生成物の隣へ置いて `import("/observe.js")` で読む。`font-parity-harness.js` は開発サーバー上の
+    fixture 操作だけを持ち、移した関数を re-export する（suite 側の呼び出しは変えない）。
+    `font-parity-dist-embed.html` は `docs/runtime-distribution.md` の手順どおりの組み込みホスト。
+    `README.md` は更新不要だった（部品/API本数・フォント記載に今回の変更へ追従すべき旧文言が無い）。
+  - **PLAN 訂正（turn 12 / T9 実測）**: 完了基準の「全suiteは未実装skipなし」を確かめる既存検査
+    （`tests/font-parity-runner.test.js` の「未実装suiteは非0」）は、**全 suite が実装済みになると
+    題材が無くなる**。表を注入して拒否を確かめる形に作り直し、あわせて「`SUITES` に実行関数の
+    無い行が 0 件」を検査する（検査を緩めず、関数なしの新規登録はその場で落ちる）。
+  - **PLAN 訂正（turn 12 / T9 実測）**: T6 の `lifecycle` 倍率ケースを T9 で直した（T9 の対象
+    ファイル内）。**倍率上書きを消してしまう操作が 2 種類**ある。`locator.screenshot()` と、
+    **新しい CDP セッションの attach**（別セッションが入れた上書きが外れる）。後者は未知だったため
+    撮影が毎回 DPR を 1 へ戻しており、次の倍率で再描画が起きず 15 秒で時間切れになっていた
+    （turn 9・11 でたまたま通っていた既存の不安定さ。T8 の木でも再現）。撮影をこのケースが持つ
+    同じセッションに変え、通知はブラウザ自身の再描画を先に待ってから来ないときだけ合成する形に
+    した。どちらで動いたかは倍率ごとに台帳へ残す。
 
 ## 決めた事項
 

@@ -93,11 +93,19 @@ it("refuses suites that do not exist", () => {
   expect(() => selectSuites([])).toThrow("at least one --suite");
 });
 
-it("refuses suites a later task still owns rather than skipping them", () => {
-  for (const suite of SUITES.filter((entry) => !entry.run))
-    expect(() => selectSuites([suite.name])).toThrow(
-      `Suite "${suite.name}" is not implemented yet (owner ${suite.owner})`,
-    );
+it("refuses a suite that has no runner rather than skipping it", () => {
+  // T9 closed the plan, so every registered suite now has a runner and this guard has no
+  // real suite left to refuse. The table is injected instead of weakening the guard.
+  const table = [
+    { name: "baseline", owner: "T1", run: () => {} },
+    { name: "later", owner: "T99", run: null },
+  ];
+  expect(() => selectSuites(["later"], table)).toThrow(
+    'Suite "later" is not implemented yet (owner T99)',
+  );
+  expect(() => selectSuites(["later", "baseline"], table)).toThrow("not implemented yet");
+  expect(() => selectSuites(["nope"], table)).toThrow('Unknown suite "nope"');
+  expect(selectSuites(["baseline"], table).map((suite) => suite.name)).toEqual(["baseline"]);
   expect(selectSuites(["baseline"]).map((suite) => suite.name)).toEqual(["baseline"]);
 });
 
@@ -114,15 +122,11 @@ it("requires exactly one browser route and a well-formed viewport", () => {
   expect(() => parseArguments(["--unknown"])).toThrow('Unknown argument "--unknown"');
 });
 
-it("exits non-zero for an unimplemented suite before starting a server or a browser", () => {
-  // `roles` is implemented from T2 on; this check needs a suite a later task still owns.
-  const pending = SUITES.find((suite) => !suite.run);
-  expect(pending).toBeTruthy();
-  const result = runner(["--suite", pending.name]);
-  expect(result.status).toBe(1);
-  expect(result.stderr).toContain(`Suite "${pending.name}" is not implemented yet`);
-  expect(result.stdout).not.toContain("Fixture server");
-  expect(result.stdout).not.toContain("Launched browser");
+it("has a runner for every registered suite now that the plan is closed", () => {
+  // The milestone ends with no suite left for a later task. A new entry without a runner
+  // has to fail here rather than be discovered when the gate reports a pass it never ran.
+  expect(SUITES.filter((suite) => !suite.run).map((suite) => suite.name)).toEqual([]);
+  expect(SUITES.map((suite) => suite.name)).toContain("distribution");
 });
 
 it("exits non-zero for an unknown suite and names the registered suites", () => {

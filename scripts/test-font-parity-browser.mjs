@@ -111,8 +111,11 @@ export async function main(argv, log = console.log) {
       log(`${suite.name}\t${suite.run ? "implemented" : "pending"}\t${suite.owner}`);
     return;
   }
-  // Reject unknown and not-yet-implemented suites before any server or browser starts.
+  // Reject unknown and not-yet-implemented suites before any server or browser starts, and
+  // let a suite refuse for its own reason — the distribution suite needs the generated
+  // artifacts to already exist, and says which command produces them.
   const suites = selectSuites(options.suites);
+  for (const suite of suites) suite.precheck?.();
   const evidenceDir = await prepareEvidenceDir(resolve(root, options.evidenceDir));
   let interrupted;
   let server;

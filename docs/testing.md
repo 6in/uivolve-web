@@ -38,6 +38,7 @@ AI向けスキルは[スキル案内](skills.md)に従う。`tests/skills.test.j
 | `tests/page-navigation.test.js`               | 別のYAML/Rhaiへの遷移・往復、失敗時の画面保持、state検証・上限・URL拒否・古い失敗の無視 |
 | `tests/native-extensions.test.js`             | 実WASMでのRust関数呼び出し、Unicode・キャプチャ・置換、集計、容量と型エラー時の巻き戻し |
 | `tests/platform-features.test.js`             | YAML/JSON互換、URL解決、型・bind・動的部品の検証、保存依頼・完了・中止とOPFS確定        |
+| `tests/font-parity-runner.test.js`            | 最終判定gateの順序と失敗伝播、未知suiteの拒否、xtypeとkindの照合、状態一覧の担当suite   |
 
 ## 部品変更の確認
 
@@ -77,7 +78,9 @@ WebMCPはJS単体テストに加え、対応ブラウザの登録・発見・実
 
 HTTP取得・認証に触れた場合は、別オリジンの実HTTPサーバーでAuthorizationのOPTIONS→GET、401/403、未許可のscript URL、リダイレクトの拒否、JWT無効化・再読み込み後の破棄を確認する。画面・スクリプトの失敗で以前のstate/revision、テーマの失敗で以前の配色が残ることを見る。CORSはmock fetchだけでは検証できないので、ブラウザでも確認する。
 
-現在、恒久的なPlaywright実行スクリプトやCI用ブラウザ環境はリポジトリへ同梱していない。ローカルのブラウザ確認では、一時スクリプトで上記の操作を実行できる。ブラウザテストを常設する場合は、ランタイム・サーバー起動・OSとブラウザの対象範囲を先に固定する。
+DOM版とCanvas版で同じ役割の文字が同じ実効サイズで出ているかは、[レンダラー間のフォントサイズ台帳](renderer-font-parity.md)に実測値・検査方法・限界をまとめている。CSSの宣言値を読み比べるのではなく、`getComputedStyle`の計算値と実際の`fillText`/`measureText`を実ブラウザで採って突き合わせる。
+
+恒久的なPlaywright実行スクリプトは2系統を同梱する。OPFS転送は`bun run test:transfer:browser`（`scripts/test-transfer-browser.mjs`）と最終判定の`bun run verify:transfer`。レンダラー間のフォントサイズは`bun scripts/test-font-parity-browser.mjs --suite <名前>`（`--list`で登録済みsuiteと実装状態、`--browser-path`/`--browser-endpoint`でブラウザ経路、`--viewport`で幅、`--evidence`で証跡の出力先を選ぶ）と最終判定の`bun scripts/verify-font-parity.mjs`。対象範囲は先に固定してあり、どちらもLinuxのシステムChromium（headless）を使い、`bunx vp dev`を127.0.0.1のOS自動割当ポートで自分で起動して終了させる。既存のサーバーへは接続しない。新しい依存は追加しておらず、既存の`playwright` devDependencyだけを使う。CI用ブラウザ環境は引き続きリポジトリへ同梱していないので、これらは手元で実行する。
 
 ## レビューに残す情報
 

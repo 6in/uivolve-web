@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <title>font parity — distribution embed</title>
+    <!-- The generated stylesheet, exactly as docs/runtime-distribution.md tells an
+         embedding host to load it. No font-size is declared anywhere on this page: the
+         only one is the value ?host= puts on #dist-host, which is the variable under test. -->
+    <link rel="stylesheet" href="./runtime/index.css" />
+    <style>
+      body {
+        margin: 0;
+      }
+      #dist-host {
+        display: flex;
+        align-items: flex-start;
+        gap: 16px;
+      }
+      #dist-host > div {
+        flex: 1 1 0;
+        min-width: 240px;
+      }
+      #dist-error {
+        color: #a65640;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="dist-host"></div>
+    <pre id="dist-error" hidden></pre>
+    <script type="module">
+      import { createRuntime } from "./runtime/index.js";
+
+      const params = new URL(location.href).searchParams;
+      const host = document.getElementById("dist-host");
+      host.style.fontSize = params.get("host") ?? "16px";
+      const domStage = document.createElement("div");
+      domStage.id = "dist-dom";
+      const canvasStage = document.createElement("div");
+      canvasStage.id = "dist-canvas";
+      // The recorder keys its buckets on the canvas element and names them by id, so the
+      // bitmap is named before the runtime takes ownership and paints the first frame.
+      const canvas = document.createElement("canvas");
+      canvas.id = "font-parity-canvas";
+      canvas.tabIndex = 0;
+      canvas.setAttribute("aria-label", "UI Canvas");
+      canvasStage.append(canvas);
+      host.append(domStage, canvasStage);
+
+      const errors = [];
+      try {
+        const runtime = await createRuntime({
+          // The screen and its script come from the generated minimal app; the WASM module
+          // is the one sitting beside the generated index.js (the documented default).
+          baseUrl: new URL("./minimal/", location.href),
+          surfaces: [
+            { element: domStage, renderer: "dom" },
+            { element: canvasStage, canvas, renderer: "canvas" },
+          ],
+          onError: (error) => {
+            if (error) errors.push(error.message);
+          },
+        });
+        const theme = params.get("theme");
+        if (theme) {
+          const response = await fetch(new URL(`./themes/${theme}.json`, location.href));
+          if (!response.ok)
+            throw new Error(`テーマ ${theme} を取得できません (${response.status})`);
+          runtime.theme(await response.json());
+        }
+        await runtime.load("pages/home.yaml");
+        await runtime.whenIdle();
+        await document.fonts.ready;
+        window.__distEmbed = { runtime, errors, host, domStage, canvasStage, canvas };
+      } catch (error) {
+        const box = document.getElementById("dist-error");
+        box.hidden = false;
+        box.textContent = error.stack ?? String(error);
+        window.__distEmbedError = error.message ?? String(error);
+      }
+    </script>
+  </body>
+</html>

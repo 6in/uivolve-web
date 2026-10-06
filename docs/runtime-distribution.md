@@ -94,6 +94,8 @@ await ui.load("pages/home.yaml");
 
 CSSとテーマ変数は表示領域の`.uivolve-runtime`へ適用する。外側のbodyや見出し、余白は利用側が決める。表示領域はランタイム専用の空要素にする。最小幅は240pxなので、それ以下の領域ではクリップされる。Canvasのフォーカス、入力、ResizeObserver、外側クリック、進行中の取得は`dispose()`で解除する。
 
+生成した`runtime-dist/`と`app-dist/`は実ブラウザへ読み込み、DOMとCanvasの実効文字サイズを突き合わせる検査の対象にしている。基準はDOM側の役割別の宣言値で、部品の文字サイズはホストの`font-size`を継承しない（`.uivolve-runtime`自体は継承するが、ボタン・ラベル・入力欄などの文字サイズはランタイムのCSSが宣言している）。実測では外側を16pxにしても20pxにしても表示領域内の文字サイズは変わらない。検査方法と限界は[レンダラー間のフォントサイズ台帳](renderer-font-parity.md)を参照。
+
 認証は既存の`ResourceClient`を共有する。`createApplication`の`authentication`、または起動後の`app.runtime.resources.setAuthentication(...)`で[JWT・リフレッシュ設定](authentication.md)を渡せる。トークンは公開する`app.json`やDSLに埋め込まない。認証付き配信では配信キャッシュを有効にしない。
 
 ## 次の配布段階

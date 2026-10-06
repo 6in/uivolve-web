@@ -8,12 +8,16 @@ DOM 版と Canvas 版が同じ役割の文字を同じ実効サイズで表示�
 - 最終判定: [`scripts/verify-font-parity.mjs`](../scripts/verify-font-parity.mjs)
 - サイズの単一源: [`src/runtime.css`](../src/runtime.css) の custom properties と
   [`src/font-metrics.js`](../src/font-metrics.js)
-- 観測コード: [`tests/browser/font-parity.mjs`](../tests/browser/font-parity.mjs) ・
-  [`tests/browser/font-parity-harness.js`](../tests/browser/font-parity-harness.js) ・
-  [`tests/browser/font-parity.html`](../tests/browser/font-parity.html)
+- 観測コード: [`tests/browser/font-parity.mjs`](../tests/browser/font-parity.mjs)（suite 本体）・
+  [`tests/browser/font-parity-observe.js`](../tests/browser/font-parity-observe.js)（ページへ入れる観測関数。
+  何も import しないので配布物のページへもそのまま置ける）・
+  [`tests/browser/font-parity-harness.js`](../tests/browser/font-parity-harness.js)（開発サーバー上の fixture 操作）・
+  [`tests/browser/font-parity.html`](../tests/browser/font-parity.html) ・
+  [`tests/browser/font-parity-dist-embed.html`](../tests/browser/font-parity-dist-embed.html)（配布物を読む組み込みホスト）
 - 補助 fixture: [`tests/browser/font-parity-text.json`](../tests/browser/font-parity-text.json)（文字の形）・
   [`tests/browser/font-parity-edit.json`](../tests/browser/font-parity-edit.json)（列エディタの kind）・
-  [`tests/browser/font-parity-surface.json`](../tests/browser/font-parity-surface.json)（図表・media・文字アイコン）
+  [`tests/browser/font-parity-surface.json`](../tests/browser/font-parity-surface.json)（図表・media・文字アイコン）・
+  [`tests/browser/font-parity-states.json`](../tests/browser/font-parity-states.json)（状態と xtype の穴埋め）
 - runner 自体の検査: [`tests/font-parity-runner.test.js`](../tests/font-parity-runner.test.js)
 
 ## 実行方法
@@ -26,6 +30,16 @@ bun scripts/test-font-parity-browser.mjs --suite editing
 bun scripts/test-font-parity-browser.mjs --suite surfaces
 bun scripts/test-font-parity-browser.mjs --suite lifecycle
 bun scripts/test-font-parity-browser.mjs --suite matrix
+bun run build:runtime
+bun run build:minimal
+bun scripts/test-font-parity-browser.mjs --suite distribution
+```
+
+最終判定は上をまとめた 1 本です（`baseline` は修正前の台帳なので含みません）。
+
+```bash
+bun scripts/verify-font-parity.mjs            # 14 手順を順に実行し、失敗・中断で非 0
+bun scripts/verify-font-parity.mjs --print-plan  # 実行する手順の一覧だけを表示
 ```
 
 - `--suite <name>` は繰り返し指定できます。`--list` で登録済み suite と実装状態を表示します。
@@ -40,6 +54,10 @@ bun scripts/test-font-parity-browser.mjs --suite matrix
 - `--viewport 390x844` で幅を変えられます。既定は `1440x1000`、`deviceScaleFactor` は 1 です。
 - 証跡（JSON・PNG）は `--evidence <dir>`（既定 `.gsd-lite/logs/renderer-font-size-parity`）へ
   書き出します。
+- `distribution` は生成済みの `runtime-dist/` と `app-dist/` を測ります。**この suite は何も
+  build しません。** 足りないファイルがあれば、サーバーとブラウザを起動する前に、それを作る
+  コマンド名（`bun run build:runtime` / `bun run build:minimal`）を挙げて非 0 で終了します
+  （ここで build し直すと「build したもの」と「測ったもの」のずれを隠してしまうため）。
 
 ## suite の一覧と実装状態
 
@@ -51,10 +69,14 @@ bun scripts/test-font-parity-browser.mjs --suite matrix
 | `surfaces`     | T5       | document / figure / dialog / media の実効倍率（T5 済）                                                  |
 | `lifecycle`    | T6       | フォント完了・DPR 変更時の再描画と解放（T6 済）                                                         |
 | `matrix`       | T8       | 幅・拡大・配色の行列と代表画像（T8 済）                                                                 |
-| `distribution` | T9       | 生成した配布物からの独立 runtime / minimal 確認                                                         |
+| `distribution` | T9       | 生成した配布物からの独立 runtime / minimal 確認（T9 済）                                                |
 
-未実装の suite は**成功として扱わず、非 0 で終了します**。登録されていない名前も非 0 です。
-どちらもサーバーとブラウザを起動する前に判定します。`roles` は T2・T3・T7 が分担する 1 つの
+登録済みの suite は**全て実装済み**になりました（T9 で `distribution` を実装）。runner が持つ
+「実行する関数が無い suite は拒否する」という歯は残っていて、`tests/font-parity-runner.test.js`
+が注入した表で拒否を確かめ、あわせて `SUITES` に関数の無い行が 1 つも無いことを検査します。
+新しい suite を関数なしで登録すると、その時点で vitest が落ちます。
+登録されていない名前も非 0 です。どちらもサーバーとブラウザを起動する前に判定します。
+`roles` は T2・T3・T7 が分担する 1 つの
 suite です。T2 が DOM の宣言値・親コンテキスト・サイズ解決器を検査し、T3 が同じ suite へ
 Canvas の描画／計測との突き合わせを足し、T7 が kind と xtype の二層 coverage と状態の一覧を
 足しました（実行時のログに検査件数を出します）。
@@ -648,13 +670,14 @@ fixture サーバーの origin の URL（`/tests/browser/font-parity-probe-<id>.
 
 ### 限界・代用（実ブラウザズームと CDP のイベント配信）
 
-| 項目                           | 状態                                                                                                                                                                     |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 実ブラウザの 100 / 200% ズーム | **未実施**。`lifecycle` は CDP の `Emulation.setDeviceMetricsOverride` で倍率だけを変える。拡大そのものは T8                                                             |
-| 解像度クエリの `change` 配信   | CDP の倍率上書きは `devicePixelRatio` と `MediaQueryList.matches` を更新するが **`change` を配信しない**。そこで購読済みの実 `MediaQueryList` 上でイベントだけを発火する |
-| 上の代用で何が実物か           | 倍率・bitmap・変形・計測値はすべてブラウザ自身の値。合成しているのは**通知の配達だけ**。購読と張り直しは `tests/runtime.test.js` の単体試験でも確認                      |
-| 実 IME                         | 未実施（T4 と同じ）。合成 composition と分けて記録                                                                                                                       |
-| 字体の配信元                   | 実フォントファイルを読むため、この環境以外では `FONT_PARITY_TEST_FONT` の指定が要る。見つからない場合は候補を並べて非 0 で終了する                                       |
+| 項目                           | 状態                                                                                                                                                                                                                                                                                                                                   |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 実ブラウザの 100 / 200% ズーム | **未実施**。`lifecycle` は CDP の `Emulation.setDeviceMetricsOverride` で倍率だけを変える。拡大そのものは T8                                                                                                                                                                                                                           |
+| 解像度クエリの `change` 配信   | CDP の倍率上書きは `devicePixelRatio` と `MediaQueryList.matches` を更新するが **`change` を配信しない**。そこでまず**ブラウザ自身の再描画を 1.5 秒待ち**、来なかったときだけ購読済みの実 `MediaQueryList` 上でイベントを発火する。どちらで動いたかは倍率ごとに台帳へ残す（`deliveries`。実測は 4 回とも合成）                         |
+| 上の代用で何が実物か           | 倍率・bitmap・変形・計測値はすべてブラウザ自身の値。合成しているのは**通知の配達だけ**。購読と張り直しは `tests/runtime.test.js` の単体試験でも確認                                                                                                                                                                                    |
+| 倍率上書きを消してしまう操作   | **2 種類ある**（T9 で実測）。`locator.screenshot()` は Playwright が自前の metrics を復元する。**新しい CDP セッションを張ると、別のセッションが入れた上書きが外れる**（どちらも 2 → 1 に戻り `(resolution: 2dppx)` が一致しなくなる）。そのため撮影はこのケースが持っている同じセッションで行う。`captureBeyondViewport` 自体は無関係 |
+| 実 IME                         | 未実施（T4 と同じ）。合成 composition と分けて記録                                                                                                                                                                                                                                                                                     |
+| 字体の配信元                   | 実フォントファイルを読むため、この環境以外では `FONT_PARITY_TEST_FONT` の指定が要る。見つからない場合は候補を並べて非 0 で終了する                                                                                                                                                                                                     |
 
 ### baseline の強制再描画について
 
@@ -973,6 +996,116 @@ T8 は細工をせずに済みました。実装中に上の 3 つの穴が**実
 | `canvas button "▾" は 13px（役割 body）。許可: caption=12px`（720px の条件） | Canvas の役割サイズ検査（対応付けの誤り） |
 | `入力欄 volume の位置 … が部品の矩形 … の外にある`                           | 入力位置の検査（UA margin の 2px を実測） |
 | `ズームを戻したフレームが拡大前のフレームと一致しない（倍率が累積している）` | 100→200→100% の往復検査                   |
+
+## 生成した配布物からの確認（T9）
+
+### 決めたこと — 測る対象を `src/` から生成物へ替える
+
+ここまでの suite は、開発サーバー越しにこのリポジトリの `src/` を測っています。`distribution`
+だけは**利用者が実際に入れるファイル**（`bun run build:runtime` の `runtime-dist/` と
+`bun run build:minimal` の `app-dist/`）を測ります。
+
+- 配信元はこの suite が所有する静的サーバー（127.0.0.1・OS 自動割当ポート）です。`bunx vp dev`
+  も `src/` も経由しません。
+- 観測関数は `tests/browser/font-parity-observe.js` を**何も import しない形**に切り出し、
+  配布物の隣へ置いて `import("/observe.js")` で読みます。これにより、ページが触る CSS と
+  レンダラーは生成物だけになります（harness は開発サーバー上の fixture 操作を担当したまま）。
+- 作業場所は毎回作り直します（`dist-host/`）。古いコピーが測定対象になる余地を無くすためです。
+- **この suite は build しません。** 足りないファイルはサーバーとブラウザの起動前に、
+  それを作るコマンド名を挙げて非 0 で終了します。最終 gate は `build:runtime` /
+  `build:minimal` をこの suite の前に実行するので、ここで build し直すと「build したもの」と
+  「測ったもの」のずれを隠してしまいます。
+
+測る 2 面:
+
+| 面        | ページ                                                                                       | 読むもの                                                                                          |
+| --------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `embed`   | `font-parity-dist-embed.html`（`docs/runtime-distribution.md` の手順どおりの組み込みホスト） | `runtime-dist/index.css` と `index.js` の `createRuntime`。DOM 面と Canvas 面を同じページに並べる |
+| `minimal` | `app-dist/index.html`（生成された最小アプリ。1 文字も編集しない）                            | `app-dist/runtime/` の生成物。`?renderer=dom` / `?renderer=canvas` で 2 回読む                    |
+
+`runtime-dist/` と `app-dist/runtime/` が**同じバイト列**であることを sha256 で確かめます
+（別物なら片方を測っても他方の証拠になりません）。実測: `index.js` `389f58ee2c10…` /
+`index.css` `7f0d87a3261a…` / `engine.wasm` `cac490437546…` が 3 件とも一致。
+
+### 自動数値結果（2026-10-07 実測・Chromium 152.0.7977.64）
+
+`bun scripts/test-font-parity-browser.mjs --suite distribution`。
+2 面 × ホスト font-size 16px/20px × light/dark の **8 ケース**。
+
+| 項目                      | 値                                                                  |
+| ------------------------- | ------------------------------------------------------------------- |
+| ケース                    | 8（embed 4・minimal 4）                                             |
+| DOM 文字レコード          | 32 件（各ケース 4 件）                                              |
+| Canvas 描画               | 32 件（各ケース 4 件）・部品に結び付かない描画 0 件                 |
+| 対応付いた比較            | 32 件・**実効サイズ差 0 件**（しきい値 0.01px）                     |
+| 役割サイズの契約違反      | **0 件**                                                            |
+| 条件で動いた役割          | **0 件**（面ごとに全条件で同じ値）                                  |
+| 編集                      | 16 本（各ケース DOM 1・Canvas 1）・すべて **13px**                  |
+| ページ/ランタイムのエラー | 0 件                                                                |
+| 代表画像                  | 12 枚                                                               |
+| 証跡                      | `distribution.json`（限界・ハッシュ・ケース・編集・画像・全比較行） |
+
+ホスト font-size を変えても役割のサイズは動きません:
+
+| 役割          | 宣言 | host 16px | host 20px |
+| ------------- | ---- | --------- | --------- |
+| `field-label` | 11px | 11px      | 11px      |
+| `label`       | 11px | 11px      | 11px      |
+| `button`      | 12px | 12px      | 12px      |
+| `field-input` | 13px | 13px      | 13px      |
+
+- ステージ要素（`.uivolve-runtime`）自体の computed font-size は 16px / 20px と**ホストに追従
+  します**（`src/runtime.css` は `font-size` を宣言していません）。動かないのは部品の役割サイズで、
+  これは役割ごとの宣言が効いているためです。
+- Canvas の bitmap は embed 712x180、minimal 718x180 で、どちらも CSS 寸法と同じ（DPR 1）。
+- 日本語は 4 役割すべてで実測しています（`名前` / `例：太郎` / `挨拶する` /
+  `名前を入力して「挨拶する」を押してください。`）。
+
+### 編集（両面 × 8 ケース = 16 本）
+
+ランタイムの API には触れず、**画面に出ている文字だけ**を根拠にします（最小アプリは API を
+公開しないため）。面ごとに別の名前を打つので、「挨拶が変わった」ことはその面の操作でしか
+起こせません。
+
+1. 入力欄をクリックする（Canvas 面は Scene の矩形から求めた点を実マウスでクリックし、
+   `.canvas-editor` が開くのを待つ）
+2. `ControlOrMeta+a` → 実キー入力で `太郎`（DOM 面）/ `花子`（Canvas 面）
+3. `document.activeElement` の computed font-size を読む → **16 本すべて 13px**
+4. 確定（Canvas 面は `Enter` でオーバーレイを閉じてから、描かれたボタンを実マウスで押す）
+5. その面に `Hello 太郎` / `Hello 花子` が現れる／描かれるまで待つ
+
+Canvas 面は 16 本中 8 本で `canvas-editor` クラスの入力欄が 1 つ開き、DOM 面はページ本来の
+`input` に focus が入りました（オーバーレイ 0 件）。
+
+### 代表画像と目視結果（12 枚・2026-10-07）
+
+`distribution-embed-<host>-<テーマ>.png`（4 枚）と
+`distribution-minimal-<renderer>-<host>-<テーマ>.png`（8 枚）。
+
+| 画像の組                       | 見たこと                                                                                                                                                      |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| embed / 16px / light           | 左の DOM 面と右の Canvas 面で `名前` `例：太郎` `挨拶する` `名前を入力して…` がすべて同じ大きさ・同じ行位置。欠け・重なりなし                                 |
+| embed / 20px / dark            | 16px の組と文字の大きさが変わらない。暗い配色でも両面一致で、ボタン内の文字が枠からはみ出していない                                                           |
+| minimal / dom 対 canvas / 20px | 生成 HTML 側の見出し `Hello World`・リンク `DOMで表示` `Canvasで表示`・案内文は**ホストの 20px に追従して大きくなる**一方、枠内の部品は 16px の組と同じ大きさ |
+| minimal / dom 対 canvas / 16px | 2 枚の枠内が同じ大きさ・同じ折り返し位置。日本語の `例：太郎` も同じ                                                                                          |
+| minimal / canvas / 16px / dark | 枠内だけが暗い配色になり、ホストのページは明るいまま（ホストがページを持つという契約どおり）。文字サイズは light の組と同じ                                   |
+
+### 限界（配布物の面に固有のもの）
+
+| 項目                     | 状態                                                                                                                                                                                                                                                                                  |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 最小アプリの 2 面        | `createApplication` は 1 ページにつき 1 レンダラーを描くため、`?renderer=dom` と `?renderer=canvas` の **2 回読み込み**で測る。Canvas 読み込みは Scene を公開しないので、DOM 読み込みで採った部品矩形で描画を対応付け、クリック位置を決める。viewport とホスト font-size は両方で同じ |
+| 最小アプリのテーマ       | 生成された `app.json` はテーマを指していない。dark のケースは `app-dist` の**無編集のコピー**に、テーマを指す `app.json` を置いた**別のホスト構成**（`dist-host/minimal-dark/`）。`minimal/` 側はバイト列のまま                                                                       |
+| ホストの font-size       | ホストページ側の宣言なので、ページの CSS として与える（embed は `?host=`、生成 HTML は `font-size` を宣言していないので `body` 規則を足す）。生成物は編集しない                                                                                                                       |
+| 画面                     | Hello World 1 画面。全役割の網羅は `roles`（T7）、幅・拡大・配色の網羅は `matrix`（T8）が `src/` 側で担当し、ここは**配布経路が同じ値を出すか**だけを見る                                                                                                                             |
+| 実ブラウザズーム・実 IME | 未実施（T8 / T4 と同じ）                                                                                                                                                                                                                                                              |
+
+### 検査に歯があることの確認
+
+| 外した／壊したもの                               | 出た失敗                                                                                   |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| `runtime-dist/index.css` を退避して suite を起動 | `Suite "distribution" needs the generated artifacts.` と `bun run build:runtime`（起動前） |
+| `SUITES` に実行関数の無い行を足す                | `tests/font-parity-runner.test.js` の「全 suite に runner がある」が落ちる                 |
 
 ## 実行環境（T1 で確定）
 
