@@ -12,6 +12,7 @@ const images = [
   "dom-canvas.png",
   "orders.png",
   "ai-workflow.png",
+  "eyecatch.png",
 ];
 const sections = [
   "出発点",
@@ -223,8 +224,7 @@ export async function checkArticle({ stage = "complete", cwd = root } = {}) {
         (l) =>
           !l[1] &&
           (resolve(directory, l[3].split(/[?#]/, 1)[0]) === resolve(cwd, target) ||
-            l[3].split(/[?#]/, 1)[0] ===
-              `https://github.com/6in/uivolve-web/blob/main/${target}`),
+            l[3].split(/[?#]/, 1)[0] === `https://github.com/6in/uivolve-web/blob/main/${target}`),
       )
     )
       throw new Error(`Missing complete example link: ${target}`);

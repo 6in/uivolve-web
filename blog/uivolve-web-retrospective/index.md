@@ -1,5 +1,7 @@
 # 🧩 モックから「動く画面」へ！uivolveをRust/WASMで育ててみた
 
+![画面定義のJSON/YAMLとRhaiをRust/WASMエンジンが受け取り、DOMとCanvasの両方にHello 太郎を表示する様子を描いたアイキャッチ](./eyecatch.png)
+
 uivolve-webは、**JSONやYAMLで書いた画面定義を、そのままブラウザで動かすUIエンジンの試作**です。ボタンを押したときの処理はRhaiという小さなスクリプトで書き、Rust/WASMのエンジンが状態と配置を決めて、DOMとCanvasの両方へ表示します。
 
 目指しているのは、AIで素早く画面を試作しながら、UIライブラリの流行に振り回されず長く使えるUI基盤を作ることです。そして、作った画面定義と基盤を顧客自身も使い、内製で画面を育てていける状態につなげたいと考えています。
@@ -122,14 +124,12 @@ expect(engine.layout(500).widgets.find((w) => w.key === "greetingLabel").text).t
 
 挨拶が動くと、次はデータを取りに行きたくなります。ここからの数日は、こんな順番で進みました。
 
-
-| 日付     | 追加したもの                                        |
-| ------ | --------------------------------------------- |
-| 10/2   | それまでの試作をリポジトリへ取り込み、レイアウトとJWT認証を追加             |
-| 10/3   | Hello World、HTTPでのJSON取得、型付きstateと保存、OPFS、RPC |
-| 10/4   | 単体で配布できるランタイム、HTTPアダプター、Workerモック             |
-| 10/4〜5 | 大きなファイルの転送                                    |
-
+| 日付    | 追加したもの                                                    |
+| ------- | --------------------------------------------------------------- |
+| 10/2    | それまでの試作をリポジトリへ取り込み、レイアウトとJWT認証を追加 |
+| 10/3    | Hello World、HTTPでのJSON取得、型付きstateと保存、OPFS、RPC     |
+| 10/4    | 単体で配布できるランタイム、HTTPアダプター、Workerモック        |
+| 10/4〜5 | 大きなファイルの転送                                            |
 
 困ったのは、Rhaiが同期実行だということ。通信が終わるまでその場で待つ、という書き方ができません。そこで、Rhaiは「これをお願い」と依頼を出すだけにしました。この依頼を**effects**と呼んでいます。
 
@@ -245,4 +245,3 @@ researchからverifyまでは20回の起動で、動いていた時間の合計�
 - [テストの案内](https://github.com/6in/uivolve-web/blob/main/docs/testing.md)
 - [OPFS開発の振り返り記録](https://github.com/6in/uivolve-web/blob/main/.gsd-lite/reflect/20261005-0843-opfs-file-transfer.md)
 - [OPFS開発の進捗記録](https://github.com/6in/uivolve-web/blob/main/.gsd-lite/archive/opfs-file-transfer/PROGRESS.md)
-
