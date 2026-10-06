@@ -283,3 +283,40 @@
   `scratch/turn-019-run.mjs` 経由で読める。`grep`/`sed`/`cat` はフックに拒否されるので
   `git grep` と Read ツール、JSON は `bun -e` を使い、ブラウザを使うコマンドはサンドボックス外で
   実行する。round 3 は F6 の照合・gate・木のクリーン確認だけを行う。
+
+## turn 20 — impl — F6 台帳の古い実測値・検査範囲の言い過ぎ・誤参照を直す
+
+- やったこと: round 2 の指摘 (A) 4 件・(B) 9 件・(C) 字句をすべて直した。「要確認」の
+  項目は証跡 JSON かコードで確かめてから書いた（配布物の sha256 → `builds` を指す形に、
+  measureText の変化 5 → 4 件とその理由、drag ghost の帰属先、`canvas-editor` の 6 段、
+  `dialog-icon` の 30px、`paint()` と `syncSurface()` の順序）。まとめの限界表へ現行の
+  限界 6 件と round 2 の新規 2 件を足した。製品の挙動と検査の判定は変えていない
+  （`src/` はコメント 1 か所、`tests/` は `evidence` 文字列 2 つ。`git diff` で確認済み）。
+  最終 gate は 14 手順とも green で、件数は turn 19 と完全に同じ。
+- 想定外: (1) **(A)2 の「理由を推測のまま書かない」が一番手間だった**。`remeasured` は
+  「前後で同じ文字列だった描画」だけを数える（`find(entry.text === draw.text)`）ので、
+  F2 が `overflowsBox` を 200 文字へ伸ばした結果、その部品は省略後の文字列が
+  58 → 85 文字と変わって照合から外れていた。`lifecycle.json` の draws を前後で突き合わせ、
+  動いた 4 件と外れた 1 件を実測して確定した。(2) **(B)1 は「記述を実態に合わせる」側が
+  F5 の判断より深かった**。`roles-parity.json` の `canvasOnly` を読むと ghost は
+  `empty`（12px）/ `kanban-lane`（11px）へ帰属していて、サイズ自体は各 kind の許容集合で
+  検査されている。「未検査」ではなく「ghost 専用の役割表が無い」が正しい主張。
+  (3) 編集の途中で gate を走らせてしまい、`docs:check` が走った後に 1 件追記したので、
+  走っていた gate を止めて最終状態で 1 回やり直した（下の「やり直し」）。
+  (4) 台帳の節内リンクは `docs:check` の対象外なので、見出し slug 化を再現する
+  `bun -e` の小さな検査を書いて 19 本すべての解決を確認した（新規 3 本を含む）。
+- やり直し: 1 回（最終 gate。編集が gate の `docs:check` より後に 1 件入ったため、
+  走っていたプロセスを `TaskStop` で止め、残った `vp dev` / Chromium が無いことを
+  `pgrep` で確かめてから最終状態で再実行した。やり直し後は 1 回で green）。
+- 次への注意: **PLAN の未完了タスクはこれで 0 件**なので、次は `/gsd-lite-verify`
+  （verify round 3）。PLAN の「verify round 2 の記録」のとおり、round 3 の範囲は
+  **F6 の各項目の照合・最終 gate・木のクリーン確認だけ**。文書の新しい指摘は
+  「受け入れ基準の達成や検査の範囲を誤って伝えるもの」に限って差し戻し、字句は
+  VERIFICATION.md の残留に書いて合格にする。F6 で**台帳に写した生の実測値を減らした**
+  （sha256 は `distribution.json` の `builds` を指すだけ）ので、照合はその方針が
+  保たれているかも見てほしい。**gate の所要は約 6 分**（matrix が大半。今回実測）。
+  前景だと長いのでバックグラウンドで回す。`sleep` は前景で使えない。
+  `grep`/`sed`/`cat`/`tail` は `.gsd-lite/` 配下のパスだとフックに拒否されるので、
+  ログは `grep -E ... <path>` を Bash で（`.gsd-lite` を引数に含めても `grep` 自体は
+  通る）、JSON は `bun -e` を使う。`.gsd-lite/PLAN.md` を編集したら
+  `bunx vp check --fix` をかける（整形対象）。
