@@ -395,6 +395,28 @@ bun run docs:check
     **「条件を動かして測った範囲」**を新設した（表 1 つ）。「範囲を明記する」を各タスクの
     節に分散して書くと、`matrix` が何を測っていないかが 3 か所に散って読めないため。
 
+- [ ] F6: 台帳の古い実測値・検査範囲の言い過ぎ・誤参照を直す（verify round 2）
+  - 背景: round 2 で最終 gate（14 手順）は green、round 1 のプローブは全条件で修正を確認、F1・F3・F4 の変異で該当 suite が非 0 になることも再確認した。**製品コードの挙動と検査の判定に指摘は無い**。残ったのは文書で、(A) F2〜F4 が証跡を動かしたのに台帳が古い値のまま（F5 の完了基準「F1〜F4 で変わった件数・挙動もここで最終値に揃える」の取りこぼし）、(B) F3〜F5 が書き足した文の言い過ぎ・誤り、(C) 字句。行番号は 8c8d76e 時点の `docs/renderer-font-parity.md`。
+  - 完了基準: 下の全項目を直し、`bun scripts/verify-font-parity.mjs` が green、直した旧文言が残っていないことを `git grep` で確認する。**製品の挙動と検査の判定は変えない**（`src/` はコメント 1 か所、`tests/` は証跡へ書き出す文字列 2 つだけ）。「要確認」と書いた項目は verify が自分で再確認していないサブエージェントの報告なので、証跡 JSON かコードで確かめ、該当すれば直し、該当しなければ PROGRESS に根拠を書く。
+    - (A) 古い実測値:
+      1. L1228–1229 の sha256（`index.js` `389f58ee2c10…` / `index.css` `7f0d87a3261a…`）は現在の `distribution.json` の `builds`（`ba581f54a994…` / `146fca46b9c1…`）と違う（`engine.wasm` `cac490437546…` だけ一致）。`src/` を変えるたびに変わる値なので**台帳へ写さず**、「値は `distribution.json` の `builds`。3 件とも両側で一致」と書く（このタスク自身のコメント修正でも `index.js` は変わる）。
+      2. L710「同じ文字列の `measureText` が **5 件**変化」→ `lifecycle.json` の `fonts-arrival.remeasured` は 4。現在値に直し、変わった理由を実測で確かめて 1 行書く（F2 が `overflowsBox` を伸ばした後に変わった可能性。推測のまま書かない）。同じ節の他の値も `lifecycle.json` と照合する。
+      3. `tests/browser/font-parity.mjs:1703` / `:1709` の `evidence` 文字列（「media 案内 46 件」「遅延配信の前後 5 ケース」）が `roles-coverage.json` の `states` に書き出され、台帳 L938–939 の記述と食い違う。L938–939 と同じ表現に揃える。
+      4. L953「`lifecycle` の 5 ケース」→ T6 の 5 ケース（suite は F3 の 6 ケースを足して 11）。
+    - (B) 言い過ぎ・誤り:
+      1. L949–951 と本ファイルの F5 訂正（drag-ghost）: Canvas の ghost は「`kanban-card` の kind として」検査されていない。描画は**位置で下にある kind へ帰属**し（`font-parity.mjs:902-903` のコメントどおり。`roles-parity.json` の `kanban-drag-canvas` では `empty` と `kanban-lane`）、その kind の許容役割の集合に入るかだけを見る。記述を実態に合わせ、まとめの限界表にも 1 行足す。検査は変えない。
+      2. L1518–1521: 「`div` / `span` で描かれる役割はタグだけのホスト規則ではサイズが変わりません」が成り立つのは**自分の `font-size` 宣言を持つ要素だけ**。宣言を持たず親から継承する子（`.ui-row span` / `.ui-grid-header span`、`src/runtime.css:705-712`）にはホストの `span { font-size: … }` が届く。F4 が測ったのはフォーム部品だけ・未実測・`main` でも同じ、と書く。「T5 の限界に既記」は誤参照（T5 の限界表に `* { font: inherit }` は無い）なので、まとめの限界表を指す。
+      3. L1563「部品単位で『省略されたか』が揃うことを assert する」→ assert しているのは幅境界 fixture の 2 部品（`boundaryFits` / `boundaryOverflows`）だけ（L350–356 の書き方が正しい）。
+      4. L498 / L1021 / L1023 / L1180 / L1578: 通常 field の編集オーバーレイ（`canvas-editor` 13px）は編集 journey の 6 段（light / dark / 390px / 200%、L1057–1062）で測っている。1 条件のままなのは Grid 編集の 12px オーバーレイだけ。5 か所の記述を揃える（要確認: `matrix.json` の journey）。
+      5. L1022 / L1578: `dialog-icon` の 30px は `matrix` の宣言サイズ集合に**記録され**デモ／独立の集合比較に入っている（L1025 が 30px を挙げている）。30px であることの assert は `surfaces` だけ。「行列に乗らない」ではなく「記録するが assert は `surfaces`」と書く（要確認）。
+      6. L1566「reset の詳細度（T2 で 0,1,0・F4 で確定）」→ T2 は 0,0,0、0,1,0 にしたのは F4。
+      7. L781–782 と `src/canvas-renderer.js` の `paint()` のコメント（「a frame that is not painted also does not clear the frame that is currently on screen」）: 成り立つのは Scene を伴わない再描画だけ。`render(scene)` は `paint()` の前に `syncSurface()` を呼ぶ（`src/canvas-renderer.js:476`）ので、Scene の寸法が変わるフレームでは bitmap が消える（未接続のステージは幅 240 でレイアウトされるので実際に変わる）。台帳とコメントを実態に合わせる。挙動は変えない。
+      8. まとめ節（L25 / L1541「この節だけを読めば分かります」）の限界表に、タスク節にだけ残っている現行の限界を足す: デモ面は Scene を公開しないので部品単位の突き合わせ・入力位置・枠外の検査が無い（L1178）／ Canvas 面の押下はページ内 dispatch（L495）／ datefield の文字入力は未実施（L496）／ 配布物で測ったのは Hello World だけ（T9 の限界）／ 18 状態は部品 × 状態の格子ではない（L882）／ 未接続・`display: none` のステージには focus / blur が配達されない（L811）。
+      9. 限界へ 1 行追加（round 2 のプローブ実測）: ランタイム CSS が無いまま `load()` すると、解決エラーの通知の直後に `compile()` の `onError(null)` が続き、次のフレーム（ResizeObserver）で再び通知される。最後に届くのは通知で、`load()` は resolve、`onLoad` 1 回、effects 1 回。
+    - (C) 字句（要確認を含む）: L23「T1〜T9・F1〜F5 の順」→ 実際の並び（T1–T6・F3・T7–T9・F1・F2・F4・まとめ）／ L1484 見出し「18 ケース」→ 3 ケース・18 回の読み取り ／ L1122「同じディレクトリの `matrix-…`」→ matrix の画像は `before-fix/` の親 ／ L1149「修正後の 64 枚のうち」→ `matrix-journey-canvas-zoom-200` は `matrix.json` の `images` 64 枚に入らない journey 画像 ／ L1019–1020 `matrix.json` の `roles` / `canvasKinds` はケースごとのフィールド ／ L566・L938「media 枠 46 件」の内訳（DOM の枠と Canvas の native overlay の合計か）／ L979 行列に乗らない kind の列挙漏れ（`fieldset` / `empty`）／ L315–325 の T3 kind 表に `displayfield` が無い ／ L324「drag ghost も同じ分岐」（ghost は別ブロック）。
+  - 対象: `docs/renderer-font-parity.md`、`tests/browser/font-parity.mjs`（`evidence` 文字列 2 つ）、`src/canvas-renderer.js`（コメント 1 か所）、`.gsd-lite/PLAN.md`（F5 訂正の drag-ghost の記述）。
+  - 依存: F5
+
 ## 決めた事項
 
 1. DOMの部品別**宣言値**を基準として維持し、偶発的なreset継承は修正する。resetを `:where(.uivolve-runtime) :where(button, input, select, textarea)` とする計画。根拠: `src/runtime.css:11` のfont shorthandと同ファイル437/452/252/185行の明示指定、RESEARCHのspecificity解析。
@@ -479,3 +501,29 @@ bun run docs:check
 
 - セキュリティ: `src/` は秘密情報・外部入力の評価・新しい依存なし。検査スクリプトは `shell: true` を使わず、サーバーは 127.0.0.1 に限定、`package.json` と lockfile は不変、`src/` は `tests/` を import しない。残留リスク（修正不要、CLI を手で使う場合のみ）: runner のサーバー起動失敗時に `bunx vp dev` の process group が残る、SIGINT は suite の切れ目まで待つ、`--evidence` に repo 外のパスを渡せる（distribution が `<evidence>/dist-host` を削除する）、`--browser-endpoint` の URL をログに出す。
 - 並列レビュー: テスト妥当性と文書照合を読み取り専用のサブエージェント 2 本に分け、製品コードの差分・プローブ・変異の実行・判定は親が行った。
+
+### verify round 2 の記録（turn 19）
+
+判定は差し戻し（F6、文書のみ）。round 1 の格子の再確認と F1〜F5 の差分の回帰だけを行い、新しいクラスは探していない。
+
+- 最終 gate: `bun scripts/verify-font-parity.mjs` を clean な木から実行し 14 手順とも成功（vitest 631 件、docs:check 470 リンク、roles 28 ケース・1254 スロット、editing 16、surfaces 18、lifecycle 11、matrix 168、distribution 8。件数は turn 18 と同じ）。
+- round 1 の格子の再確認（実ブラウザ、`scratch/turn-019-probe.mjs`）:
+
+  | 入力経路       | 試した条件                                                               | 結果                                                                                          |
+  | -------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+  | ステージの状態 | 未接続のまま load（Canvas / DOM）                                        | 合格。load resolve、`onLoad` 1、effects 1、通知 0、接続後に Canvas が描画                     |
+  | ステージの状態 | 表示中に外す / `display: none` / CSS を外す（面の順序 2 通りずつ）       | 合格。revision 0→2、effects 2、DOM 面は両方の順序で最新 state。CSS 無しだけ通知 3 件          |
+  | ステージの状態 | CSS が無いまま load（F3 の差分の回帰として追加）                         | 合格。load resolve、`onLoad` 1、effects 1。通知 → `null` → 再通知の順（F6 (B)9 で限界に記載） |
+  | ホスト CSS     | `button, input, select, textarea { font: italic 700 17px/2 serif }`      | 合格。全フォーム部品が normal・400〜600・ランタイムの字体、サイズ 12 / 13px                   |
+  | 検査そのもの   | metric の役割入替 → `roles` / `matrix`、`.ui-empty` の宣言削除 → `roles` | 合格。3 本とも非 0（matrix は 168 件、`.ui-empty` は parity 3 件）                            |
+  | 検査そのもの   | reset を 0,0,0 へ戻す → `roles`                                          | 合格。非 0・host-rule 54 件（台帳の値と一致）                                                 |
+  | 検査そのもの   | F3 の 2 か所を戻す → `tests/runtime.test.js` / `lifecycle`               | 合格。単体試験 FAIL、`lifecycle` 非 0・27 件（台帳の値と一致）                                |
+
+  変異は入れるたびに `git restore` で戻し、最後に `git status --short` が空であることを確認した。reset の 0,0,0 だけは `.ui-empty` の宣言削除を入れたまま実行した（`.ui-empty` 単独の非 0 は先に確認済み。問題一覧は host-rule 54 件と parity 3 件に分かれて出る）。
+
+- 製品コードの差分（F3・F4）: 指摘なし。`this.fonts` を読むのは `paint()` の呼び出し木の中だけで、描かなかったフレームの後に別経路が null を踏むことはない。`font-size` の直値は `src/runtime.css` に 0 件、Canvas の `ctx.font` は役割経由（sprite の Scene 値を除く）。
+- 目視: 修正後の uivolve-forms（独立・light）と components（デモ・dark）を開き、両面の文字サイズが揃い新たな欠け・重なりが無いことを確かめた。
+- セキュリティ: F1〜F5 の差分に秘密情報・外部入力の評価・`shell: true`・新しい依存なし（`package.json`・lockfile・`engine/`・`public/` は main から不変）。`onError` に載る CSS の取得値はデモでは `textContent` で表示される。round 1 の残留リスク 4 件は変化なし。
+- 文書: F5 の一覧は docs 内では全項目が直っていた。指摘は F6 のとおり。**同型の指摘を round 1 で拾えなかった理由**: (A) は round 1 の後に F2〜F4 が証跡を動かして生じた食い違い、(B) の大半は F3〜F5 が round 1 の後に書き足した文、(A)3 は round 1 が台帳の行だけを挙げて同じ文言の出どころ（検査が証跡へ書く文字列）まで追わなかったため。
+- 並列レビュー: 文書と証跡 JSON の照合を読み取り専用のサブエージェント 1 本に任せ、F6 に載せる項目は親が該当行・証跡を読み直した（読み直していないものは「要確認」と明記）。gate・プローブ・変異・判定は親が行った。
+- round 3 の範囲: F6 の各項目の照合、最終 gate、木のクリーン確認だけ。文書の新しい指摘は「受け入れ基準の達成や検査の範囲を誤って伝えるもの」に限って差し戻し、字句は VERIFICATION.md の残留に書いて合格にする。

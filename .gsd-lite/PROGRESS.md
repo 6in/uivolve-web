@@ -253,3 +253,33 @@
   手で確かめる。最終 gate は約 5 分（matrix が大半）。`sleep` は前景で使えないので
   バックグラウンドで回して通知を待つ。`grep`/`sed`/`tail`/`cat` はフックに拒否されるので
   `git grep` と Read ツールを使い、ブラウザを使うコマンドはサンドボックス外で実行する。
+
+## turn 19 — verify — round 2 差し戻し / 指摘 1 タスク（F6・文書のみ）/ マージなし
+
+- やったこと: round 1 の格子の再確認と F1〜F5 の差分の回帰だけを行った。最終 gate は clean な
+  木から 14 手順とも green（vitest 631 / roles 28 / editing 16 / surfaces 18 / lifecycle 11 /
+  matrix 168 / distribution 8）。round 1 のプローブを `scratch/turn-019-probe.mjs` で再実行し、
+  F3（未接続・外す・CSS 無し・`display: none`、面の順序 2 通り）と F4（タグ規則）が全条件で
+  直っていることを実測。変異で検査の歯も再確認した（metric の役割入替 → `roles` / `matrix`
+  非 0、`.ui-empty` の宣言削除 → `roles` 非 0、reset 0,0,0 → `roles` 非 0・54 件、F3 の 2 か所を
+  戻す → 単体試験 FAIL ＋ `lifecycle` 非 0・27 件）。**製品コードと検査の判定に指摘は無い**。
+  文書と証跡 JSON の照合で、F2〜F4 の後に古くなった実測値 4 件、検査範囲の言い過ぎ・誤り 9 件、
+  字句を見つけ、PLAN に F6 として追記した（詳細は PLAN の「verify round 2 の記録」）。
+  `verify_round` を 2 にして impl へ差し戻し。
+- 想定外: (1) **F5 が「最終値に揃える」とした実測値のうち、F2〜F4 で動いた 2 つが古いまま**
+  だった（配布物の sha256、字体到着後の `measureText` 変化 5 → 4 件）。gate の件数ログに
+  出ない値なので、F5 の照合（suite の合計値中心）から漏れた。(2) 検査が証跡へ書く文字列
+  （`font-parity.mjs` の `evidence`）に、F5 が台帳で直したのと同じ旧文言が残っていた。
+  (3) `vp check` は `.gsd-lite/PLAN.md` も整形対象にする。verify が追記した表で `check` が
+  非 0 になったので `vp check --fix` を 1 回かけた。
+- やり直し: 0 回（gate・プローブ・変異はどれも 1 回で想定どおりの結果。`vp check --fix` 1 回）。
+- 次への注意: 次は **F6**（`/gsd-lite-impl`）。対象は `docs/renderer-font-parity.md` が中心で、
+  `tests/browser/font-parity.mjs` は `evidence` 文字列 2 つ、`src/canvas-renderer.js` は
+  コメント 1 か所だけ（挙動と判定は変えない）。**行番号は 8c8d76e 時点**。「要確認」と書いた
+  項目は verify が再確認していないので、証跡 JSON かコードで確かめてから直す。`index.js` の
+  sha256 はこのタスクのコメント修正でも変わるので、台帳へ値を写さない形にする（F6 (A)1）。
+  **`.gsd-lite/PLAN.md` を編集したら `bunx vp check --fix` をかける**（整形対象）。最終 gate の
+  所要は今回計っていない（過去の記録は約 70 秒〜約 5 分）。バックグラウンドで回した。エラー一覧は
+  `scratch/turn-019-run.mjs` 経由で読める。`grep`/`sed`/`cat` はフックに拒否されるので
+  `git grep` と Read ツール、JSON は `bun -e` を使い、ブラウザを使うコマンドはサンドボックス外で
+  実行する。round 3 は F6 の照合・gate・木のクリーン確認だけを行う。
