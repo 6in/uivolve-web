@@ -1,5 +1,20 @@
 /* UI styles are confined to the mounted surface; the host owns the page. */
 .uivolve-runtime {
+  /* The one size source for both renderers. The DOM declarations below reference these,
+     and the Canvas renderer resolves the same values from the stage's computed style
+     (src/font-metrics.js) so neither surface keeps its own table of numbers.
+     Internal to the runtime: not a public configuration API. */
+  --ui-font-size-meta: 9px;
+  --ui-font-size-label: 11px;
+  --ui-font-size-caption: 12px;
+  --ui-font-size-body: 13px;
+  --ui-font-size-close: 20px;
+  --ui-font-size-metric: 22px;
+  --ui-font-size-icon: 30px;
+  /* The surface frame, for the same reason: the DOM SVG fills the content box inside this
+     border, and the Canvas renderer has no element to read it from, so it resolves this
+     property and insets by the same amount. */
+  --ui-surface-border-width: 1px;
   font-family: "Inter", "Noto Sans JP", system-ui, sans-serif;
   font-synthesis: none;
   color: var(--ui-text, #263f50);
@@ -8,7 +23,18 @@
 .uivolve-runtime * {
   box-sizing: border-box;
 }
-.uivolve-runtime :is(button, input, select, textarea) {
+/* Form controls must not keep the browser's own font — and must not take the host page's
+   either. A host that writes `button, input, select, textarea { font: ... }` reaches every
+   control inside the surface, so this reset has to outrank a tag-only rule (0,0,n) while
+   still losing to a component's own declaration. Hence the two halves:
+     - `.uivolve-runtime` stays outside `:where()`, which puts the reset at 0,1,0 — above
+       any selector the host can write without naming a class, an id or `!important`;
+     - the controls stay inside `:where()`, so the component rules further down this file
+       are 0,1,0 as well and win on source order. This block must therefore remain above
+       every rule that declares a font property, and nothing may raise it past 0,1,0.
+   Stronger host rules, and host rules that name the runtime's internal classes, are out of
+   scope and recorded in docs/renderer-font-parity.md. */
+.uivolve-runtime :where(button, input, select, textarea) {
   font: inherit;
 }
 .uivolve-runtime button {
@@ -30,7 +56,7 @@
   overflow: auto;
   white-space: pre;
   line-height: 22px;
-  font-size: 13px;
+  font-size: var(--ui-font-size-body);
   color: var(--ui-text);
 }
 
@@ -41,7 +67,7 @@
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  font-size: 30px;
+  font-size: var(--ui-font-size-icon);
   line-height: 1;
   color: var(--ui-info-text, #427fae);
 }
@@ -84,7 +110,7 @@
   top: 13px;
   left: 11px;
   right: 36px;
-  font-size: 12px;
+  font-size: var(--ui-font-size-caption);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -94,7 +120,7 @@
   position: absolute;
   top: 14px;
   right: 11px;
-  font-size: 11px;
+  font-size: var(--ui-font-size-label);
   color: var(--ui-muted);
 }
 
@@ -115,7 +141,7 @@
 :where(.uivolve-runtime) .kanban-drag-ghost > strong {
   display: block;
   margin-top: 14px;
-  font-size: 12px;
+  font-size: var(--ui-font-size-caption);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -126,7 +152,7 @@
   display: block;
   margin-top: 13px;
   color: var(--ui-muted);
-  font-size: 11px;
+  font-size: var(--ui-font-size-label);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -136,7 +162,7 @@
   content: attr(data-card-id);
   display: block;
   margin-top: 5px;
-  font-size: 9px;
+  font-size: var(--ui-font-size-meta);
   color: var(--ui-muted);
 }
 
@@ -182,7 +208,7 @@
   padding: 0 10px;
   color: var(--ui-text);
   background: var(--ui-background);
-  font-size: 13px;
+  font-size: var(--ui-font-size-body);
   outline: none;
 }
 
@@ -193,7 +219,7 @@
 :where(.uivolve-runtime) .ui-widget {
   position: absolute;
   margin: 0;
-  font-size: 13px;
+  font-size: var(--ui-font-size-body);
   overflow: hidden;
 }
 
@@ -203,7 +229,7 @@
   border: 1px solid var(--ui-border);
   border-radius: 7px;
   background: var(--ui-surface);
-  font-size: 12px;
+  font-size: var(--ui-font-size-caption);
   font-weight: 600;
   line-height: 16px;
 }
@@ -214,7 +240,7 @@
   background: transparent;
   color: var(--ui-text);
   text-align: left;
-  font-size: 12px;
+  font-size: var(--ui-font-size-caption);
   font-weight: 600;
   border-radius: 7px;
 }
@@ -237,7 +263,7 @@
 :where(.uivolve-runtime) .window-title {
   display: block;
   padding: 14px 54px 0 14px;
-  font-size: 12px;
+  font-size: var(--ui-font-size-caption);
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
@@ -249,7 +275,7 @@
   border-radius: 6px;
   background: var(--ui-subtle);
   color: var(--ui-muted);
-  font-size: 20px;
+  font-size: var(--ui-font-size-close);
 }
 
 :where(.uivolve-runtime) .ui-window-close:hover {
@@ -267,13 +293,13 @@
 
 :where(.uivolve-runtime) .ui-metric span {
   color: var(--ui-muted);
-  font-size: 11px;
+  font-size: var(--ui-font-size-label);
   line-height: 16px;
 }
 
 :where(.uivolve-runtime) .ui-metric strong {
   color: var(--ui-info-text);
-  font-size: 22px;
+  font-size: var(--ui-font-size-metric);
   font-weight: 600;
   line-height: 27px;
   white-space: nowrap;
@@ -302,7 +328,7 @@
 
 :where(.uivolve-runtime) .ui-textfield label {
   display: block;
-  font-size: 11px;
+  font-size: var(--ui-font-size-label);
   color: var(--ui-muted);
   font-weight: 500;
   height: 24px;
@@ -315,7 +341,7 @@
   padding: 0 10px;
   border: 1px solid var(--ui-border);
   border-radius: 7px;
-  font-size: 13px;
+  font-size: var(--ui-font-size-body);
   color: var(--ui-text);
   background: var(--ui-background);
 }
@@ -332,7 +358,7 @@
 :where(.uivolve-runtime) .ui-field > label,
 :where(.uivolve-runtime) .ui-displayfield > span {
   display: block;
-  font-size: 11px;
+  font-size: var(--ui-font-size-label);
   color: var(--ui-muted);
   font-weight: 500;
   line-height: 20px;
@@ -354,9 +380,18 @@
   padding: 0 10px;
   border: 1px solid var(--ui-border);
   border-radius: 7px;
-  font-size: 13px;
+  font-size: var(--ui-font-size-body);
   color: var(--ui-text);
   background: var(--ui-background);
+}
+
+/* A Grid cell keeps the cell's own 12px while it is being edited, on both surfaces. The
+   flag comes from the edited widget itself (`config.gridEditor`), so every other field
+   keeps the 13px declared above. */
+:where(.uivolve-runtime) .ui-field.grid-editor > :is(input, select, textarea),
+:where(.uivolve-runtime) .ui-field.grid-editor .box-control,
+:where(.uivolve-runtime) .canvas-editor.grid-editor {
+  font-size: var(--ui-font-size-caption);
 }
 
 :where(.uivolve-runtime) .ui-field > textarea,
@@ -398,7 +433,7 @@
   gap: 8px;
   height: 38px;
   color: var(--ui-text);
-  font-size: 13px;
+  font-size: var(--ui-font-size-body);
   font-weight: 400;
 }
 
@@ -425,7 +460,7 @@
   inset: 0;
   padding: 0 10px;
   line-height: 28px;
-  font-size: 12px;
+  font-size: var(--ui-font-size-caption);
 }
 
 :where(.uivolve-runtime) .ui-button {
@@ -434,7 +469,7 @@
   background: var(--ui-background);
   color: var(--ui-text);
   font-weight: 500;
-  font-size: 12px;
+  font-size: var(--ui-font-size-caption);
   white-space: nowrap;
   text-overflow: ellipsis;
   padding: 0 8px;
@@ -449,7 +484,7 @@
   border-radius: 6px;
   color: var(--ui-text);
   background: var(--ui-background);
-  font-size: 12px;
+  font-size: var(--ui-font-size-caption);
 }
 
 :where(.uivolve-runtime) .ui-extra-button:hover,
@@ -464,7 +499,7 @@
 :where(.uivolve-runtime) .ui-figure,
 :where(.uivolve-runtime) .ui-document {
   background: var(--ui-surface);
-  border: 1px solid var(--ui-border);
+  border: var(--ui-surface-border-width) solid var(--ui-border);
   border-radius: 7px;
 }
 
@@ -530,7 +565,7 @@
   display: grid;
   place-items: center;
   color: var(--ui-muted);
-  font-size: 12px;
+  font-size: var(--ui-font-size-caption);
 }
 
 :where(.uivolve-runtime) .ui-button.variant-primary {
@@ -588,7 +623,7 @@
   color: var(--ui-text);
   text-align: left;
   padding: 0 8px;
-  font-size: 12px;
+  font-size: var(--ui-font-size-caption);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -621,7 +656,7 @@
 
 :where(.uivolve-runtime) .ui-tree-shell {
   padding: 13px 10px;
-  font-size: 12px;
+  font-size: var(--ui-font-size-caption);
   font-weight: 600;
   color: var(--ui-muted);
 }
@@ -636,7 +671,7 @@
   border-radius: 6px;
   color: var(--ui-text);
   background: var(--ui-background);
-  font-size: 12px;
+  font-size: var(--ui-font-size-caption);
 }
 
 :where(.uivolve-runtime) .ui-menu-surface {
@@ -663,7 +698,7 @@
 :where(.uivolve-runtime) .ui-grid-header {
   background: var(--ui-subtle);
   color: var(--ui-muted);
-  font-size: 11px;
+  font-size: var(--ui-font-size-label);
   font-weight: 500;
 }
 
@@ -679,7 +714,7 @@
 :where(.uivolve-runtime) .ui-row {
   background: var(--ui-background);
   color: var(--ui-text);
-  font-size: 12px;
+  font-size: var(--ui-font-size-caption);
 }
 
 :where(.uivolve-runtime) .ui-row:hover {
@@ -693,7 +728,7 @@
 
 :where(.uivolve-runtime) .ui-label {
   line-height: 24px;
-  font-size: 11px;
+  font-size: var(--ui-font-size-label);
   white-space: nowrap;
   text-overflow: ellipsis;
   color: var(--ui-text);
@@ -707,5 +742,5 @@
 :where(.uivolve-runtime) .ui-empty {
   line-height: 42px;
   padding-left: 10px;
-  font-size: 12px;
+  font-size: var(--ui-font-size-caption);
 }

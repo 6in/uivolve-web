@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "engine": "claude",
+  "engine": "codex",
   "phase_engines": {},
   "codex": {
     "model": {},
@@ -18,21 +18,21 @@
     "name": "",
     "path": "."
   },
-  "milestone": "renderer-font-size-parity",
-  "phase": "verify",
-  "next_command": "/gsd-lite-verify",
+  "milestone": "development-retrospective-blog",
+  "phase": "done",
+  "next_command": "DONE",
   "branch": {
-    "name": "gsd-lite/renderer-font-size-parity",
+    "name": "gsd-lite/development-retrospective-blog",
     "base": "main"
   },
   "research": {
-    "targets": ["local_projects", "official_docs"],
+    "targets": ["local_projects"],
     "local_search_paths": ["."]
   },
-  "turn": 20,
+  "turn": 9,
   "max_turns": 60,
   "retry_max": 2,
-  "verify_round": 2,
+  "verify_round": 0,
   "verify_round_max": 3,
   "model": {
     "research": "claude-fable-5-1",
@@ -41,5 +41,5 @@
     "verify": "claude-fable-5-1",
     "reflect": "claude-fable-5-1"
   },
-  "updated_at": "2026-10-07T04:44:17+09:00"
+  "updated_at": "2026-10-05T12:02:26+09:00"
 }

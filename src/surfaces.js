@@ -1,4 +1,13 @@
 const svgNS = "http://www.w3.org/2000/svg";
+// The one family override the sprites allow, named once so the two surfaces cannot ask
+// for different monospace families. Everything else uses the runtime's resolved family.
+const monospaceFamily = "monospace";
+// Both surfaces read a sprite's size and weight through the same accessor. The engine
+// completes a text sprite that omits fontSize with 12 (engine/src/figures.rs), so the
+// same value has to be written into the SVG attribute as well: leaving the attribute off
+// would make the DOM inherit the host's size while Canvas painted 12px.
+const spriteFontSize = (sprite) => sprite.fontSize ?? 12;
+const spriteFontWeight = (sprite) => sprite.fontWeight ?? 400;
 const color = (value, theme) =>
   theme.colors[value] ||
   { accent: theme.colors.primary, danger: "#b64646" }[value] ||
@@ -51,6 +60,21 @@ function surface(widget) {
     ? { viewWidth: widget.width, viewHeight: widget.height, sprites: documentSprites(widget) }
     : widget.config;
 }
+// The rectangle the sprites are fitted into, shared by both surfaces. The DOM SVG is
+// `width/height: 100%` inside the frame declared in src/runtime.css, so its viewport is
+// the element's content box; Canvas has no element to inherit that from and insets by the
+// same resolved border. Fitting into the full widget box instead would leave the two
+// scale factors apart by the border, and every sprite size and position with them.
+function contentFit(widget, description, border) {
+  const width = Math.max(0, widget.width - border * 2);
+  const height = Math.max(0, widget.height - border * 2);
+  const scale = Math.min(width / description.viewWidth, height / description.viewHeight);
+  return {
+    scale,
+    x: border + (width - description.viewWidth * scale) / 2,
+    y: border + (height - description.viewHeight * scale) / 2,
+  };
+}
 function sectorPath(s) {
   const start = [s.cx + s.r * Math.cos(s.start), s.cy + s.r * Math.sin(s.start)];
   const end = [s.cx + s.r * Math.cos(s.end), s.cy + s.r * Math.sin(s.end)];
@@ -75,7 +99,7 @@ export function renderSvg(record, widget, theme) {
       rect: ["x", "y", "width", "height"],
       circle: ["cx", "cy", "r"],
       ellipse: ["cx", "cy", "rx", "ry"],
-      text: ["x", "y", "fontSize", "fontWeight"],
+      text: ["x", "y"],
       path: [],
       line: [],
       polygon: [],
@@ -106,15 +130,20 @@ export function renderSvg(record, widget, theme) {
     el.setAttribute("opacity", s.opacity ?? 1);
     if (type === "text") {
       el.textContent = s.text || "";
+      el.setAttribute("font-size", spriteFontSize(s));
+      el.setAttribute("font-weight", spriteFontWeight(s));
       el.setAttribute("dominant-baseline", "middle");
       el.setAttribute("text-anchor", { center: "middle", right: "end" }[s.textAlign] || "start");
-      if (s.monospace) el.style.fontFamily = "monospace";
+      if (s.monospace) el.style.fontFamily = monospaceFamily;
     }
     svg.append(el);
   }
   record.root.replaceChildren(svg);
 }
-export function paintSurface(ctx, widget, theme) {
+// `fonts` is the per-frame resolution from src/font-metrics.js: it carries the frame width
+// the DOM SVG is inset by and the family the stage resolved, so neither is a number or a
+// font name of this module's own.
+export function paintSurface(ctx, widget, theme, fonts) {
   const description = surface(widget);
   ctx.save();
   ctx.translate(widget.x, widget.y);
@@ -123,15 +152,9 @@ export function paintSurface(ctx, widget, theme) {
   ctx.clip();
   ctx.fillStyle = theme.colors.surface;
   ctx.fillRect(0, 0, widget.width, widget.height);
-  const scale = Math.min(
-    widget.width / description.viewWidth,
-    widget.height / description.viewHeight,
-  );
-  ctx.translate(
-    (widget.width - description.viewWidth * scale) / 2,
-    (widget.height - description.viewHeight * scale) / 2,
-  );
-  ctx.scale(scale, scale);
+  const fit = contentFit(widget, description, fonts.surfaceBorder);
+  ctx.translate(fit.x, fit.y);
+  ctx.scale(fit.scale, fit.scale);
   for (const s of description.sprites) {
     ctx.save();
     ctx.globalAlpha = s.opacity ?? 1;
@@ -141,7 +164,7 @@ export function paintSurface(ctx, widget, theme) {
     let path;
     try {
       if (s.type === "text" && s.fillStyle !== "none") {
-        ctx.font = `${s.fontWeight || 400} ${s.fontSize || 12}px ${s.monospace ? "monospace" : "system-ui, sans-serif"}`;
+        ctx.font = `${spriteFontWeight(s)} ${spriteFontSize(s)}px ${s.monospace ? monospaceFamily : fonts.family}`;
         ctx.textBaseline = "middle";
         ctx.textAlign = { center: "center", right: "right" }[s.textAlign] || "left";
         ctx.fillText(s.text || "", s.x, s.y);

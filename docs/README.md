@@ -31,6 +31,7 @@ uivolve-webは、uivolveの考えをWebへ実装する試作。画面定義・�
 | AI向けスキルを選ぶ・外部アプリへ配布する           | [スキル案内](skills.md)、[エンジン開発スキル](../skills/uivolve-web-engine-dev/SKILL.md) |
 | 部品を追加・変更する                               | [開発への参加](../CONTRIBUTING.md)、[部品開発ガイド](component-development.md)           |
 | 変更を確認・レビューする                           | [検証基準](testing.md)                                                                   |
+| DOMとCanvasの文字サイズが揃っているか確かめる      | [レンダラー間のフォントサイズ台帳](renderer-font-parity.md)                              |
 | Grid/Card/Border/Fitで配置する                     | [レイアウト契約](layouts.md)                                                             |
 | フォーム部品を使う                                 | [uivolve対応表](uivolve-port.md)                                                         |
 | Data Grid・タブ・ツリー・メニューを使う            | [Grid・ナビゲーション契約](grid-navigation.md)                                           |

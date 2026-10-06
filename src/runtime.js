@@ -120,12 +120,16 @@ export class UiRuntime {
             surface.ownsCanvas = true;
           }
           surface.element.classList.add("canvas-stage");
-          surface.adapter = new CanvasRenderer(surface.element, surface.canvas, dispatch);
+          surface.adapter = new CanvasRenderer(surface.element, surface.canvas, dispatch, {
+            onError: (error) => this.reportError(error),
+          });
         } else surface.adapter = new DomRenderer(surface.element, dispatch);
       }
       this.resize = new ResizeObserver(() => this.scheduleRender());
       for (const surface of this.surfaces) this.resize.observe(surface.element);
       const document = this.surfaces[0].element.ownerDocument;
+      this.watchFonts(document);
+      this.watchPixelRatio(document);
       document.addEventListener(
         "pointerdown",
         (event) => {
@@ -236,7 +240,14 @@ export class UiRuntime {
       const scene = this.engine.layout(Math.min(4096, Math.max(240, surface.element.clientWidth)));
       scene.assetBase = this.packageUrl.href;
       const start = performance.now();
-      surface.adapter.render(scene);
+      // Drawing is bounded per surface. The state is already committed by the time a frame is
+      // asked for, so one surface that cannot draw must not cost the others their frame, nor
+      // the dispatch its effects: the failure is reported and the next surface is drawn.
+      try {
+        surface.adapter.render(scene);
+      } catch (error) {
+        this.reportError(error);
+      }
       durations.push(performance.now() - start);
       return scene;
     });
@@ -252,6 +263,40 @@ export class UiRuntime {
         this.reportError(error);
       }
     });
+  }
+  // A web font that arrives after the first frame changes every advance width the frame was
+  // measured with. The DOM reflows itself; the Canvas bitmap keeps the fallback glyphs until
+  // it is painted again, so both surfaces are redrawn here. `ready` covers the fonts that
+  // were already in flight before this runtime attached its listeners, `loadingerror` the
+  // ones that never arrive: that frame is repainted too, with the fallback.
+  watchFonts(document) {
+    const fonts = document.fonts;
+    if (!fonts) return;
+    const repaint = () => this.scheduleRender();
+    for (const type of ["loadingdone", "loadingerror"])
+      fonts.addEventListener(type, repaint, { signal: this.lifecycle.signal });
+    // scheduleRender() is a no-op once disposed, so a load that completes afterwards
+    // neither throws nor brings a disposed surface back to life.
+    void fonts.ready.then(repaint);
+  }
+  // A device pixel ratio change can leave every CSS size untouched — the bitmap scale is
+  // all that moved — so the resize observation never reports it even though the bitmap has
+  // to be rebuilt. A resolution query matches exactly one ratio, so it is re-armed at the
+  // new one on every change.
+  watchPixelRatio(document) {
+    const view = document.defaultView;
+    if (!view?.matchMedia) return;
+    const onChange = () => {
+      if (this.disposed) return;
+      arm();
+      this.scheduleRender();
+    };
+    const arm = () => {
+      this.pixelRatio?.removeEventListener("change", onChange);
+      this.pixelRatio = view.matchMedia(`(resolution: ${view.devicePixelRatio || 1}dppx)`);
+      this.pixelRatio.addEventListener("change", onChange, { signal: this.lifecycle.signal });
+    };
+    arm();
   }
   theme(definition) {
     this.assertActive();

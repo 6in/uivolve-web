@@ -47,7 +47,17 @@ it("anchors Canvas numeric text at the right edge without adding whitespace to t
     measureText: (s) => ({ width: s.length * 8 }),
     fillText: (...args) => draws.push(args),
   };
-  const renderer = { context, scene: { theme: { colors: { text: "black" } } } };
+  // The renderer takes its sizes from the per-frame metrics resolved out of runtime.css,
+  // so the call sites name a role; this stands in for that resolution.
+  const sizes = { body: 13, label: 11 };
+  const renderer = {
+    context,
+    scene: { theme: { colors: { text: "black" } } },
+    fonts: {
+      family: "sans-serif",
+      font: (role, weight, family) => `${weight} ${sizes[role]}px ${family}`,
+    },
+  };
   CanvasRenderer.prototype.text.call(
     renderer,
     "123",
@@ -55,14 +65,16 @@ it("anchors Canvas numeric text at the right edge without adding whitespace to t
     20,
     100,
     "black",
-    13,
+    "body",
     400,
     "sans-serif",
     "right",
   );
+  expect(context.font).toBe("400 13px sans-serif");
   expect(context.textAlign).toBe("right");
   expect(draws[0]).toEqual(["123", 110, 20]);
-  CanvasRenderer.prototype.text.call(renderer, "label", 10, 20, 100);
+  CanvasRenderer.prototype.text.call(renderer, "label", 10, 20, 100, "black", "label");
+  expect(context.font).toBe("400 11px sans-serif");
   expect(context.textAlign).toBe("left");
   expect(draws[1]).toEqual(["label", 10, 20]);
 });

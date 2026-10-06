@@ -361,6 +361,9 @@ export class DomRenderer {
         root.textContent = widget.config.lines.join("\n");
       } else if (isField(widget)) {
         root.classList.add("ui-field");
+        // Only the cell being edited is a Grid editor, so the size exception stays local
+        // to it instead of reaching the ordinary fields on the same screen.
+        root.classList.toggle("grid-editor", Boolean(widget.config.gridEditor));
         record.label.textContent = widget.text;
         record.label.style.height = `${widget.config.labelHeight}px`;
         record.label.hidden = widget.config.labelHeight === 0;

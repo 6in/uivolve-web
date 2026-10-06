@@ -1,62 +1,122 @@
-# RESEARCH — development-retrospective-blog
+# DOM / Canvas フォントサイズ統一 — 調査
 
-調査: 2026-10-05、turn 1。対象は `local_projects` / `.` のみ。外部検索・他プロジェクトの調査はしていない。REQUIREMENTS / DECISIONSは変更しない。重大な判断変更を必要とする発見はなく、planへ渡す。
+調査日: 2026-10-06。対象は state の `local_projects`（検索先 `.`）と `official_docs` のみ。要件・決定は変更していない。類似 OSS 調査、新依存、実装はこのターンの対象外。
 
-## 参考実装と記事の根拠
+## 結論と確度
 
-以下はすべてリポジトリルートからのパス。記事から参照するときは `../../` を付ける。
+一律の Canvas 拡大では解決しない。多くの役割は既に同じ px を指定している一方、`src/runtime.css:11` の `.uivolve-runtime :is(button, input, select, textarea) { font: inherit; }` が、一部の部品別指定と Canvas 編集オーバーレイの指定より高い詳細度を持つ。これがホスト・DOM 親によって文字サイズを変える主要候補である。独立ランタイムにも同じ CSS を使うため、比較デモだけの CSS 修正では足りない。
 
-| 主張・素材      | 正準の根拠                                                                                                                                  | 記事で使う内容                                                                                                                         |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| 出発点・制限    | `README.md`、`docs/uivolve-port.md`、`REQUIREMENTS.md`                                                                                      | 宣言的な部品・配置をWebへ移す試作。完全互換や性能改善を動機として創作しない                                                            |
-| 共通エンジン    | `docs/architecture.md`、`engine/src/lib.rs`、`engine/src/abi.rs`、`src/runtime.js`                                                          | Rustがstate・イベント・layout・Sceneを扱い、JSが取得とブラウザAPI・描画を担当                                                          |
-| JSON/YAML・Rhai | `src/package-format.js`、`engine/src/lib.rs:368,455-462`                                                                                    | YAMLはホストでJSON相当へ変換。RhaiはWASM内でASTへコンパイルして同期実行。RhaiからWASMバイナリを生成しない                              |
-| Hello World     | `public/screens/hello-world.json`、`public/screens/hello-world.rhai`、`tests/engine.test.js:43-62`                                          | nameInputのbind=name、helloButtonのhandler=sayHello、greetingLabelのbind=greeting。trimは変数を更新し、空白のみならWorld               |
-| 検証と確定      | `engine/src/lib.rs` のdispatch、`engine/src/abi.rs` のload、`src/runtime.js` のcompile/load                                                 | stateのコピーへ入力とRhaiを適用し、状態・UI・effectsの準備が通ってから確定。候補load失敗時は前の画面が残る                             |
-| 配置・描画      | `src/dom-renderer.js`、`src/canvas-renderer.js`、`src/field-control.js`                                                                     | layout(width)はScene生成。DOMはkeyで要素更新、Canvasは面を再描画し入力時はネイティブ欄を併用。幅が違えば座標も違う                     |
-| ABI             | `src/engine.js:45-67`、`engine/src/abi.rs`、`docs/architecture.md`                                                                          | UTF-8 JSON、入力はfinallyで解放、応答はエンジン所有で次requestまで有効。呼出後のmemory.bufferを参照                                    |
-| effectsとホスト | `engine/src/host.rs`、`src/host-effects.js`、`src/adapters/http.js`、`docs/http-adapter.md`                                                 | host_callのintentを状態検証後にkind=host/v=1のeffectsへ。登録アダプターへ配送しhost_resultから最新stateのhandlerへ                     |
-| 保存・RPC・転送 | `docs/files-cache-rpc.md`、`docs/opfs-file-transfer.md`、`src/adapters/http-download.js`、`src/opfs.js`、`tests/opfs-file-transfer.test.js` | 一般FileBytesの容量と大容量転送を区別。GET reader→OPFS writable、uploadはFile、multipartはFormData。ファイル本体はWASM/stateへ通さない |
-| WebMCP          | `docs/webmcp.md`、`src/main.js:224`、`src/application.js:61,159`、`src/ui-tools.js`、`tests/webmcp.test.js`                                 | 比較デモは起動時登録。独立アプリはwebmcp:true。5共通ツール、人と同じWASMイベント、token/revision/可視性の検査                          |
-| Workerモック    | `docs/worker-mock-api.md`、`public/mock/orders-api.yaml`、`public/screens/worker-orders.yaml`、`public/screens/worker-orders.rhai`          | 画面とは別DSLのcollections/routes/固定response/CRUD。workerMockAdapterを明示登録。画面のhost_callは維持してホスト接続を実HTTPへ切替    |
-| 描画なしUT      | `src/mock-api-model.js`、`tests/worker-mock.test.js:56-79`、`tests/engine.test.js:15-62`                                                    | MockApiModel.requestと実WASMのload/dispatch/layout。Worker代替のTestWorkerはメッセージ契約の試験で、実ブラウザの代替保証にはしない     |
-| AI運用          | `.agents/skills/gsd-lite-*/SKILL.md`、`.gsd-lite/archive/opfs-file-transfer/`、`.gsd-lite/reflect/20261005-0843-opfs-file-transfer.md`      | discuss→research→plan→impl→verify→reflect。要件・停止時の判断は人、記録と検証をループが引継ぐ                                          |
+この判断はコードと CSS 仕様による解析。ブラウザ実測済みとは扱わない。Playwright の CSS プローブは構文確認に成功したが、bundled Chromium が未導入。既存スクリプトと同じ `/usr/bin/chromium-browser` へ切り替えても snap-confine の capability 制約で起動失敗した。実効 CSS px・画像・実IME・実ブラウザ拡大は未確認。research の成果物作成は可能なため plan に進めるが、実装後のブラウザ受け入れ確認を省略してはならない。
 
-## 再利用する設計・制作手段
+## 参考実装と再利用
 
-- 記事はHello Worldの1本の流れを主軸にする。JSONは3部品の必要部分、RhaiはsayHelloを抜粋し、完全なファイルへリンクする。現行publicのHello WorldはJSON/Rhaiであり、別のskills同梱YAMLと混同しない。
-- UT例は `tests/engine.test.js:51-60` のload→名前入力→押下→state/Scene検証と、`tests/worker-mock.test.js:57-62` のモデルCRUDを短く抜粋できる。import・初期化・WASMビルド条件を省いた断片には「抜粋」と準備条件を添える。モデル例でrequestヘルパーを使うなら定義も含めるかmodel.requestへ明示する。
-- Worker定義は `public/mock/orders-api.yaml` または現行ガイドのcollections/seed/GETルートを縮める。画面DSLのoperationsとモックDSLのroutesを別々に示す。接続設定だけではモック登録にならない。
-- 新規ライブラリは不要。既存playwrightとHTML/SVGのブラウザ描画で日本語技術図をPNG化できる。図の制作ソースと検査スクリプトは `.gsd-lite/logs/development-retrospective-blog/scratch/` に置く。記事の確定出力は直下5ファイルだけ。
-- 撮影の参考は `scripts/test-transfer-browser.mjs` のChromium起動/終了方法、`index.html` の `#dom-stage` / `#canvas-stage`、`src/main.js` の両面への接続。実撮影前にplaywright-skillを読む。サーバーはREADMEのbuild→preview、Hello Worldは `/pages/hello-world`。画像内で両方の結果が見えるよう比較領域を切り出す。撮影はimplで行い、このresearchでは実施していない。
-- 技術図の矢印はarchitectureで「画面/Rhaiの取得→JS→共通WASM→Scene→DOM/Canvas」、event-flowで「どちらの入力→共通イベント→候補state/Rhai→検証→確定→両面」、host-effectsで「host_call→確定effects→ホスト/アダプター→host_result→最新stateのhandler→再検証」とする。WASMが直接fetchやCanvas APIを呼ぶ矢印を描かない。
+| パス                                                          | 再利用できる設計                                                        | 検証への使い方                                                           |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `src/runtime.css:1`                                           | マウント面内だけに閉じる CSS と役割別サイズ。DOM の既存宣言を基準にする | 独立面と比較デモ双方で getComputedStyle を記録する                       |
+| `src/canvas-renderer.js:535`                                  | `text()` にサイズ・太さ・字体を渡す既存窓口                             | `fillText` の実行時 font と transform を役割・widget key に対応付ける    |
+| `src/canvas-renderer.js:708` / `763` / `920`                  | 計測専用 font 指定も存在                                                | measureText と直後の描画で同じ font を使うことを確認する                 |
+| `src/field-control.js:5` / `96`                               | DOM/Canvas 共通の native 入力と composing 中の値保持                    | 編集中の input identity、selection、activeElement と未確定値を確認する   |
+| `src/canvas-renderer.js:342` / `406` / `480`                  | オーバーレイの生成・位置更新・再描画時の再利用                          | ラベル有無、Grid・dialog、テーマ変更時の通常描画と入力を比較する         |
+| `src/surfaces.js:7` / `50` / `64` / `117`                     | documentSprites と figure の同じ描画記述から DOM SVG と Canvas を作る   | SVG viewBox と Canvas のローカル倍率を含めて比較する                     |
+| `engine/src/figures.rs:40` / `246`                            | 図表文字は12、draw の fontSize 省略を12へ補完                           | 生 DSL でなく WASM が生成した Scene の値を検査する                       |
+| `src/widget-contract.js:2` / `13`                             | 入力・操作の kind 分類を既に共有                                        | テキスト役割の一覧と操作対象を照合する（全 Widget 一覧ではない）         |
+| `engine/src/extras.rs:61` / `638`                             | gallery の多数の xtype を既存 Widget に展開する                         | xtype と kind の二層で網羅表を作る                                       |
+| `src/runtime.js:113` / `126` / `232`                          | 共通 CSS の適用、ResizeObserver、Scene の描画                           | 独立 runtime と比較デモに同じサイズ修正を適用する                        |
+| `scripts/capture-retrospective.mjs:66` / `77`                 | ブラウザ選択と実 fillText を元実装へ委譲しながら観測する例              | font・transform の採取へ拡張できる。既存撮影画像は今回の合格証拠にしない |
+| `tests/browser/transfer-harness.js` / `tests/runtime.test.js` | ブラウザ用実 WASM harness と runtime 状態テストの例                     | CSS は mock adapter の単体テストでは検証できない                         |
+| `docs/testing.md` / `package.json`                            | 既存の build/check/test とブラウザ検証方針、Playwright 導入済み         | 依存追加なしでブラウザ検証を構成する                                     |
 
-## 履歴・数字の確定範囲
+## 部品と文字役割の初期対応表
 
-- 起点はroot commit `868983e`（2026-10-02、既存試作の取り込み）。初期試作以前の制作過程は記録から分からない。終点は `a8fdffe`（2026-10-05、OPFS reflect）。今回の `f473db8` 以降は振り返る開発実績へ含めない。
-- 技術の経緯は `06f42f5` Hello World、`5dcac12` HTTP effects、`3a1eeca` YAML/保存/型、`eb9a0a2` files/cache/RPC、`04b3118` 共通runtime/独立アプリ、`8a9d943` host adapters、`cd92375` Workerモック、OPFSマイルストーンへつなげられる。コミット以前の動機や心情は補わない。
-- `.gsd-lite/logs/opfs-file-transfer/turns.jsonl` をJSON解析し、phaseがresearch/plan/impl/verifyの行だけを再集計した。20試行、5,697秒（94.95分）、内訳1/1/16/2。全21行の最後はreflectであり集計から除外する。停止・対話の待機時間と開発全体の時間は含まない。
-- BLOCKEDはturn3/T1（localhost EPERMと既存文書書式）、turn13/T10（Rhai CSV加工）、turn15/T11（ブラウザ認証fixture）の3回。根拠はarchiveのPROGRESSとreflect、必要なら `git show b88009e:.gsd-lite/BLOCKED.md` / `4c48111` / `f869419` の当時ファイルで追える。再開は `2f79ddf` / `f746985` / `5089c6d`。
-- `cc25ac4` の当時VERIFICATIONを確認。全試験成功でも、本文uploadのContent-Type欠落を既存試験が期待し、合意したapplication/octet-stream既定値を満たしていなかった。F1 `178a9ea` → verify `67c1d8f` で修正・確認。これはBLOCKEDではなくverify差し戻し。
-- ログのmodelは空、usageにtotal_tokensのみある。出力/キャッシュ内訳・費用は未記録。stateのClaude用model値は実行モデルの証拠にならない。リトライ0/progressed=trueも停止・手戻り0を意味しない。
+単位は CSS px。DOM 列は **CSS 宣言と解析値** であり、実測値ではない。「継承」は前述の reset が勝つため親の実効値に依存する。Canvas はソース上の描画引数。実装ターンではこの表を実測と差分・理由付きの台帳へ更新する。
 
-## 落とし穴と検証方法（planの完了基準へ）
+| Widget / 役割                                                                                      | DOM の指定                             | Canvas                                               | 差・確認点                                                                                        |
+| -------------------------------------------------------------------------------------------------- | -------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| label / 基本文字・muted・tbtext・ページ情報                                                        | `.ui-label` 11                         | fallback 11                                          | 指定一致                                                                                          |
+| empty / 空一覧                                                                                     | 12                                     | 12                                                   | 指定一致                                                                                          |
+| metric / 見出し、値                                                                                | 11 / 22                                | 11 / 22                                              | 指定一致、22px の長い値を確認                                                                     |
+| textfield, textarea, numberfield, datefield, combobox, listbox / ラベル                            | 11                                     | 11                                                   | labelHeight=0 なら文字なし                                                                        |
+| 上記入力 / 値・placeholder・listbox 選択肢                                                         | 13、option は継承                      | 13                                                   | `.ui-field > :is(...)` は reset と同詳細度で後の指定が勝つ。option の native popup 表示も別途確認 |
+| checkbox, radio / boxLabel                                                                         | 13                                     | 13                                                   | native 印と Canvas のチェック印は既存の描画差                                                     |
+| slider / ラベル                                                                                    | 11                                     | 11                                                   | range 本体に値文字なし                                                                            |
+| displayfield / ラベル、値                                                                          | 11 / `.ui-widget` 継承13               | 11 / 13                                              | 指定一致                                                                                          |
+| progressbar / 表示文字                                                                             | 12                                     | 12                                                   | 28px 高のクリップ確認                                                                             |
+| button / 本文、dialogbutton                                                                        | 12 宣言、実際は reset による親継承候補 | 12                                                   | サイズ・500 weight 指定の競合を実測する                                                           |
+| extra-button / カレンダー日付・前後・ページ操作・toast 閉じる                                      | 12 宣言、親継承候補                    | 12                                                   | gallery の各状態を確認                                                                            |
+| panel, fieldset / 見出し                                                                           | 12                                     | 12                                                   | 指定一致                                                                                          |
+| panel-toggle / 見出し                                                                              | 12 宣言、親継承候補                    | 12                                                   | root の親によって変化する可能性                                                                   |
+| window / タイトル                                                                                  | `.window-title` 12                     | 12                                                   | 指定一致、dialog アイコン付き inset も確認                                                        |
+| window-close / ×                                                                                   | 20 宣言、親継承候補                    | 20                                                   | window 内では親 `.ui-widget` の13等になり得る                                                     |
+| grid-header / 旧表見出し                                                                           | 11                                     | 11                                                   | cell span が継承                                                                                  |
+| row / 旧表本文                                                                                     | 12 宣言、button の親継承候補           | 12                                                   | 旧表と Grid の両経路を対象にする                                                                  |
+| grid-column, grid-cell, grid-select / 列見出し・値・選択印                                         | 12 宣言、button の親継承候補           | 12                                                   | Grid 編集中の field 値は13。既存12→13の差を揃える方針が必要                                       |
+| grid-page, menu-trigger / ページ・メニュー起点                                                     | 12 宣言、親継承候補                    | 12                                                   | popup も対象                                                                                      |
+| tab, tree-node, tree-toggle, menu-item / 表示文字                                                  | 12 宣言、親継承候補                    | 12                                                   | 選択/disabled でサイズを変えない                                                                  |
+| tree-shell / 見出し                                                                                | `.window-title` 12                     | 12                                                   | button 以外の見出し                                                                               |
+| kanban-lane / タイトル、件数                                                                       | 12 / 11                                | 12 / 11                                              | 子要素の明示指定                                                                                  |
+| kanban-card / タイトル、説明、ID                                                                   | 12 / 11 / 9                            | 12 / 11 / 9                                          | 擬似要素とドラッグ ghost も対象。Canvas ghost はIDを描かない既存差                                |
+| toast / タイトル・本文                                                                             | `.ui-widget` 13                        | 13                                                   | 26px 行送りは共通、閉じるは extra-button                                                          |
+| dialog-message / 本文                                                                              | 13                                     | 13                                                   | 22px 行送りとスクロール                                                                           |
+| dialog-icon / テキスト・絵文字                                                                     | 30                                     | 30                                                   | Canvas fillText の maxWidth による圧縮可能性、SVG/画像アイコンは文字なし                          |
+| document / タイトル・見出し・本文・code                                                            | 14 / 16 / 12 / 12（共通 sprites）      | 同値                                                 | DOM 非code は runtime 字体、Canvas 非code は system-ui。文字幅・欠けを確認                        |
+| figure / 図表・draw の text sprite                                                                 | sprite.fontSize（通常12）              | 同値、fallback12                                     | fontSize 未指定の draw は WASM が12を補完。SVG 内側サイズは倍率で換算                             |
+| image, video, iframe / 空・エラー案内                                                              | 擬似要素12                             | image 等の案内 text 既定13、native overlay にはCSS12 | 文字内容にも既存差。iframe 内と画像内文字は対象外                                                 |
+| canvas-editor / 編集値・placeholder・選択肢                                                        | 13 宣言、stage の font 継承候補        | 通常値13                                             | DOM入力は widget 内、Canvas入力は stage 直下という親の差が重要                                    |
+| toolbar, separator, backdrop, grid-shell, grid-head, grid-row, tabbar, menu-surface, menuseparator | 本体に可視文字なし                     | 本体に文字なし                                       | 子 Widget の文字を対象。container/card/layout も Scene 展開を見て重複計上しない                   |
 
-| 落とし穴                             | 回避策                                            | 踏んでいないことの確認方法                                                                                                                                                                                               |
-| ------------------------------------ | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 古い文書のコピー                     | 現行実装・契約を優先                              | READMEには画面数21と古い12が混在。testingには恒久ブラウザscriptなしとあるが転送scriptは実在。件数は避けるかcatalog/実ファイルから数え、記事の主張をパス別照合表へ記録                                                    |
-| 例が架空/実行不能                    | publicの例と既存UTを再利用                        | WASM生成後 `bunx vp test run tests/engine.test.js tests/worker-mock.test.js` など対象試験で確認。掲載断片の準備条件・対応行・出力を保存し、名前入力では挨拶を変えず押下でHello 太郎、空白だけでWorldを確認               |
-| 確定前と失敗時の保持を誤解           | candidate stateと確定stateを描き分ける            | lib.rs dispatch/commit、ABI load、runtime compileを照合。失敗したRhai/候補loadの保持は対応する既存試験を参照し、Hello World自体に未実装の失敗処理を足した説明にしない                                                    |
-| 非同期結果を古いstateへ戻す          | pending id・最新state・ホスト世代を説明           | host.rs/HostEffectsと既存host/転送試験を照合。画面切替後の通知破棄、中止後のcleanup完了までの排他、close後の取消不能を区別                                                                                               |
-| 大容量転送を全量WASM読込と説明       | File/reader/writable/FormDataのJSホスト経路を図示 | http-download/http/opfs実装と転送契約を照合。一般FileBytes上限は緩和されない。Web Locks未対応時はタブ間保証がなく、サーバー更新巻戻しも保証しない                                                                        |
-| モックを任意サーバー/認証検証と表現  | 宣言DSL・メモリCRUDの最小版と明記                 | model/worker/adapterを照合。Worker更新は送信後取消されない。UTのTestWorkerと実Worker、実HTTP/CORS、描画の確認を別の検証対象として記述                                                                                    |
-| WebMCPが全アプリで既定有効という断定 | demoと独立アプリの条件を分ける                    | main.jsの起動登録とapplication.jsのwebmcp===trueガードを照合。対応API/secure context/未対応時UI維持、5ツールの名称をui-toolsと照合。外部仕様の現況は今回調査していない                                                   |
-| 字数の測定が曖昧                     | 記事限定の計数をplanで固定                        | コードフェンス・末尾参考リンク一覧・画像alt・URL・Markdown装飾を除き、見出し/本文/図説明をUnicode文字数で数える。Python lenまたはJS Array.fromを使用し絵文字をUTF-16長で数えない。6,000〜8,000、AI部分2〜3割の結果を保存 |
-| docs:checkだけで画像を検査した扱い   | 記事を個別検査                                    | check-docs.mjsはdocs/skills等のみ走査しblog内部を対象にしない。docs入口リンクに加え記事内相対リンク/4画像の存在・PNG形式・直下5ファイルを別検査。外部URL/data URI/絶対画像パスがないことを確認                           |
-| 図・比較画像が読めない               | 日本語フォントを確認し実PNGを開く                 | 3図の欠字/重なり/切れ/矢印、本文幅縮小の可読性を目視。実Hello Worldを入力・押下し両面の同じ結果を撮影。Canvasの画素内容も確認し、stateだけで成功扱いにしない                                                             |
-| 整形/HMRで撮影が崩れる               | 文書整形後にサーバー起動                          | 前回reflectを採用。管理文書整形→撮影、cleanup失敗は元の失敗と別記。記事限定確認とcheck/docs:checkを行い、全ブラウザ回帰を追加しない                                                                                      |
-| 能力・時間を過大評価                 | 観測と考察を分ける                                | 8必須内容の照合表に実IME/アクセシビリティ/同期Rhai/GPU未対応、CPU再描画≠FPS、時間の対象、3停止と人の再開判断を含める。数字の時点とログ集計条件を添える                                                                   |
+Gallery の coverage: toolbar/tbtext/splitbutton/menu は label/button/menu 系、datepicker/pagingtoolbar は label/extra-button、radiogroup/checkboxgroup は見出しと field、accordion は panel 系、messagebox は window/label/field/button、codeeditor/htmleditor は textarea、Markdown/diff/chat/terminal は document、chart/draw/gitgraph/networkgraph/mermaid は figure。`engine/src/extras.rs` の normalize/arrange と生成 Scene で追跡する。gallery の6タブだけでは一時表示・エラー・disabled・dialog の全役割を網羅しないので状態別 fixture を補う。
 
-## 要件への影響・planへの提案
+## 公式資料と技術前提
 
-要件変更は不要。上記の「どう確認するか」を既存受け入れ基準の実行方法としてplanに採用することを提案する。特に記事限定検査（字数・直下5ファイル・4画像参照・ローカルリンク）、主張→根拠の照合表、対象UT、実画面撮影と目視の証跡を最終判定へ固定する。記事入口は `docs/README.md` に1件追加する。API変更・追加依存・外部公開は行わない。
+1. [W3C Selectors Level 4 — specificity](https://www.w3.org/TR/selectors-4/#specificity-rules): `:where()` の詳細度は0、`:is()` は引数の最大詳細度。このため reset は (0,1,1)、`.ui-button` や `.canvas-editor` は (0,1,0)。CSS の記述順だけを変えても競合を解消できない。
+2. [W3C CSS Fonts — font shorthand](https://www.w3.org/TR/css-fonts-4/#font-prop): font はサイズ・太さ・字体・行高を含む shorthand。inherit を字体だけの reset と誤解しない。参照は Working Draft だが今回使う shorthand の基本動作は既存 CSS の範囲。
+3. [WHATWG Canvas text styles](https://html.spec.whatwg.org/multipage/canvas.html#text-styles): ctx.font は CSS font 値を解釈し、サイズを CSS px にする。未読込フォントは fallback を使う。ctx.font に inherit をそのまま代入する方法は使えない。
+4. [MDN Document.fonts](https://developer.mozilla.org/en-US/docs/Web/API/Document/fonts): document.fonts.ready は使用中フォントのロードとレイアウト後の観測に使える。未使用の全フォントが必ずロードされる保証ではない。今回の src/index/examples/public の検索では @font-face や外部フォント読込、fonts.ready の実装は見つからず、名前の指定を実フォント導入の証拠にしない。
+5. [MDN devicePixelRatio](https://developer.mozilla.org/en-US/docs/Web/API/Window/devicePixelRatio): ページズームは DPR に影響し、pinch zoom は別の拡大。Canvas のバッファ高密度化と CSS サイズを分ける。
+6. [W3C SVG viewport transforms](https://www.w3.org/TR/SVG2/coords.html#ComputingAViewportsTransform): viewBox と viewport によってユーザー座標の文字が拡縮される。単なる font-size 属性比較では CSS px 一致を判定できない。
+7. [MDN measureText](https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/measureText) / [TextMetrics](https://developer.mozilla.org/en-US/docs/Web/API/TextMetrics): 文字計測は現在の font に依存。幅と実際の字形の上下境界を分けて観測する。
+8. [Playwright emulation](https://playwright.dev/docs/emulation#devices): viewport と deviceScaleFactor による高密度表示を再現できる。DPR2 を実ブラウザ200%の確認に代用しない。
+
+## 推奨設計（plan で確定する）
+
+- 最初に reset の詳細度を調整し、既存 DOM の役割別宣言が適用される状態にする。例として reset 自体も `:where()` で低詳細度にする方法を評価する。Canvas をホストの偶発的な16/20px等へ合わせることは避け、要件にある継承原因の修正として扱う。DOM の11/12/13/20/22/30等の宣言を保持した比較画像を残す。
+- runtime の既存 CSS をサイズの基準にする。必要な役割を runtime 内 CSS custom properties として表し、Canvas が stage の resolved 値を描画前に読む方法が候補。新しい DSL/テーマ API は不要。CSSとJSに二重のサイズ表を増やさない。getComputedStyle を文字ごとに実行せず、render/必要な再描画で更新し、独立 Canvas 面でも解決できる仕組みにする。
+- font 計測と描画を同じ役割へ集約する。`text()` 以外の measureText、paintSurface、dialog-icons、drag ghost を漏らさない。字体・太さ・行高を無条件に全面統一せず、欠けとサイズ比較に必要な差だけを調整する。
+- Grid の表示値12と編集値13を、DOM の表示役割を保つ12へ両編集経路で合わせる案を推奨。通常 field は13のまま。gridEditor によるローカル指定を使い、フィールド全体を12へ変更しない。
+- 図表・文書の共有 sprites と既存倍率計算を維持する。SVG の border 内 viewport と Canvas の widget 全体を使う倍率の差を実測する。ドキュメントの字体差が欠けを起こす場合は runtime の字体を再利用する。
+- 元の input/textarea/select を保持してスタイルと位置を更新する。今回のサイズ修正で作り直したり composing 中に値を上書きしたりしない。新依存追加は不要。
+
+## 落とし穴・回避策・検証条件
+
+| 落とし穴                             | 回避策                                           | 踏んでいないことの検証                                                                                                                        |
+| ------------------------------------ | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| CSS宣言だけを一致と見なす            | reset を含め実効値を観測                         | 比較デモと独立runtime、host font-size 16/20pxの双方で全役割の getComputedStyle と実 fillText font を照合。ボタン・×・オーバーレイを必須にする |
+| DOM 親と Canvas stage の継承差       | 文字役割を局所指定し親依存を除く                 | stage直下・panel/window内・popup・Grid editor の同じ role を比較する                                                                          |
+| DPRをfont-sizeにも掛ける二重拡大     | 既存469–479行の bitmap倍率を保持                 | DPR1/2で CSS幅、bitmap幅、transform、draw font を記録。fontは同値、bitmapだけ倍率を持つ。テーマ連打・resizeでtransformが累積しない            |
+| zoomで再描画されず旧DPR bitmapを使う | ResizeObserverの実際の発火と必要時の再描画を確認 | 描画済みページを100→200→100%に変更し、同じCSS幅の場合も再描画/位置/文字が一致する。DPRエミュレーションとは別記録                              |
+| fontロード後もfallback描画を残す     | 使用字体ロード後に再描画、dispose時に通知を解除  | 遅延font読込、読込失敗、dispose後完了を観測。fonts.ready前後の計測と再描画を比較。フォント名列とロード済み実字体を混同しない                  |
+| measureTextとdrawのfontが別値        | 同じ解決済み役割を使う                           | 左/中央/右寄せ、幅境界直前/直後、空文字・長い英数字・日本語で省略/折返しを確認する                                                            |
+| SVGサイズ属性だけを見る              | viewBox→CSSpx倍率と内容viewportを換算            | 390px/desktopで document/figure のSVG CTM と Canvas transform を採取。borderの2px差も含める                                                   |
+| native editorで文字サイズが跳ねる    | 通常値と編集roleを揃える                         | 通常→focus→入力→Enter確定→再編集→Escape取消。両面操作から値/stateが同期し、Grid拒否は下書きを保持する                                         |
+| 再描画でIME/選択/フォーカスを失う    | control再利用、composing guard維持               | composing中にテーマ変更・resize・再描画し同じnodeとactiveElement、選択、下書きを保持。合成イベントと実IMEを別記録                             |
+| 太さ/字体/line-heightの変化で欠ける  | 必要な計測・内側余白だけ調整                     | 日本語、英数字、空、長文、絵文字、複数行、22px metric、30px icon、狭いセルで画像目視。既存ellipsis/clipを超える重なりを増やさない             |
+| 一時状態をcoverageから漏らす         | kindとroleと状態を台帳に記録                     | light/dark、selected/disabled、placeholder、popup、toast、dialog、media error、dragを確認。文字なし/対象外/既存差には理由を残す               |
+
+今回に関係する並行性は fontロード完了と再描画・dispose、IME入力とテーマ/resizeの競合。暦計算・DST・通信認証・権限契約の変更は不要。カレンダーは文字役割の網羅に月移動・長い月名・月端の行数を使い、日付アルゴリズムを変更しない。
+
+## plan への完了条件と要件への提案
+
+1. 実測前提を最初に確立する。起動できるブラウザ経路を確認し、必要なら権限範囲内のブラウザ検証手段を準備する。利用不能なまま受け入れ合格にしない。
+2. Hello World、uivolve-forms、orders/grid-lab、components、gallery を全タブ・一時状態まで inventory に入れる。独立 runtime にも DOM/Canvas の同じfixtureをマウントし比較する。
+3. 各roleに DOM selector、widget key/kind、実効px、Canvasfont/transform、編集値、viewport/倍率/字体状態、差と理由を記録。実 fillText を元処理へ委譲しながら観測する。mock Canvasだけの定数検査は不要。
+4. desktop/約390px、DPR1/2、100/200%相当の拡大、light/darkで代表画面と編集動作を確認。実ブラウザ拡大を実行できなければ代用方式と未確認範囲を明記する。
+5. 適切な回帰確認に加え `bun run build`、`bun run check` を実施。状態/編集コードに触れれば `bun run test` の関連契約も確認。独立配布の変更があるため `bun run build:runtime` / `bun run build:minimal` の検証も計画する。整形→build→撮影の順を守る。
+
+既存受け入れ基準は十分であり本文への追加はしない。提案として、ホストfont-size変更、SVG倍率、Grid通常/編集の境界、遅延font完了とdisposeを計画の完了条件へ具体化する。discuss の投資判断を覆す発見はない。
+
+## このターンの検証記録
+
+- ブランチ `gsd-lite/renderer-font-size-parity`、開始時の git status は clean。
+- `gsd-lite-loop.sh --where` の成功出力は mode=repo、milestone_dir=.gsd-lite、target=.。初回の誤った相対パス実行は失敗し、PATH入口へ修正した。
+- CSSプローブ: `.gsd-lite/logs/renderer-font-size-parity/scratch/turn-001-font-probe.mjs`。`node --check` 成功。実行は上記ブラウザ制約で失敗し、実測JSON・撮影は生成されていない。scratchはgitignore対象、成果物として追跡しない。
+- スキル・ソース・公式資料の読取は完了。lean-ctx compose は承認不可で利用できず、通常の読取・検索で調査を継続した。これは research 成果物作成の停止条件ではない。

@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "id": "font-parity-text",
+  "title": "フォント一致検査・文字の形",
+  "script": "font-parity-text.rhai",
+  "state": {
+    "left": "左寄せ 123",
+    "center": "中央寄せ 123",
+    "right": "1234567.89",
+    "empty": "",
+    "japanese": "日本語の見出しテキスト",
+    "longAscii": "AVWijl0O ligature-heavy ASCII that overflows the field box by a wide margin",
+    "fitsInBox": "WWWWWWWWWWWWWW",
+    "overflowsBox": "WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+    "code": "fn init(s) {\n  let total = 0;\n  s\n}\nlet wrapped = \"この行は折り返しの境界を越える長さにしてあります\";\n"
+  },
+  "ui": {
+    "xtype": "container",
+    "layout": "vbox",
+    "items": [
+      { "xtype": "label", "itemId": "heading", "bind": "japanese" },
+      {
+        "xtype": "displayfield",
+        "itemId": "alignLeft",
+        "fieldLabel": "左寄せ",
+        "bind": "left",
+        "align": "left"
+      },
+      {
+        "xtype": "displayfield",
+        "itemId": "alignCenter",
+        "fieldLabel": "中央寄せ",
+        "bind": "center",
+        "align": "center"
+      },
+      {
+        "xtype": "displayfield",
+        "itemId": "alignRight",
+        "fieldLabel": "右寄せ",
+        "bind": "right",
+        "align": "right"
+      },
+      { "xtype": "textfield", "itemId": "emptyValue", "fieldLabel": "空", "bind": "empty" },
+      {
+        "xtype": "textfield",
+        "itemId": "longAscii",
+        "fieldLabel": "長い英数字",
+        "bind": "longAscii",
+        "width": 220
+      },
+      {
+        "xtype": "displayfield",
+        "itemId": "boundaryFits",
+        "fieldLabel": "幅境界の直前",
+        "bind": "fitsInBox",
+        "width": 220
+      },
+      {
+        "xtype": "displayfield",
+        "itemId": "boundaryOverflows",
+        "fieldLabel": "幅境界の直後",
+        "bind": "overflowsBox",
+        "width": 220
+      },
+      {
+        "xtype": "codeeditor",
+        "itemId": "codeArea",
+        "fieldLabel": "複数行・等幅",
+        "bind": "code",
+        "language": "rhai",
+        "rows": 6
+      }
+    ]
+  }
+}

@@ -109,11 +109,28 @@ beforeAll(async () => {
 afterEach(() => {
   for (const runtime of runtimes.splice(0)) runtime.dispose();
 });
-function stage(width = 400) {
+// The host subscribes to the document's font set and to a resolution media query. The stub
+// records every query it hands out so a test can fire the change the browser would.
+function testDocument() {
+  const view = {
+    devicePixelRatio: 1,
+    queries: [],
+    matchMedia(media) {
+      const query = Object.assign(new EventTarget(), { media });
+      view.queries.push(query);
+      return query;
+    },
+  };
+  return Object.assign(new EventTarget(), {
+    defaultView: view,
+    fonts: Object.assign(new EventTarget(), { status: "loading", ready: Promise.resolve() }),
+  });
+}
+function stage(width = 400, ownerDocument = testDocument()) {
   const element = {
     clientWidth: width,
     className: "host",
-    ownerDocument: new EventTarget(),
+    ownerDocument,
     contains: () => false,
     style: { setProperty: vi.fn() },
     dataset: {},
@@ -212,6 +229,80 @@ it("uses the same host and state for one or both rendering adapters without demo
   const detached = runtime.snapshot();
   detached.state.name = "変更";
   expect(runtime.snapshot().state.name).toBe("太郎");
+});
+
+// Drawing is the last step of a dispatch, after the state is already committed. A surface
+// that cannot draw its frame — a Canvas stage outside the document, a missing stylesheet —
+// therefore must not take the effects or the other surface's frame down with it.
+it("runs effects and the other surface's frame when one surface cannot draw", async () => {
+  const onError = vi.fn();
+  const onLoad = vi.fn();
+  const runtime = await host({ onError, onLoad });
+  const effects = vi.spyOn(runtime, "runEffects");
+  const reported = () => onError.mock.calls.filter(([error]) => error).map(([error]) => error);
+  // The first surface in the list, so the failure happens before the other one is asked for.
+  const broken = runtime.surfaces[0].adapter;
+  const intact = runtime.surfaces[1].adapter;
+  broken.render = vi.fn(() => {
+    throw new Error("描画できません");
+  });
+  await runtime.load("pages/home.yaml");
+  expect(onLoad).toHaveBeenCalledTimes(1);
+  expect(effects).toHaveBeenCalledTimes(1);
+  expect(intact.render).toHaveBeenCalledTimes(1);
+  expect(reported().map((error) => error.message)).toEqual(["描画できません"]);
+  runtime.dispatch("nameInput", { value: "太郎" });
+  runtime.dispatch("helloButton");
+  expect(runtime.revision).toBe(2);
+  expect(runtime.state.greeting).toBe("Hello 太郎");
+  expect(effects).toHaveBeenCalledTimes(3);
+  // The intact surface was handed every frame, including the one after the failing surface
+  // had already thrown, and the scene it got is the committed state.
+  expect(intact.render).toHaveBeenCalledTimes(3);
+  expect(
+    intact.render.mock.calls.at(-1)[0].widgets.find((widget) => widget.key === "greetingLabel")
+      .text,
+  ).toBe("Hello 太郎");
+  expect(broken.render).toHaveBeenCalledTimes(3);
+  expect(reported()).toHaveLength(3);
+  // Still reported, never swallowed: a frame nobody can draw is a problem the host has to see.
+  expect(new Set(reported().map((error) => error.message))).toEqual(new Set(["描画できません"]));
+});
+
+it("repaints when fonts settle or fail and when only the device pixel ratio changes, and both stop at dispose", async () => {
+  const ownerDocument = testDocument();
+  const runtime = await host({
+    surfaces: [{ element: stage(400, ownerDocument), renderer: "dom" }],
+  });
+  await runtime.load("pages/home.yaml");
+  const repaint = vi.spyOn(runtime, "scheduleRender");
+  // Flush the initial fonts.ready subscription so the counts below only reflect new signals.
+  await new Promise((done) => setTimeout(done, 0));
+  expect(repaint).not.toHaveBeenCalled();
+  ownerDocument.fonts.dispatchEvent(new Event("loadingdone"));
+  ownerDocument.fonts.dispatchEvent(new Event("loadingerror"));
+  expect(repaint).toHaveBeenCalledTimes(2);
+  // A ratio change can leave every CSS size untouched, so only the resolution query reports
+  // it, and the watcher has to re-arm at the new ratio to still see the next one.
+  const armed = () => ownerDocument.defaultView.queries.at(-1);
+  expect(armed().media).toBe("(resolution: 1dppx)");
+  for (const ratio of [2, 1]) {
+    const previous = armed();
+    ownerDocument.defaultView.devicePixelRatio = ratio;
+    previous.dispatchEvent(new Event("change"));
+    expect(armed().media).toBe(`(resolution: ${ratio}dppx)`);
+  }
+  expect(repaint).toHaveBeenCalledTimes(4);
+  const ratioQuery = armed();
+  // A second runtime on the same document must not take this one's subscriptions with it.
+  const other = await host({ surfaces: [{ element: stage(500, ownerDocument), renderer: "dom" }] });
+  other.dispose();
+  ownerDocument.fonts.dispatchEvent(new Event("loadingdone"));
+  expect(repaint).toHaveBeenCalledTimes(5);
+  runtime.dispose();
+  ownerDocument.fonts.dispatchEvent(new Event("loadingdone"));
+  ratioQuery.dispatchEvent(new Event("change"));
+  expect(repaint).toHaveBeenCalledTimes(5);
 });
 
 it("keeps the page, edited state and token when downloads, init or configured IDs fail", async () => {

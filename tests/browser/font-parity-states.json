@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "id": "font-parity-states",
+  "title": "フォント一致検査・状態と残りのxtype",
+  "script": "font-parity-states.rhai",
+  "state": {
+    "notice": "状態別の採取用の画面です。",
+    "memo": "下書きの値",
+    "pickedDay": "2026-10-15",
+    "shownMonth": "2026-10",
+    "earliestMonth": "0001-01",
+    "latestMonth": "9999-12",
+    "rowTotal": 120,
+    "rowPage": 0,
+    "answerOpen": false
+  },
+  "ui": {
+    "xtype": "container",
+    "layout": "vbox",
+    "items": [
+      { "xtype": "label", "itemId": "notice", "bind": "notice" },
+      {
+        "xtype": "fieldset",
+        "itemId": "plainGroup",
+        "title": "折りたたまない群の見出し",
+        "items": [
+          { "xtype": "textfield", "itemId": "memoField", "fieldLabel": "メモ", "bind": "memo" },
+          { "xtype": "checkbox", "itemId": "boxOnly", "boxLabel": "ラベル帯の無いチェック" },
+          { "xtype": "button", "itemId": "offButton", "text": "使えない操作", "disabled": true }
+        ]
+      },
+      {
+        "xtype": "toolbar",
+        "itemId": "stateBar",
+        "items": [
+          "帯の文字",
+          "-",
+          "  ",
+          "->",
+          { "xtype": "button", "itemId": "barButton", "text": "押す", "handler": "openAnswer" }
+        ]
+      },
+      {
+        "xtype": "container",
+        "itemId": "cardDeck",
+        "layout": "card",
+        "activeItem": 0,
+        "height": 72,
+        "items": [
+          {
+            "xtype": "container",
+            "title": "一枚目",
+            "items": [{ "xtype": "label", "itemId": "cardOne", "text": "カード面の文字" }]
+          },
+          {
+            "xtype": "container",
+            "title": "二枚目",
+            "items": [{ "xtype": "label", "itemId": "cardTwo", "text": "隠れている面" }]
+          }
+        ]
+      },
+      {
+        "xtype": "datepicker",
+        "itemId": "monthPicker",
+        "bind": "pickedDay",
+        "pageBind": "shownMonth",
+        "showToday": true,
+        "today": "2026-10-06"
+      },
+      { "xtype": "datepicker", "itemId": "earlyPicker", "pageBind": "earliestMonth" },
+      { "xtype": "datepicker", "itemId": "latePicker", "pageBind": "latestMonth" },
+      {
+        "xtype": "pagingtoolbar",
+        "itemId": "rowPager",
+        "bind": "rowTotal",
+        "pageBind": "rowPage"
+      },
+      {
+        "xtype": "messagebox",
+        "itemId": "answerBox",
+        "title": "応答の確認",
+        "message": "どちらかの応答を選びます。",
+        "buttons": "okcancel",
+        "visibleBind": "answerOpen",
+        "handler": "answered"
+      }
+    ]
+  }
+}
