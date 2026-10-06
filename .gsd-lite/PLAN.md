@@ -305,7 +305,7 @@ bun run docs:check
     そのままで、呼び出し側の `CanvasRenderer.resolveFonts()` が状態を `stage.isConnected` で
     分ける）。行 6 の「通常の表示」は既存の全 suite がそのまま green で確認した。
 
-- [ ] F4: ホストのタグセレクタ規則からフォーム部品の font を守る（verify round 1）
+- [x] F4: ホストのタグセレクタ規則からフォーム部品の font を守る（verify round 1）
   - 背景: reset を `:where(.uivolve-runtime) :where(button, input, select, textarea)`（詳細度 0,0,0）へ下げたため、ホストページの `button, input, select, textarea { font: italic 700 17px/2 serif }` のようなタグだけの規則（0,0,1）が reset に勝つようになった。verify のプローブ（同上）の実測: サイズは部品側の宣言で 12 / 13px のまま保たれるが、DOM 面の全フォーム部品が `italic` / `serif` になり、入力欄・選択欄は太さ 700 になる（Canvas は runtime の字体・normal・400 のまま）。main の reset（0,1,1）は同じ規則に勝ち、字体・斜体・太さはランタイムのものだった。サイズの修正と引き換えに、main が防いでいた範囲を失っている。「決めた事項 1」の機構はこの副作用を見落としていたので、このタスクで訂正する。
   - 完了基準: 下表のとおり。対象は DOM 面の全フォーム部品（button / input / select / textarea。Grid 編集を含む）と Canvas の編集オーバーレイ（`.canvas-editor` の input / select / textarea）。守る範囲は「クラス・ID・`!important` を含まない規則（詳細度 0,0,n）」で、main の reset が勝っていた範囲と同じ。それより強いホスト規則と、ランタイム内部の class を名指しする規則は対象外として台帳の限界に書く。機構は任せるが、部品別の宣言（button 12/500、panel-toggle 12/600、close 20 など）が reset に負けないこと。`roles` / `editing` suite にホスト規則ありのケースを足して実測する。
 
@@ -318,6 +318,20 @@ bun run docs:check
 
   - 対象: `src/runtime.css`、`tests/browser/font-parity.mjs`、`tests/browser/font-parity-harness.js`、`docs/renderer-font-parity.md`、`docs/runtime-distribution.md`。
   - 依存: F3
+  - **PLAN 訂正（turn 17 / F4 実測）**: 対象ファイルに `tests/browser/font-parity-observe.js` を
+    追加した。既存の観測は `fontSize` / `fontWeight` / `fontFamily` しか読んでおらず、
+    完了基準が求める **font-style と line-height が measure 側に無かった**（新設
+    `formControlFonts` が `font: inherit` の設定する 7 プロパティを部品単位で返す）。
+  - **PLAN 訂正（turn 17 / F4 実測）**: 表の「期待（computed 値が規則なしのときと同一）」の
+    うち、**裸の `select` の line-height だけは誰も動かせない**。Blink が UA stylesheet で
+    固定するため、ホスト規則の有無にかかわらず `normal` のままになる（実測）。この 1 件は
+    「ランタイムが守った」証拠にならないので、ブラウザが固定するプロパティの一覧
+    （`HOST_RULE_IMMOVABLE`）として**過不足なく一致**する形で assert し、台帳の限界に書いた。
+  - **PLAN 訂正（turn 17 / F4 実測）**: 「roles / editing suite にホスト規則ありのケースを
+    足す」の内訳は **3 ケース**にした（`roles` に通常 field ＋ Canvas オーバーレイ、`editing`
+    に DOM と Canvas の Grid 列エディタ）。× 3 規則 × 配置 2 = 18 回の読み取り。あわせて
+    **ランタイム外の裸の 4 部品を対照群**として足した（規則が何にも一致しなくなった状態を
+    「部品がフォントを守った」と読めてしまうため。変異 3 でこの歯を確認した）。
 
 - [ ] F5: 台帳と文書の事実誤り・古い記述・言い過ぎを直し、最終 gate を通す（verify round 1）
   - 背景: verify が `docs/renderer-font-parity.md` の数値と主張を証跡 JSON・コードと照合した。現在の合計値（28 ケース / DOM 1243 / Canvas 1276 / 37 kind / 48 xtype / 168 ケースなど）は証跡と一致したが、下の項目が食い違っていた。行番号は 7b126a4 時点。F1〜F4 で変わった件数・挙動もここで最終値に揃える。

@@ -138,3 +138,64 @@
 - 想定外: (1) 未接続と「CSS 無し」を**メッセージで区別できない**（どちらも `resolveFontMetrics` の例外）ので、分岐は `stage.isConnected` に置いた。接続済みのステージで `font-family` だけを空にする条件は作れない（継承値が必ず入る）ため、行 3 の実測は 2 通り（stylesheet を外す・役割の値を px でなくする）になった。(2) 復帰は**新しい購読を足さずに済んだ**。接続すると既存の `ResizeObserver` が CSS 箱 0 → 実寸を報告して再描画が走る（接続後のフレームに最新 state の `Hello World` が載ることを実測）。(3) 変異 2 が `lifecycle` では green になる（paint が投げなければ catch する物が無い）。製品側の 2 つの修正は**別々の歯**で守る必要がある。(4) `[...document.styleSheets]` を `for…of` に直書きすると lint の警告が出る（スナップショットが必要なので変数へ逃がした）。
 - やり直し: 0 回（`lifecycle` も最終 gate も 1 回で green）。`vp check --fix` 1 回（mjs・docs の整形）＋ lint 警告の手直し 1 回。
 - 次への注意: 次は **F4**（ホストのタグセレクタ規則からフォーム部品の font を守る）。F4 は `src/runtime.css` の reset の詳細度の話で、**サイズは今のままで字体・斜体・太さを守る**のが目的（ホスト規則ありのケースを `roles` / `editing` に足す）。再現は `scratch/turn-013-probe.mjs` の `hostTagRule:branch` / `:mainReset`（結果は PLAN の F4 背景に転記済み）。F3 で足した道具が使える: `createStageStateHarness`（面の順序・ステージの接続・stylesheet の着脱・役割値の上書き）、`stageProbe` / `stageAct`、`runSceneFreeRepaints`。ホストページへ規則を足すのは `page.addStyleTag`（既存 `declareProbeFont` と同じ）で、**ランタイムの stylesheet の前後どちらに置いても**同じ結果になることを F4 の表が要求している点に注意。変異の仕掛けは `scratch/turn-016-mutate.mjs`（表を足すだけ・`vitest` も走らせられる）。長いエラーは `scratch/turn-016-run.mjs` 経由で読む。最終 gate は前景で 1 回・約 71 秒。`grep`/`sed` はフックに拒否されるので `git grep` と Read ツールを使う。ブラウザを使うコマンドはサンドボックス外で実行する。
+
+## turn 17 — impl — F4 ホストのタグセレクタ規則からフォーム部品の font を守る
+
+- やったこと: 製品側は **1 セレクタだけ**直した。`src/runtime.css` の reset を
+  `.uivolve-runtime :where(button, input, select, textarea)`（詳細度 **0,1,0**）にして、
+  クラス・ID・`!important` を含まないホスト規則（0,0,n）に勝つ範囲を取り戻した。部品別の
+  宣言は同じ 0,1,0 で reset より後ろにあるので従来どおり勝つ（T2 の修正は維持。だから
+  reset は「フォントを宣言するどの規則より前・0,1,0 より強くしない」という条件が付く形で
+  コメントに残した）。検査は観測に `formControlFonts`（`font: inherit` が設定する 7
+  プロパティを部品単位で読む）、harness に `installHostRule` / `removeHostRule` /
+  `outsideRuntimeFonts` を新設し、`roles` / `editing` に **18 回の読み取り**（3 ケース ×
+  3 規則 × ランタイム stylesheet の前後 2 配置、のべ 744 部品）を足した。差は **0 件**。
+  規則を外したあとに baseline へ戻ること、Canvas 側の解決値（字体・7 役割のサイズ）が
+  規則の前後で不変であることも毎ケース assert する。最終 gate
+  `bun scripts/verify-font-parity.mjs` は 14 手順とも green（vitest **631 件のまま**、
+  `roles` 28 ケース ＋ 6 読み取り、`editing` 16 ケース ＋ 12 読み取り）。
+- 変異の確認: 3 件。(1) reset を 0,0,0 へ戻す（= 差し戻し前）→`roles` 非 0・54 件 /
+  `editing` 非 0・108 件（字体・斜体・太さ・line-height が全フォーム部品で動く。**サイズは
+  動かない**ので、F4 の検査が無ければサイズだけ見ている既存 suite はすべて green のまま）。
+  (2) reset を main の 0,1,1 へ上げる→`roles` 非 0・1765 件 / `editing` 非 0・571 件
+  （button 16px・panel-toggle 16px・grid-cell 13px など部品の宣言が負ける。修正が
+  0,0,0 と 0,1,1 の**間**でなければならないことの確認）。(3) ホスト規則を何にも一致しない
+  セレクタにする→`roles` 非 0・8 件（対照群の 4 部品が「5 プロパティとも動いていない」で
+  落ちる）。1 件ずつ入れて戻し、毎回 `git diff --stat` が F4 の差分だけであることを確認
+  （変異はコミットしていない）。手順は `scratch/turn-017-mutate.mjs`。表の 4 行目
+  （変異なし）は最終 gate の実行そのもので確認。
+- PLAN 訂正: 3 件。(1) 対象ファイルに `tests/browser/font-parity-observe.js` を追加
+  （既存の観測は font-style と line-height を読んでいなかった）。(2) **裸の `select` の
+  line-height はホスト規則でも動かない**（Blink が UA stylesheet で固定）。ブラウザが
+  固定するプロパティの一覧として過不足なく assert する形にし、台帳の限界に書いた。
+  (3) ケースの内訳を 3 ケース（`roles` に通常 field ＋ Canvas オーバーレイ、`editing` に
+  DOM と Canvas の Grid 列エディタ）とし、**ランタイム外の裸の 4 部品を対照群**に足した。
+- 既存テストの期待値の変更: **なし**（vitest 631 件のまま、`tests/font-parity-runner.test.js`
+  は無変更。既存 suite の件数も turn 16 と同じ）。
+- 想定外: (1) **対照群が無ければこの検査は空になる**ことに気付いた。ホスト規則の検査は
+  「規則を入れても部品が動かない」ことを見るので、規則が一致しなくなっただけでも green に
+  なる。ランタイム外の裸の 4 部品を置いて「規則は確かに効いている」を別に示す形にした
+  （変異 3 がこの歯）。(2) その対照群で `select` の line-height だけが動かず、最初の実行が
+  6 件の失敗になった。製品の不具合ではなくブラウザが UA stylesheet で固定している
+  （`normal` のまま）。(3) デモの `src/styles.css:16-21` は**まさにこの形のタグ規則**
+  （`button, input, select, textarea { font: inherit }`）を持っている。宣言の値が同じ
+  `font: inherit` なので computed 値は変わらず、0,0,0 の欠陥がデモでは見えていなかった。
+  (4) ホスト規則の挿入位置は「ランタイムの stylesheet を文書内で特定して前後に insert」
+  する形にした（`page.addStyleTag` は head への append しかできない）。ランタイムの
+  stylesheet は `--ui-font-size-body` を宣言している sheet として探す（F3 の
+  `removeSizeStylesheets` と同じ探し方。開発サーバーは注入、配布物は `<link>`）。
+- やり直し: 1 回。`roles` の実行 2 回（1 回目=`select` の line-height 6 件で失敗 →
+  ブラウザが固定するプロパティの表を入れて green）。`vp check --fix` 2 回（整形 ＋ lint
+  警告の手直し 1 行。turn 16 と同じ `[...document.styleSheets]` の警告）。最終 gate 1 回。
+- 次への注意: 次は **F5**（台帳と文書の事実誤り・古い記述・言い過ぎを直し、最終 gate を
+  通す）。F5 は文書だけなので `src/` と検査は変えない。**F4 で動いた数値**: `roles` の
+  log に `6 host-rule readings over 90 controls`、`editing` に `12 host-rule readings over
+654 controls`、台帳に新節「ホストのタグ規則からフォーム部品を守る（F4）」。
+  **F5 が直す行番号は F4 の後でずれている**: `src/runtime.css` の reset は 26-38 行
+  （コメント込み）、以降の行番号は +8。台帳 L160-165 の「修正前 … 詳細度 0,1,1」の
+  `src/runtime.css:11-12` 等も F5 の対象（F4 では reset の節だけ現状へ直した）。
+  最終 gate は前景で 1 回・約 70 秒。長いエラーは `scratch/turn-017-run.mjs` 経由で読む
+  （Bun は長い `error.stack` を落とす）。変異の仕掛けは `scratch/turn-017-mutate.mjs`
+  （表を足すだけ・復元はバイト列の書き戻しなので未コミットでも安全）。`grep`/`sed` は
+  フックに拒否されるので `git grep` と Read ツールを使う。ブラウザを使うコマンドは
+  サンドボックス外で実行する。
