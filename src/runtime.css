@@ -23,10 +23,18 @@
 .uivolve-runtime * {
   box-sizing: border-box;
 }
-/* Form controls must not keep the browser's own font, but this reset must never beat a
-   component's own size. `:where()` on both sides keeps it at specificity 0,0,0, so every
-   declaration below wins and a control only inherits where nothing else is declared. */
-:where(.uivolve-runtime) :where(button, input, select, textarea) {
+/* Form controls must not keep the browser's own font — and must not take the host page's
+   either. A host that writes `button, input, select, textarea { font: ... }` reaches every
+   control inside the surface, so this reset has to outrank a tag-only rule (0,0,n) while
+   still losing to a component's own declaration. Hence the two halves:
+     - `.uivolve-runtime` stays outside `:where()`, which puts the reset at 0,1,0 — above
+       any selector the host can write without naming a class, an id or `!important`;
+     - the controls stay inside `:where()`, so the component rules further down this file
+       are 0,1,0 as well and win on source order. This block must therefore remain above
+       every rule that declares a font property, and nothing may raise it past 0,1,0.
+   Stronger host rules, and host rules that name the runtime's internal classes, are out of
+   scope and recorded in docs/renderer-font-parity.md. */
+.uivolve-runtime :where(button, input, select, textarea) {
   font: inherit;
 }
 .uivolve-runtime button {

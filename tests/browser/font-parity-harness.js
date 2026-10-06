@@ -10,6 +10,7 @@ import {
   dialogIconSurfaces,
   environment,
   fontEvidence,
+  formControlFonts,
   hostFrame,
   measureRoles,
   mediaNotices,
@@ -21,9 +22,11 @@ import {
 export {
   contextOf,
   controlBoxes,
+  CONTROL_FONT_PROPERTIES,
   dialogIconSurfaces,
   environment,
   fontEvidence,
+  formControlFonts,
   hostFrame,
   measureRoles,
   mediaNotices,
@@ -104,6 +107,82 @@ export function resolverRejections() {
       return { element };
     }),
   ];
+}
+
+// --- the host page's own rules ------------------------------------------------------
+// A host that styles form controls by tag name — `button, input, select, textarea { font:
+// ... }` — reaches every control inside the mounted surface. These helpers put such a rule
+// on the page the way a host would, on either side of the runtime's own stylesheet because
+// source order must not be what decides the outcome, and keep four bare controls outside
+// the surface: those are what show the rule is live rather than merely parsed.
+const HOST_RULE_ID = "font-parity-host-rule";
+const OUTSIDE_ID = "font-parity-outside";
+
+// The runtime's stylesheet as a document node, found by the sizes it declares rather than
+// by a file name (the dev server injects it, the distribution links it).
+function runtimeStyleNode() {
+  const property = FONT_SIZE_PROPERTIES.body;
+  // A snapshot: the insert below changes the live list.
+  const sheets = [...document.styleSheets];
+  for (const sheet of sheets) {
+    let declares = false;
+    try {
+      declares = [...sheet.cssRules].some((rule) => rule.cssText.includes(property));
+    } catch {
+      // A stylesheet whose rules cannot be read is not one of ours.
+      continue;
+    }
+    if (declares && sheet.ownerNode) return sheet.ownerNode;
+  }
+  return null;
+}
+
+function outsideControls() {
+  let box = document.getElementById(OUTSIDE_ID);
+  if (box) return box;
+  box = document.createElement("div");
+  box.id = OUTSIDE_ID;
+  for (const tag of ["button", "input", "select", "textarea"]) {
+    const element = document.createElement(tag);
+    if (tag === "select") element.append(new Option("外", "外"));
+    else if (tag === "button") element.textContent = "外";
+    else element.value = "外";
+    box.append(element);
+  }
+  document.body.append(box);
+  return box;
+}
+
+// The same reading as the surface's controls, taken outside the runtime where nothing
+// protects them. Without a rule these must look like the browser's defaults; with one
+// they must have moved, or the case proved nothing about the surface.
+export function outsideRuntimeFonts() {
+  return formControlFonts(outsideControls(), "outside");
+}
+
+export function installHostRule({ css, placement }) {
+  removeHostRule();
+  const anchor = runtimeStyleNode();
+  if (!anchor) throw new Error("ランタイムの stylesheet を文書内で特定できません");
+  const style = document.createElement("style");
+  style.id = HOST_RULE_ID;
+  style.textContent = css;
+  if (placement === "before") anchor.parentNode.insertBefore(style, anchor);
+  else if (placement === "after") anchor.parentNode.insertBefore(style, anchor.nextSibling);
+  else throw new Error(`未知の placement: ${placement}`);
+  const nodes = [...document.querySelectorAll("style, link[rel='stylesheet']")];
+  return {
+    placement,
+    // Rules the browser actually accepted, so a typo in the fixture cannot pass as a
+    // surface that held its font.
+    rules: style.sheet ? style.sheet.cssRules.length : 0,
+    ruleIndex: nodes.indexOf(style),
+    runtimeIndex: nodes.indexOf(anchor),
+  };
+}
+
+export function removeHostRule() {
+  document.getElementById(HOST_RULE_ID)?.remove();
 }
 
 // The stage states a host can put a surface in, as a fixture. A Canvas stage that is not in
@@ -786,6 +865,19 @@ export async function createFontParityHarness({
           domStage: environment(domStage, null),
           canvasStage: environment(canvasStage, canvas),
         },
+        errors: [...errors],
+      };
+    },
+    // Every form control on both stages, with the font properties a host rule naming only
+    // tags can reach. Read before and after such a rule is installed: the surface's values
+    // have to be identical, control by control.
+    formControls() {
+      return {
+        dom: formControlFonts(domStage, "dom"),
+        canvasStage: formControlFonts(canvasStage, "canvas-stage"),
+        outside: outsideRuntimeFonts(),
+        resolved: { dom: resolvedMetrics(domStage), canvas: resolvedMetrics(canvasStage) },
+        hostFrame: hostFrame(host),
         errors: [...errors],
       };
     },

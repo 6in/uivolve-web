@@ -509,6 +509,50 @@ export function fontEvidence(stage) {
   };
 }
 
+// --- form controls against the host page's own rules ------------------------------
+// Exactly the properties `font: inherit` sets, which is exactly what a host rule naming
+// only tags can take away from a control. Compared as strings: the question is whether
+// the value moved, not what it parses to.
+export const CONTROL_FONT_PROPERTIES = [
+  "fontFamily",
+  "fontStyle",
+  "fontVariant",
+  "fontWeight",
+  "fontStretch",
+  "fontSize",
+  "lineHeight",
+];
+
+// Every control the reset covers, on one stage. The sweep is by tag rather than by a
+// selector table because the claim is about all of them, including the Grid editors and
+// the Canvas overlay — a control the table forgot is the defect this would miss.
+export function formControlFonts(root, label) {
+  return [...root.querySelectorAll("button, input, select, textarea")].map((element) => {
+    const style = getComputedStyle(element);
+    const widget = widgetOf(element);
+    const row = {
+      stage: label,
+      path: cssPath(element, root),
+      tag: element.tagName.toLowerCase(),
+      type: element.type ?? null,
+      key: widget.key,
+      kind: widget.kind,
+      // Which size rule owns this control, so a case that never opened an editor cannot
+      // claim to have covered one. The Canvas overlay carries both classes itself; a DOM
+      // Grid editor wears `grid-editor` on the field box around it.
+      slot: element.classList.contains("canvas-editor")
+        ? element.classList.contains("grid-editor")
+          ? "canvas-grid-editor"
+          : "canvas-editor"
+        : element.closest(".grid-editor")
+          ? "grid-editor"
+          : "field",
+    };
+    for (const property of CONTROL_FONT_PROPERTIES) row[property] = style[property];
+    return row;
+  });
+}
+
 // The page outside the runtime. Fixing the reset must not reach past the mounted
 // surface, so the host element and the document body are measured alongside it.
 export function hostFrame(host) {

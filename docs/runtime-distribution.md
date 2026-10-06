@@ -100,6 +100,8 @@ Canvasの表示領域は**文書に接続してから描かれる**。ランタ�
 
 生成した`runtime-dist/`と`app-dist/`は実ブラウザへ読み込み、DOMとCanvasの実効文字サイズを突き合わせる検査の対象にしている。基準はDOM側の役割別の宣言値で、部品の文字サイズはホストの`font-size`を継承しない（`.uivolve-runtime`自体は継承するが、ボタン・ラベル・入力欄などの文字サイズはランタイムのCSSが宣言している）。実測では外側を16pxにしても20pxにしても表示領域内の文字サイズは変わらない。検査方法と限界は[レンダラー間のフォントサイズ台帳](renderer-font-parity.md)を参照。
 
+ホストページが`button, input, select, textarea { font: ... }`のようにタグだけで書いた規則は、表示領域内のフォーム部品（Grid編集とCanvasの編集オーバーレイを含む）には**届かない**。ランタイムのCSSがクラス・ID・`!important`を含まない規則（詳細度0,0,n）より強い詳細度でフォントを宣言しているため、字体・斜体・太さ・サイズ・行の高さはランタイムのものが使われる。ランタイムのstylesheetより前・後のどちらに置いても同じ。逆に、クラスやIDを含む規則（`.my-app button { ... }`）、`!important`、ランタイム内部のクラス名を名指しする規則（`.ui-button { ... }`）はホスト側が勝つ。内部クラス名は公開APIではないので、表示領域内の部品をホストのCSSで狙わない。
+
 認証は既存の`ResourceClient`を共有する。`createApplication`の`authentication`、または起動後の`app.runtime.resources.setAuthentication(...)`で[JWT・リフレッシュ設定](authentication.md)を渡せる。トークンは公開する`app.json`やDSLに埋め込まない。認証付き配信では配信キャッシュを有効にしない。
 
 ## 次の配布段階

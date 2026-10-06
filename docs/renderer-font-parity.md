@@ -214,15 +214,22 @@ computed 値から同じ変数を解決**します。`font-metrics.js` は数値
 .uivolve-runtime :is(button, input, select, textarea) {
   font: inherit;
 }
-/* 修正後（詳細度 0,0,0 — 宣言がある部品は必ず自分の値になる） */
-:where(.uivolve-runtime) :where(button, input, select, textarea) {
+/* 修正後（詳細度 0,1,0 — 部品の宣言と同じ詳細度。後から宣言される部品側が勝つ） */
+.uivolve-runtime :where(button, input, select, textarea) {
   font: inherit;
 }
 ```
 
 `font: inherit` 自体は残します（フォーム部品がブラウザ既定のフォントに戻らないため）。
-詳細度を 0,0,0 にしたことで、**宣言がある部品は自分の値、宣言が無い部品だけが継承**という
-本来の関係になります。ホスト側（ランタイム外）の computed 値は変わりません。
+詳細度を 0,1,0 にしたことで、**宣言がある部品は自分の値、宣言が無い部品だけが継承**という
+本来の関係になります（部品の宣言は同じ 0,1,0 で、この reset より後にあるので勝ちます。
+だから reset はフォントを宣言するどの規則よりも前に置き、0,1,0 より強くしません）。
+ホスト側（ランタイム外）の computed 値は変わりません。
+
+`:where()` を両側に付けて 0,0,0 まで下げた形は **F4 で取り消しました**。0,0,0 ではホスト
+ページの `button, input, select, textarea { font: … }`（0,0,1）が reset に勝ち、サイズは
+部品側の宣言で保たれるものの字体・斜体・太さがホストのものになっていました。詳しくは
+「ホストのタグ規則からフォーム部品を守る（F4）」の節。
 
 ### 修正で直った役割（修正前 → 修正後）
 
@@ -1354,6 +1361,91 @@ F2 が閉じたのは**検査の穴**なので、変異は「その assert が�
 | 4   | media の空／エラー案内の `content` を消す                       | `surfaces`     | 非 0。`image / video / iframe` の 4 枠 ×ケースで「案内が出ていない」            |
 | 5   | `dispatch` ごとに実体のないエラーを通知する（state は変えない） | `editing`      | 非 0・25 件。操作スクリプト 10 本すべてが `errors: ["probe", …]` を出した       |
 | 6   | 変異なし                                                        | 全 suite green | `bun scripts/verify-font-parity.mjs` の 14 手順すべて green（約 69 秒）         |
+
+## ホストのタグ規則からフォーム部品を守る（F4・verify round 1）
+
+### 直した穴
+
+「決めた事項 1」で reset の詳細度を 0,0,0 まで下げたとき、**サイズの修正と引き換えに
+main が防いでいた範囲を失っていました**。ホストページが
+
+```css
+button,
+input,
+select,
+textarea {
+  font: italic 700 17px/2 serif;
+}
+```
+
+のようにタグだけで書いた規則は 0,0,1 なので、0,0,0 の reset に勝ちます。verify round 1 の
+実測では、サイズは部品側の宣言（12 / 13px）で保たれるのに **DOM 面の全フォーム部品が
+`italic` / `serif` になり、入力欄と選択欄は太さ 700 になりました**（Canvas はランタイムの
+字体・normal・400 のままなので、両面が食い違います）。
+
+直し方は 1 セレクタです。`.uivolve-runtime` を `:where()` の外へ出して **0,1,0** にし、
+部品側（同じ 0,1,0）は**この reset より後ろにある**ことで勝たせます。つまり reset は
+フォントを宣言するどの規則よりも前に置き、0,1,0 より強くしません。
+
+| 詳細度                                | 例                                           | reset との勝敗                   |
+| ------------------------------------- | -------------------------------------------- | -------------------------------- |
+| 0,0,1〜0,0,n（タグ・子孫だけ）        | `button, input…` / `html body button…`       | reset が勝つ（守る範囲）         |
+| 0,1,0（ランタイムの部品別宣言・同列） | `:where(.uivolve-runtime) .ui-button`        | 後に来る部品側が勝つ（意図通り） |
+| 0,1,0 以上のホスト規則・`!important`  | `.my-app button` / `button { … !important }` | ホストが勝つ（対象外）           |
+
+### 実測（`roles` / `editing` の 18 ケース、Chromium 152.0.7977.64）
+
+規則は**ランタイムの stylesheet の前と後の両方**に置いて測ります（順序が結果を決めて
+いないことの確認）。挿入位置は `installHostRule` が文書内の index で返し、`before` なら
+runtime より小さい index、`after` なら大きい index であることを assert します。
+
+| ケース                 | suite     | 開いた対象（slot）                        | 部品数 |
+| ---------------------- | --------- | ----------------------------------------- | ------ |
+| forms-overlay          | `roles`   | 通常 field ＋ Canvas オーバーレイ         | 15     |
+| grid-lab-dom-editor    | `editing` | 通常 field ＋ DOM の Grid 列エディタ      | 54     |
+| grid-lab-canvas-editor | `editing` | 通常 field ＋ Canvas の Grid オーバーレイ | 55     |
+
+3 ケース × 3 規則（shorthand / longhand / 子孫セレクタ 0,0,3）× 2 配置 = **18 回の読み取り、
+のべ 744 部品**。各部品について `font: inherit` が設定する 7 プロパティ（font-family /
+font-style / font-variant / font-weight / font-stretch / font-size / line-height）を規則なしの
+読み取りと突き合わせ、**差は 0 件**でした。規則を外したあとに baseline へ戻ることも
+毎ケース確認しています。Canvas 側の解決値（字体・7 役割のサイズ）も規則の前後で不変です。
+
+**対照群**: ランタイムの外に裸の `button` / `input` / `select` / `textarea` を置き、規則が
+効いていることを**そこで**確かめます。これが無いと「reset が何にも一致しなくなった」状態が
+「部品がフォントを守った」と読めてしまいます。実測では 4 部品すべてが `serif` / `italic` /
+`700` / `17px` へ動きました。唯一の例外は **`select` の line-height**で、Blink が UA
+stylesheet で固定するためページ側の規則では動きません（`normal` のまま）。これは
+`HOST_RULE_IMMOVABLE` に tag ごとの一覧として置き、**過不足ない一致**を assert します
+（ブラウザが将来動かせるようになったら、黙って緩むのではなくここで落ちます）。
+
+### 限界（F4）
+
+- **0,1,0 以上のホスト規則は対象外**です。`.my-app button { font: … }`、`#app input { … }`、
+  `!important` を含む規則はフォーム部品の font を変えられます。main の reset（0,1,1）でも
+  同じで、これは F4 で広げていません。
+- **ランタイム内部の class を名指しするホスト規則も対象外**です（`.ui-button { font-size: 20px }`
+  のように書けば勝ちます）。内部 class は公開 API ではなく、`docs/runtime-distribution.md`
+  にも同じ注意を書いています。
+- 守る対象は**フォーム部品**（`button` / `input` / `select` / `textarea`、Grid 編集と Canvas
+  オーバーレイを含む）です。`div` / `span` で描かれる役割はタグだけのホスト規則では
+  サイズが変わりません（部品別の宣言が 0,1,0 で勝つ）が、`* { font: inherit }` のような
+  規則は SVG sprite の `font-size` 属性より強く効きます（T5 の限界に既記、main から同じ）。
+- `select` の line-height はブラウザが固定するため、この 1 プロパティについては
+  「ホスト規則から守れている」ことを対照群で示せません（そもそも誰も動かせません）。
+
+### 検査に歯があることの確認（F4）
+
+1 つずつ入れて戻し、毎回 `git diff --stat` が F4 の差分だけに戻ることを確認しました
+（変異はコミットしていません）。手順は
+`.gsd-lite/logs/renderer-font-size-parity/scratch/turn-017-mutate.mjs`。
+
+| #   | 一時的な変異                                             | 期待                | 実測                                                                                        |
+| --- | -------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------- |
+| 1   | reset を 0,0,0 へ戻す（= 差し戻し前）                    | `roles` / `editing` | 非 0・54 / 108 件。字体・斜体・太さ・line-height が全フォーム部品で動く（サイズは動かない） |
+| 2   | reset を main の 0,1,1（`.uivolve-runtime button, …`）へ | `roles` / `editing` | 非 0・1765 / 571 件。button 16px・panel-toggle 16px・grid-cell 13px など部品の宣言が負ける  |
+| 3   | ホスト規則を何にも一致しないセレクタにする               | `roles`             | 非 0・8 件。対照の 4 部品が「5 プロパティとも動いていない」として落ちる                     |
+| 4   | 変異なし                                                 | `roles` / `editing` | 両方 green（`roles` 28 ケース ＋ 6 読み取り、`editing` 16 ケース ＋ 12 読み取り）           |
 
 ## 実行環境（T1 で確定）
 

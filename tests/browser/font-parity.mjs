@@ -7,6 +7,9 @@ import { packageFormat, parsePackage } from "../../src/package-format.js";
 // The role names themselves, so the message an unresolvable size is reported with is checked
 // against the resolver's own list instead of a copy of it.
 import { FONT_ROLES } from "../../src/font-metrics.js";
+// The font properties a host rule can reach, taken from the browser-side reader rather
+// than restated here, so the comparison cannot drift from what is measured.
+import { CONTROL_FONT_PROPERTIES } from "./font-parity-observe.js";
 import { createStaticHandler } from "../../scripts/serve-minimal.mjs";
 
 // Browser-side Canvas observation. Installed through addInitScript so it is in place
@@ -2215,11 +2218,13 @@ async function runRoles({ context, origin, evidenceDir, viewport, log }) {
   const captures = [];
   const problems = [];
   let rejections = [];
+  let hostRules = [];
   try {
     rejections = await page.evaluate(async () => {
       const module = await import("/tests/browser/font-parity-harness.js");
       return module.resolverRejections();
     });
+    hostRules = await runHostRuleCases(page, "roles", problems);
     for (const fixture of ROLE_FIXTURES)
       for (const { theme, hostFontSize } of roleCases(fixture)) {
         const { capture, release } = await captureRoles(page, { fixture, theme, hostFontSize });
@@ -2235,7 +2240,11 @@ async function runRoles({ context, origin, evidenceDir, viewport, log }) {
   } finally {
     await writeFile(
       file,
-      `${JSON.stringify({ rejections, gaps: CANVAS_COVERAGE_GAPS, captures, pageErrors }, null, 2)}\n`,
+      `${JSON.stringify(
+        { rejections, hostRules, gaps: CANVAS_COVERAGE_GAPS, captures, pageErrors },
+        null,
+        2,
+      )}\n`,
     );
     log(`Roles ledger: ${file}`);
     await page.close();
@@ -2403,7 +2412,9 @@ async function runRoles({ context, origin, evidenceDir, viewport, log }) {
         .join(" ")}, ` +
       `contexts ${[...new Set(asserted.map((sample) => sample.context))].sort().join("/")}, ` +
       `${Object.keys(xtypeCoverage).length}/${XTYPE_KINDS.size} xtypes, ` +
-      `${STATE_CONTRACT.length} states, host page ${bodySizes.join(",")}`,
+      `${STATE_CONTRACT.length} states, ${hostRules.length} host-rule readings over ` +
+      `${hostRules.reduce((total, row) => total + row.controls, 0)} controls, ` +
+      `host page ${bodySizes.join(",")}`,
   );
   if (problems.length)
     throw new Error(`roles: ${problems.length} problems\n- ${problems.join("\n- ")}`);
@@ -2540,6 +2551,241 @@ const EDIT_FIXTURES = [
     dialogPrompt: true,
   },
 ];
+
+// --- host page rules that reach form controls -------------------------------------
+// Lowering the reset's specificity so a component's own size could win also handed the
+// host's tag-level rules the controls' font: `button, input, select, textarea { font: ... }`
+// is 0,0,1 and used to be beaten. Each rule below is installed on *both* sides of the
+// runtime stylesheet, because source order must not be what decides it, and the surface's
+// controls then have to read exactly as they do with no rule at all.
+//
+// The bare controls outside the surface are the control group. Without them a reset that
+// silently stopped matching would pass this check: nothing moved, because nothing applied.
+const HOST_TAG_RULES = [
+  {
+    name: "shorthand",
+    css: "button, input, select, textarea { font: italic 700 17px/2 serif }",
+  },
+  {
+    name: "longhand",
+    css:
+      "button, input, select, textarea { font-family: serif; font-style: italic;" +
+      " font-weight: 700; font-size: 17px; line-height: 2 }",
+  },
+  {
+    // 0,0,3. The strongest shape a host can write without naming a class, an id or
+    // `!important` — which is the range the reset undertakes to win.
+    name: "descendant",
+    css:
+      "html body button, html body input, html body select, html body textarea" +
+      " { font: italic 700 17px/2 serif }",
+  },
+];
+
+const HOST_RULE_PLACEMENTS = ["before", "after"];
+
+// What the rules above declare. Every outside control has to differ in all of them, save
+// the ones below.
+const HOST_RULE_DECLARED = ["fontFamily", "fontStyle", "fontWeight", "fontSize", "lineHeight"];
+
+// Properties the browser's own stylesheet pins on a control, so no page rule can move them
+// and the control group cannot show them moving. Blink declares `line-height: normal
+// !important` for a dropdown `select`; measured (the outside select keeps `normal` with
+// every rule shape). Asserted as an exact set rather than tolerated, so a browser that
+// starts honouring it has to be noticed here instead of weakening the check.
+const HOST_RULE_IMMOVABLE = { select: ["lineHeight"] };
+
+// The size rules a host rule has to be tried against: an ordinary field, the Canvas overlay
+// for one, and a Grid cell editor on each surface. `slots` is the proof the case really
+// opened what it was added for (formControlFonts labels each control with its slot).
+const HOST_RULE_CASES = [
+  {
+    name: "forms-overlay",
+    suite: "roles",
+    screen: FORMS_SCREEN,
+    steps: [{ surface: "canvas", target: "memo" }],
+    slots: ["field", "canvas-editor"],
+  },
+  {
+    name: "grid-lab-dom-editor",
+    suite: "editing",
+    screen: "screens/grid-lab.json",
+    edit: { surface: "dom", column: "status" },
+    slots: ["field", "grid-editor"],
+  },
+  {
+    name: "grid-lab-canvas-editor",
+    suite: "editing",
+    screen: "screens/grid-lab.json",
+    edit: { surface: "canvas", column: "customer" },
+    slots: ["field", "canvas-grid-editor"],
+  },
+];
+
+const controlKey = (row) => `${row.stage}|${row.path}`;
+
+// Two readings of the same controls, compared property by property. Returns the rows that
+// moved, so the ledger can show which control and which property instead of a count.
+function controlFontDiff(before, after) {
+  const earlier = new Map(before.map((row) => [controlKey(row), row]));
+  const later = new Map(after.map((row) => [controlKey(row), row]));
+  const moved = [];
+  for (const [key, row] of earlier) {
+    const other = later.get(key);
+    if (!other) {
+      moved.push({ control: key, property: null, from: "present", to: "absent" });
+      continue;
+    }
+    for (const property of CONTROL_FONT_PROPERTIES)
+      if (row[property] !== other[property])
+        moved.push({ control: key, property, from: row[property], to: other[property] });
+  }
+  for (const key of later.keys())
+    if (!earlier.has(key))
+      moved.push({ control: key, property: null, from: "absent", to: "present" });
+  return moved;
+}
+
+async function openHostRuleCase(page, kase) {
+  await page.evaluate(
+    async (input) => {
+      const module = await import("/tests/browser/font-parity-harness.js");
+      window.__fontParityModule = module;
+      const harness = await module.createFontParityHarness({ screen: input.screen });
+      window.__fontParityHarness = harness;
+      try {
+        await harness.settle();
+        for (const step of input.steps ?? [])
+          if (step.surface === "dom") await harness.clickDom(step.selector);
+          else await harness.clickCanvas(step.target);
+        if (input.edit) await harness.editCell(input.edit);
+      } catch (error) {
+        document.getElementById("font-parity-error").textContent = error.stack ?? String(error);
+        throw error;
+      }
+    },
+    { screen: kase.screen, steps: kase.steps, edit: kase.edit },
+  );
+}
+
+async function readWithHostRule(page, { css, placement }) {
+  return page.evaluate(
+    async (input) => {
+      const installed = window.__fontParityModule.installHostRule(input);
+      await window.__fontParityHarness.afterFrame();
+      return { installed, ...window.__fontParityHarness.formControls() };
+    },
+    { css, placement },
+  );
+}
+
+async function runHostRuleCases(page, suite, problems) {
+  const records = [];
+  for (const kase of HOST_RULE_CASES.filter((entry) => entry.suite === suite)) {
+    const note = (message) => problems.push(`host-rule/${kase.name}: ${message}`);
+    await openHostRuleCase(page, kase);
+    const baseline = await page.evaluate(() => window.__fontParityHarness.formControls());
+    const surface = [...baseline.dom, ...baseline.canvasStage];
+    const slots = new Set(surface.map((row) => row.slot));
+    for (const slot of kase.slots)
+      if (!slots.has(slot)) note(`${slot} の部品が開けていない（観測: ${[...slots].join("/")}）`);
+    if (baseline.outside.length !== 4)
+      note(`ランタイム外の対照部品が ${baseline.outside.length} 件（4 件を期待）`);
+    for (const rule of HOST_TAG_RULES)
+      for (const placement of HOST_RULE_PLACEMENTS) {
+        const where = `${rule.name}/${placement}`;
+        const applied = await readWithHostRule(page, { css: rule.css, placement });
+        const { installed } = applied;
+        if (installed.rules !== 1)
+          note(`${where}: 規則が ${installed.rules} 件しか解釈されていない`);
+        if (installed.placement !== placement)
+          note(`${where}: placement が ${installed.placement}`);
+        const ordered =
+          placement === "before"
+            ? installed.ruleIndex < installed.runtimeIndex
+            : installed.ruleIndex > installed.runtimeIndex;
+        if (!ordered)
+          note(
+            `${where}: 文書内の順序が ${installed.ruleIndex} / runtime ${installed.runtimeIndex}`,
+          );
+        // The control group: the rule must have changed every property it declares, on
+        // every bare control, or this case says nothing about the surface.
+        const outside = new Map(applied.outside.map((row) => [controlKey(row), row]));
+        for (const row of baseline.outside) {
+          const other = outside.get(controlKey(row));
+          if (!other) {
+            note(`${where}: 対照部品 ${row.tag} が消えた`);
+            continue;
+          }
+          const held = HOST_RULE_DECLARED.filter(
+            (property) => row[property] === other[property],
+          ).sort();
+          const pinned = [...(HOST_RULE_IMMOVABLE[row.tag] ?? [])].sort();
+          if (held.join(",") !== pinned.join(","))
+            note(
+              `${where}: 対照の ${row.tag} が変えなかったのは ${held.join("/") || "なし"}` +
+                `（ブラウザが固定するのは ${pinned.join("/") || "なし"}）`,
+            );
+        }
+        // The surface itself: identical, control by control and property by property.
+        const moved = controlFontDiff(surface, [...applied.dom, ...applied.canvasStage]);
+        for (const entry of moved.slice(0, 8))
+          note(
+            `${where}: ${entry.control} の ${entry.property ?? "存在"} が` +
+              ` ${entry.from} → ${entry.to}`,
+          );
+        if (moved.length > 8) note(`${where}: ほか ${moved.length - 8} 件`);
+        if (applied.errors.length) note(`${where}: runtime errors: ${applied.errors.join("; ")}`);
+        // The Canvas side reads its sizes from the stage, so a host rule must not have
+        // reached the resolver either.
+        for (const [stage, resolved] of Object.entries(applied.resolved)) {
+          if (!resolved.ok) {
+            note(`${where}: ${stage} resolver failed: ${resolved.error}`);
+            continue;
+          }
+          const was = baseline.resolved[stage];
+          if (resolved.family !== was.family)
+            note(`${where}: ${stage} の字体が ${was.family} → ${resolved.family}`);
+          for (const [size, value] of Object.entries(resolved.sizes))
+            if (was.sizes[size] !== value)
+              note(`${where}: ${stage} の ${size} が ${was.sizes[size]} → ${value}px`);
+        }
+        records.push({
+          case: kase.name,
+          rule: rule.name,
+          placement,
+          installed,
+          controls: surface.length,
+          outside: applied.outside.map((row) => ({
+            tag: row.tag,
+            ...Object.fromEntries(HOST_RULE_DECLARED.map((property) => [property, row[property]])),
+          })),
+          moved,
+        });
+      }
+    // Back to no rule, and back to the baseline reading: the removal is what lets the next
+    // case start from a page the earlier ones did not change.
+    const cleared = await page.evaluate(async () => {
+      window.__fontParityModule.removeHostRule();
+      await window.__fontParityHarness.afterFrame();
+      return window.__fontParityHarness.formControls();
+    });
+    const residue = controlFontDiff(surface, [...cleared.dom, ...cleared.canvasStage]);
+    if (residue.length) note(`規則を外したあとに ${residue.length} 件の差が残った`);
+    await page.evaluate(() => window.__fontParityHarness.dispose());
+  }
+  // The table must stay exercised: a rule shape or a placement nothing runs is not a
+  // covered case, and a slot no case opens is an untested size rule.
+  const planned = HOST_RULE_CASES.filter((entry) => entry.suite === suite);
+  for (const rule of HOST_TAG_RULES)
+    for (const placement of HOST_RULE_PLACEMENTS)
+      if (
+        planned.length &&
+        !records.some((row) => row.rule === rule.name && row.placement === placement)
+      )
+        problems.push(`host-rule: ${rule.name}/${placement} を実行していない`);
+  return records;
+}
 
 async function captureEditing(page, fixture) {
   await page.evaluate(
@@ -2967,7 +3213,9 @@ async function runEditing({ context, origin, evidenceDir, viewport, log }) {
   const operations = [];
   const compositions = [];
   const problems = [];
+  let hostRules = [];
   try {
+    hostRules = await runHostRuleCases(page, "editing", problems);
     for (const fixture of EDIT_FIXTURES) {
       const capture = await captureEditing(page, fixture);
       const image = resolve(evidenceDir, `editing-${fixture.name}.png`);
@@ -2985,7 +3233,7 @@ async function runEditing({ context, origin, evidenceDir, viewport, log }) {
     await writeFile(
       file,
       `${JSON.stringify(
-        { composition: COMPOSITION, captures, operations, compositions, pageErrors },
+        { composition: COMPOSITION, hostRules, captures, operations, compositions, pageErrors },
         null,
         2,
       )}\n`,
@@ -3073,7 +3321,9 @@ async function runEditing({ context, origin, evidenceDir, viewport, log }) {
       `labelHeight ${[...strips].sort((a, b) => a - b).join("/")}, ` +
       `${operations.length} operation scripts over ` +
       `${operatedSurfaces.size} screens (both surfaces each), ` +
-      `${compositions.length} composition probes (real IME: ${COMPOSITION.realIme})`,
+      `${compositions.length} composition probes (real IME: ${COMPOSITION.realIme}), ` +
+      `${hostRules.length} host-rule readings over ` +
+      `${hostRules.reduce((total, row) => total + row.controls, 0)} controls`,
   );
   if (problems.length)
     throw new Error(`editing: ${problems.length} problems\n- ${problems.join("\n- ")}`);
