@@ -240,7 +240,7 @@ bun run docs:check
   - 対象: `tests/browser/font-parity.mjs`、`tests/browser/font-parity-harness.js`、`tests/browser/font-parity-observe.js`、`docs/renderer-font-parity.md`。`src/` は変異の確認以外で変更しない。
   - 依存: T9
 
-- [ ] F2: 欠け・入力位置・編集操作の検査の穴を閉じる（verify round 1）
+- [x] F2: 欠け・入力位置・編集操作の検査の穴を閉じる（verify round 1）
   - 背景: 台帳が数値で主張しているのに gate が落とさない項目と、受け入れ基準 3 の代表画面のうち編集操作を実行していない画面がある。
   - 完了基準: 下表のとおり。追加する操作は既存の `FIELD_OPERATIONS` と同じ手順（focus → 編集開始 → 入力 → 確定 → 再編集 → 取消、state / value / revision の照合）で、実キー入力を使う。対象の入力欄が画面に存在しない場合は、存在しないことを Scene から確かめたうえで理由を台帳へ残す（黙って省かない）。
 
@@ -257,6 +257,21 @@ bun run docs:check
 
   - 対象: `tests/browser/font-parity.mjs`、`tests/browser/font-parity-harness.js`、必要なら `tests/browser/font-parity-text.json`、`docs/renderer-font-parity.md`。
   - 依存: F1
+  - **PLAN 訂正（turn 15 / F2 実測）**: 対象ファイルに `tests/browser/font-parity-observe.js` を
+    追加した。行 1 の「省略なし／省略される」を DOM 側で数値にするには、文字の送り幅と
+    **与えられた枠の幅**の両方が要るが、`textInk` は枠幅を返していなかった（`clientWidth` を
+    足した）。`font-parity-text.json` の変更は値の差し替えだけでなく**状態キーの改名**を
+    伴う（`fitsExactly` / `overflowsByOne` → `fitsInBox` / `overflowsBox`）。
+  - **PLAN 訂正（turn 15 / F2 実測）**: 行 1 の「後者は既存仕様どおり省略・クリップされる」は
+    **fixture がその条件を出していなかった**。`width: 220` の指定はこの画面のレイアウトでは
+    効かず（実測: 全 widget が 664 CSS px）、30 文字の `W` は 342px で枠に収まっていた。
+    `overflowsBox` を 200 文字へ伸ばして境界の「後」側を実際に描かせた。短い値へ戻すと
+    `roles` が非 0 になることを確認済み。
+  - **PLAN 訂正（turn 15 / F2 実測）**: 行 3 の「入力欄を持つ画面」は、画面名を書き下さず
+    **Scene の kind から判定**した（`src/widget-contract.js:2-12` の field kind 9 種。
+    `createControl` が input/select/textarea を作る集合＝`src/field-control.js:5-27`）。
+    実測では 7 画面すべてが入力欄を持ち、合計 288 件を照合した。0 件の画面は無かったが、
+    0 件になった場合の理由は `matrix.json` の `controlCoverage` に出す形にした。
 
 - [ ] F3: Canvas の描画失敗で操作・effects・他の面を止めない（verify round 1）
   - 背景: `CanvasRenderer.paint()` が毎フレーム `resolveFontMetrics(this.stage)` を呼び、解決できないと例外を投げる。`UiRuntime.render()` はそれを `dispatch()` / `compile()` の途中（state 更新の後、`runEffects` の前）で受けるため、verify のプローブ（`.gsd-lite/logs/renderer-font-size-parity/scratch/turn-013-probe.mjs`）で次を実測した。main の Canvas は computed style に依存せず、どれも起きない。
