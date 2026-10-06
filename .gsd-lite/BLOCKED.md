@@ -14,6 +14,14 @@
 
 ## 再開に必要な情報・選択肢
 
+### 対話側での再開経路の検証
+
+- サンドボックス外で `/usr/bin/chromium-browser` を Playwright から起動し、Chromium `152.0.7977.64`、日本語を含む `<p>` の実効 font-size `13px` を実測できた。使用可能な実行ファイルは確定したが、実WASM・画面のbaseline・日本語フォントの証跡はT1で取得する。
+- `/opt/vivaldi/vivaldi-bin` はサンドボックス外で DevTools listener を起動できたものの、Playwright の newPage まで安定して完了しなかったため採用しない。
+- 対話のサンドボックス内からlocalhost CDPへの接続は `connect EPERM 127.0.0.1:9337`。外部ブラウザを用意するだけでは接続の権限制約を解消しない。
+- ユーザーへ全Codexの `danger-full-access` 再開、または実装・検証のClaude切替を提示。選択待ち。承認前にstateを再開状態へ変更しない。
+- 2026-10-06: ユーザーがClaudeへの移行を選択。`engine` を `claude` に変更し、T1からimplを再開する。回答と根拠はDECISIONS.mdの「Claudeへのエンジン切替と再開設定」に記録。
+
 - 質問: この無人環境から利用できるChromiumの実行ファイル、またはPlaywright/CDPの外部ブラウザ接続先をどれにするか。
 - 推奨: sandbox外で起動したChromiumの到達可能な接続先を用意し、T1の `--browser-endpoint` 経路を実装・検証する。外部ブラウザ本体は終了せず、所有したcontextだけを閉じる契約を守る。
 - 代案: Chromiumの実行ファイルを用意し、この環境のsocket/capability制約を解消した上で `--browser-path` 経路を実装・検証する。bundled browserの導入だけでは今回のsocket制約が解消するとは判断できない。

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "engine": "codex",
+  "engine": "claude",
   "phase_engines": {},
   "codex": {
     "model": {},
@@ -19,8 +19,8 @@
     "path": "."
   },
   "milestone": "renderer-font-size-parity",
-  "phase": "blocked",
-  "next_command": "BLOCKED",
+  "phase": "impl",
+  "next_command": "/gsd-lite-impl",
   "branch": {
     "name": "gsd-lite/renderer-font-size-parity",
     "base": "main"
@@ -41,5 +41,5 @@
     "verify": "claude-fable-5-1",
     "reflect": "claude-fable-5-1"
   },
-  "updated_at": "2026-10-06T13:55:19+09:00"
+  "updated_at": "2026-10-06T20:46:22+09:00"
 }

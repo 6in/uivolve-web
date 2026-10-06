@@ -31,3 +31,11 @@
 - Codex sandbox は workspace-write。対話セッションの sandbox 内では --check のプローブが失敗したが、sandbox 外の --check は成功した。danger-full-access は使用しない。
 - 既存の6フェーズ用 Codex スキルを維持し、独自変更を上書きしない。PATH 上の gsd-lite-loop.sh を使用する。
 - マイルストーンブランチは gsd-lite/renderer-font-size-parity、base は main。要件・設定・前回成果物の退避を一括コミット後にデタッチ起動し、このセッションではログをポーリングしない。
+
+## Claudeへのエンジン切替と再開設定
+
+- ユーザーが2026-10-06に、Codexの無人ループを続けられないためClaudeへ移行すると決定した。`engine` を `claude` に変更し、phase・turn・成果物・フェーズ別モデルの設定は保持する。Codex用の `.agents/skills/` は残し、Claude用の6スキルを `.claude/skills/` に追加した。
+- 停止原因はCodexのworkspace-write sandboxによるsocket/capability制約。Claudeの無人ターンはこのsandboxを使わない。Claudeの対話セッションから `/usr/bin/chromium-browser` をPlaywrightの `executablePath` に指定し、headlessで起動して画面を撮影できた。
+- BLOCKED（turn 3、T1）の質問への回答: 実ブラウザの実行ファイルは `/usr/bin/chromium-browser` を使う。Codexのsandbox外ではChromium `152.0.7977.64` の起動と、日本語を含む `<p>` の実効font-size `13px` を実測済み。`/opt/vivaldi/vivaldi-bin` はnewPageまで安定しないため採用しない。PLANの `--browser-path` と `--browser-endpoint` の契約は変更しない。
+- 上の実測は起動経路の確認だけである。実WASM・修正前baseline・日本語字体の証跡はT1で取得し、以前の値や画像を流用しない。
+- `.claude/settings.json` のallowlistに `bun`、`bunx`、`node` を追加した。PLANの検証コマンド（`bun scripts/…`、`node --check`）が無人ターンで承認待ちにならないようにするため。

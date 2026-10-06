@@ -3,6 +3,8 @@
     "allow": [
       "Bash(bun run:*)",
       "Bash(bun test:*)",
+      "Bash(bun:*)",
+      "Bash(bunx:*)",
       "Bash(cargo:*)",
       "Bash(cat:*)",
       "Bash(date:*)",
@@ -29,6 +31,7 @@
       "Bash(jq:*)",
       "Bash(ls:*)",
       "Bash(mkdir:*)",
+      "Bash(node:*)",
       "Bash(rg:*)",
       "Bash(sort:*)",
       "Bash(tail:*)",
@@ -38,8 +41,6 @@
       "WebFetch(domain:*)",
       "WebSearch"
     ],
-    "deny": [
-      "mcp__lean-ctx"
-    ]
+    "deny": ["mcp__lean-ctx"]
   }
 }

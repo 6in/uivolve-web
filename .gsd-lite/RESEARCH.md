@@ -10,59 +10,59 @@
 
 ## 参考実装と再利用
 
-| パス | 再利用できる設計 | 検証への使い方 |
-| --- | --- | --- |
-| `src/runtime.css:1` | マウント面内だけに閉じる CSS と役割別サイズ。DOM の既存宣言を基準にする | 独立面と比較デモ双方で getComputedStyle を記録する |
-| `src/canvas-renderer.js:535` | `text()` にサイズ・太さ・字体を渡す既存窓口 | `fillText` の実行時 font と transform を役割・widget key に対応付ける |
-| `src/canvas-renderer.js:708` / `763` / `920` | 計測専用 font 指定も存在 | measureText と直後の描画で同じ font を使うことを確認する |
-| `src/field-control.js:5` / `96` | DOM/Canvas 共通の native 入力と composing 中の値保持 | 編集中の input identity、selection、activeElement と未確定値を確認する |
-| `src/canvas-renderer.js:342` / `406` / `480` | オーバーレイの生成・位置更新・再描画時の再利用 | ラベル有無、Grid・dialog、テーマ変更時の通常描画と入力を比較する |
-| `src/surfaces.js:7` / `50` / `64` / `117` | documentSprites と figure の同じ描画記述から DOM SVG と Canvas を作る | SVG viewBox と Canvas のローカル倍率を含めて比較する |
-| `engine/src/figures.rs:40` / `246` | 図表文字は12、draw の fontSize 省略を12へ補完 | 生 DSL でなく WASM が生成した Scene の値を検査する |
-| `src/widget-contract.js:2` / `13` | 入力・操作の kind 分類を既に共有 | テキスト役割の一覧と操作対象を照合する（全 Widget 一覧ではない） |
-| `engine/src/extras.rs:61` / `638` | gallery の多数の xtype を既存 Widget に展開する | xtype と kind の二層で網羅表を作る |
-| `src/runtime.js:113` / `126` / `232` | 共通 CSS の適用、ResizeObserver、Scene の描画 | 独立 runtime と比較デモに同じサイズ修正を適用する |
-| `scripts/capture-retrospective.mjs:66` / `77` | ブラウザ選択と実 fillText を元実装へ委譲しながら観測する例 | font・transform の採取へ拡張できる。既存撮影画像は今回の合格証拠にしない |
-| `tests/browser/transfer-harness.js` / `tests/runtime.test.js` | ブラウザ用実 WASM harness と runtime 状態テストの例 | CSS は mock adapter の単体テストでは検証できない |
-| `docs/testing.md` / `package.json` | 既存の build/check/test とブラウザ検証方針、Playwright 導入済み | 依存追加なしでブラウザ検証を構成する |
+| パス                                                          | 再利用できる設計                                                        | 検証への使い方                                                           |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `src/runtime.css:1`                                           | マウント面内だけに閉じる CSS と役割別サイズ。DOM の既存宣言を基準にする | 独立面と比較デモ双方で getComputedStyle を記録する                       |
+| `src/canvas-renderer.js:535`                                  | `text()` にサイズ・太さ・字体を渡す既存窓口                             | `fillText` の実行時 font と transform を役割・widget key に対応付ける    |
+| `src/canvas-renderer.js:708` / `763` / `920`                  | 計測専用 font 指定も存在                                                | measureText と直後の描画で同じ font を使うことを確認する                 |
+| `src/field-control.js:5` / `96`                               | DOM/Canvas 共通の native 入力と composing 中の値保持                    | 編集中の input identity、selection、activeElement と未確定値を確認する   |
+| `src/canvas-renderer.js:342` / `406` / `480`                  | オーバーレイの生成・位置更新・再描画時の再利用                          | ラベル有無、Grid・dialog、テーマ変更時の通常描画と入力を比較する         |
+| `src/surfaces.js:7` / `50` / `64` / `117`                     | documentSprites と figure の同じ描画記述から DOM SVG と Canvas を作る   | SVG viewBox と Canvas のローカル倍率を含めて比較する                     |
+| `engine/src/figures.rs:40` / `246`                            | 図表文字は12、draw の fontSize 省略を12へ補完                           | 生 DSL でなく WASM が生成した Scene の値を検査する                       |
+| `src/widget-contract.js:2` / `13`                             | 入力・操作の kind 分類を既に共有                                        | テキスト役割の一覧と操作対象を照合する（全 Widget 一覧ではない）         |
+| `engine/src/extras.rs:61` / `638`                             | gallery の多数の xtype を既存 Widget に展開する                         | xtype と kind の二層で網羅表を作る                                       |
+| `src/runtime.js:113` / `126` / `232`                          | 共通 CSS の適用、ResizeObserver、Scene の描画                           | 独立 runtime と比較デモに同じサイズ修正を適用する                        |
+| `scripts/capture-retrospective.mjs:66` / `77`                 | ブラウザ選択と実 fillText を元実装へ委譲しながら観測する例              | font・transform の採取へ拡張できる。既存撮影画像は今回の合格証拠にしない |
+| `tests/browser/transfer-harness.js` / `tests/runtime.test.js` | ブラウザ用実 WASM harness と runtime 状態テストの例                     | CSS は mock adapter の単体テストでは検証できない                         |
+| `docs/testing.md` / `package.json`                            | 既存の build/check/test とブラウザ検証方針、Playwright 導入済み         | 依存追加なしでブラウザ検証を構成する                                     |
 
 ## 部品と文字役割の初期対応表
 
 単位は CSS px。DOM 列は **CSS 宣言と解析値** であり、実測値ではない。「継承」は前述の reset が勝つため親の実効値に依存する。Canvas はソース上の描画引数。実装ターンではこの表を実測と差分・理由付きの台帳へ更新する。
 
-| Widget / 役割 | DOM の指定 | Canvas | 差・確認点 |
-| --- | --- | --- | --- |
-| label / 基本文字・muted・tbtext・ページ情報 | `.ui-label` 11 | fallback 11 | 指定一致 |
-| empty / 空一覧 | 12 | 12 | 指定一致 |
-| metric / 見出し、値 | 11 / 22 | 11 / 22 | 指定一致、22px の長い値を確認 |
-| textfield, textarea, numberfield, datefield, combobox, listbox / ラベル | 11 | 11 | labelHeight=0 なら文字なし |
-| 上記入力 / 値・placeholder・listbox 選択肢 | 13、option は継承 | 13 | `.ui-field > :is(...)` は reset と同詳細度で後の指定が勝つ。option の native popup 表示も別途確認 |
-| checkbox, radio / boxLabel | 13 | 13 | native 印と Canvas のチェック印は既存の描画差 |
-| slider / ラベル | 11 | 11 | range 本体に値文字なし |
-| displayfield / ラベル、値 | 11 / `.ui-widget` 継承13 | 11 / 13 | 指定一致 |
-| progressbar / 表示文字 | 12 | 12 | 28px 高のクリップ確認 |
-| button / 本文、dialogbutton | 12 宣言、実際は reset による親継承候補 | 12 | サイズ・500 weight 指定の競合を実測する |
-| extra-button / カレンダー日付・前後・ページ操作・toast 閉じる | 12 宣言、親継承候補 | 12 | gallery の各状態を確認 |
-| panel, fieldset / 見出し | 12 | 12 | 指定一致 |
-| panel-toggle / 見出し | 12 宣言、親継承候補 | 12 | root の親によって変化する可能性 |
-| window / タイトル | `.window-title` 12 | 12 | 指定一致、dialog アイコン付き inset も確認 |
-| window-close / × | 20 宣言、親継承候補 | 20 | window 内では親 `.ui-widget` の13等になり得る |
-| grid-header / 旧表見出し | 11 | 11 | cell span が継承 |
-| row / 旧表本文 | 12 宣言、button の親継承候補 | 12 | 旧表と Grid の両経路を対象にする |
-| grid-column, grid-cell, grid-select / 列見出し・値・選択印 | 12 宣言、button の親継承候補 | 12 | Grid 編集中の field 値は13。既存12→13の差を揃える方針が必要 |
-| grid-page, menu-trigger / ページ・メニュー起点 | 12 宣言、親継承候補 | 12 | popup も対象 |
-| tab, tree-node, tree-toggle, menu-item / 表示文字 | 12 宣言、親継承候補 | 12 | 選択/disabled でサイズを変えない |
-| tree-shell / 見出し | `.window-title` 12 | 12 | button 以外の見出し |
-| kanban-lane / タイトル、件数 | 12 / 11 | 12 / 11 | 子要素の明示指定 |
-| kanban-card / タイトル、説明、ID | 12 / 11 / 9 | 12 / 11 / 9 | 擬似要素とドラッグ ghost も対象。Canvas ghost はIDを描かない既存差 |
-| toast / タイトル・本文 | `.ui-widget` 13 | 13 | 26px 行送りは共通、閉じるは extra-button |
-| dialog-message / 本文 | 13 | 13 | 22px 行送りとスクロール |
-| dialog-icon / テキスト・絵文字 | 30 | 30 | Canvas fillText の maxWidth による圧縮可能性、SVG/画像アイコンは文字なし |
-| document / タイトル・見出し・本文・code | 14 / 16 / 12 / 12（共通 sprites） | 同値 | DOM 非code は runtime 字体、Canvas 非code は system-ui。文字幅・欠けを確認 |
-| figure / 図表・draw の text sprite | sprite.fontSize（通常12） | 同値、fallback12 | fontSize 未指定の draw は WASM が12を補完。SVG 内側サイズは倍率で換算 |
-| image, video, iframe / 空・エラー案内 | 擬似要素12 | image 等の案内 text 既定13、native overlay にはCSS12 | 文字内容にも既存差。iframe 内と画像内文字は対象外 |
-| canvas-editor / 編集値・placeholder・選択肢 | 13 宣言、stage の font 継承候補 | 通常値13 | DOM入力は widget 内、Canvas入力は stage 直下という親の差が重要 |
-| toolbar, separator, backdrop, grid-shell, grid-head, grid-row, tabbar, menu-surface, menuseparator | 本体に可視文字なし | 本体に文字なし | 子 Widget の文字を対象。container/card/layout も Scene 展開を見て重複計上しない |
+| Widget / 役割                                                                                      | DOM の指定                             | Canvas                                               | 差・確認点                                                                                        |
+| -------------------------------------------------------------------------------------------------- | -------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| label / 基本文字・muted・tbtext・ページ情報                                                        | `.ui-label` 11                         | fallback 11                                          | 指定一致                                                                                          |
+| empty / 空一覧                                                                                     | 12                                     | 12                                                   | 指定一致                                                                                          |
+| metric / 見出し、値                                                                                | 11 / 22                                | 11 / 22                                              | 指定一致、22px の長い値を確認                                                                     |
+| textfield, textarea, numberfield, datefield, combobox, listbox / ラベル                            | 11                                     | 11                                                   | labelHeight=0 なら文字なし                                                                        |
+| 上記入力 / 値・placeholder・listbox 選択肢                                                         | 13、option は継承                      | 13                                                   | `.ui-field > :is(...)` は reset と同詳細度で後の指定が勝つ。option の native popup 表示も別途確認 |
+| checkbox, radio / boxLabel                                                                         | 13                                     | 13                                                   | native 印と Canvas のチェック印は既存の描画差                                                     |
+| slider / ラベル                                                                                    | 11                                     | 11                                                   | range 本体に値文字なし                                                                            |
+| displayfield / ラベル、値                                                                          | 11 / `.ui-widget` 継承13               | 11 / 13                                              | 指定一致                                                                                          |
+| progressbar / 表示文字                                                                             | 12                                     | 12                                                   | 28px 高のクリップ確認                                                                             |
+| button / 本文、dialogbutton                                                                        | 12 宣言、実際は reset による親継承候補 | 12                                                   | サイズ・500 weight 指定の競合を実測する                                                           |
+| extra-button / カレンダー日付・前後・ページ操作・toast 閉じる                                      | 12 宣言、親継承候補                    | 12                                                   | gallery の各状態を確認                                                                            |
+| panel, fieldset / 見出し                                                                           | 12                                     | 12                                                   | 指定一致                                                                                          |
+| panel-toggle / 見出し                                                                              | 12 宣言、親継承候補                    | 12                                                   | root の親によって変化する可能性                                                                   |
+| window / タイトル                                                                                  | `.window-title` 12                     | 12                                                   | 指定一致、dialog アイコン付き inset も確認                                                        |
+| window-close / ×                                                                                   | 20 宣言、親継承候補                    | 20                                                   | window 内では親 `.ui-widget` の13等になり得る                                                     |
+| grid-header / 旧表見出し                                                                           | 11                                     | 11                                                   | cell span が継承                                                                                  |
+| row / 旧表本文                                                                                     | 12 宣言、button の親継承候補           | 12                                                   | 旧表と Grid の両経路を対象にする                                                                  |
+| grid-column, grid-cell, grid-select / 列見出し・値・選択印                                         | 12 宣言、button の親継承候補           | 12                                                   | Grid 編集中の field 値は13。既存12→13の差を揃える方針が必要                                       |
+| grid-page, menu-trigger / ページ・メニュー起点                                                     | 12 宣言、親継承候補                    | 12                                                   | popup も対象                                                                                      |
+| tab, tree-node, tree-toggle, menu-item / 表示文字                                                  | 12 宣言、親継承候補                    | 12                                                   | 選択/disabled でサイズを変えない                                                                  |
+| tree-shell / 見出し                                                                                | `.window-title` 12                     | 12                                                   | button 以外の見出し                                                                               |
+| kanban-lane / タイトル、件数                                                                       | 12 / 11                                | 12 / 11                                              | 子要素の明示指定                                                                                  |
+| kanban-card / タイトル、説明、ID                                                                   | 12 / 11 / 9                            | 12 / 11 / 9                                          | 擬似要素とドラッグ ghost も対象。Canvas ghost はIDを描かない既存差                                |
+| toast / タイトル・本文                                                                             | `.ui-widget` 13                        | 13                                                   | 26px 行送りは共通、閉じるは extra-button                                                          |
+| dialog-message / 本文                                                                              | 13                                     | 13                                                   | 22px 行送りとスクロール                                                                           |
+| dialog-icon / テキスト・絵文字                                                                     | 30                                     | 30                                                   | Canvas fillText の maxWidth による圧縮可能性、SVG/画像アイコンは文字なし                          |
+| document / タイトル・見出し・本文・code                                                            | 14 / 16 / 12 / 12（共通 sprites）      | 同値                                                 | DOM 非code は runtime 字体、Canvas 非code は system-ui。文字幅・欠けを確認                        |
+| figure / 図表・draw の text sprite                                                                 | sprite.fontSize（通常12）              | 同値、fallback12                                     | fontSize 未指定の draw は WASM が12を補完。SVG 内側サイズは倍率で換算                             |
+| image, video, iframe / 空・エラー案内                                                              | 擬似要素12                             | image 等の案内 text 既定13、native overlay にはCSS12 | 文字内容にも既存差。iframe 内と画像内文字は対象外                                                 |
+| canvas-editor / 編集値・placeholder・選択肢                                                        | 13 宣言、stage の font 継承候補        | 通常値13                                             | DOM入力は widget 内、Canvas入力は stage 直下という親の差が重要                                    |
+| toolbar, separator, backdrop, grid-shell, grid-head, grid-row, tabbar, menu-surface, menuseparator | 本体に可視文字なし                     | 本体に文字なし                                       | 子 Widget の文字を対象。container/card/layout も Scene 展開を見て重複計上しない                   |
 
 Gallery の coverage: toolbar/tbtext/splitbutton/menu は label/button/menu 系、datepicker/pagingtoolbar は label/extra-button、radiogroup/checkboxgroup は見出しと field、accordion は panel 系、messagebox は window/label/field/button、codeeditor/htmleditor は textarea、Markdown/diff/chat/terminal は document、chart/draw/gitgraph/networkgraph/mermaid は figure。`engine/src/extras.rs` の normalize/arrange と生成 Scene で追跡する。gallery の6タブだけでは一時表示・エラー・disabled・dialog の全役割を網羅しないので状態別 fixture を補う。
 
@@ -88,19 +88,19 @@ Gallery の coverage: toolbar/tbtext/splitbutton/menu は label/button/menu 系�
 
 ## 落とし穴・回避策・検証条件
 
-| 落とし穴 | 回避策 | 踏んでいないことの検証 |
-| --- | --- | --- |
-| CSS宣言だけを一致と見なす | reset を含め実効値を観測 | 比較デモと独立runtime、host font-size 16/20pxの双方で全役割の getComputedStyle と実 fillText font を照合。ボタン・×・オーバーレイを必須にする |
-| DOM 親と Canvas stage の継承差 | 文字役割を局所指定し親依存を除く | stage直下・panel/window内・popup・Grid editor の同じ role を比較する |
-| DPRをfont-sizeにも掛ける二重拡大 | 既存469–479行の bitmap倍率を保持 | DPR1/2で CSS幅、bitmap幅、transform、draw font を記録。fontは同値、bitmapだけ倍率を持つ。テーマ連打・resizeでtransformが累積しない |
-| zoomで再描画されず旧DPR bitmapを使う | ResizeObserverの実際の発火と必要時の再描画を確認 | 描画済みページを100→200→100%に変更し、同じCSS幅の場合も再描画/位置/文字が一致する。DPRエミュレーションとは別記録 |
-| fontロード後もfallback描画を残す | 使用字体ロード後に再描画、dispose時に通知を解除 | 遅延font読込、読込失敗、dispose後完了を観測。fonts.ready前後の計測と再描画を比較。フォント名列とロード済み実字体を混同しない |
-| measureTextとdrawのfontが別値 | 同じ解決済み役割を使う | 左/中央/右寄せ、幅境界直前/直後、空文字・長い英数字・日本語で省略/折返しを確認する |
-| SVGサイズ属性だけを見る | viewBox→CSSpx倍率と内容viewportを換算 | 390px/desktopで document/figure のSVG CTM と Canvas transform を採取。borderの2px差も含める |
-| native editorで文字サイズが跳ねる | 通常値と編集roleを揃える | 通常→focus→入力→Enter確定→再編集→Escape取消。両面操作から値/stateが同期し、Grid拒否は下書きを保持する |
-| 再描画でIME/選択/フォーカスを失う | control再利用、composing guard維持 | composing中にテーマ変更・resize・再描画し同じnodeとactiveElement、選択、下書きを保持。合成イベントと実IMEを別記録 |
-| 太さ/字体/line-heightの変化で欠ける | 必要な計測・内側余白だけ調整 | 日本語、英数字、空、長文、絵文字、複数行、22px metric、30px icon、狭いセルで画像目視。既存ellipsis/clipを超える重なりを増やさない |
-| 一時状態をcoverageから漏らす | kindとroleと状態を台帳に記録 | light/dark、selected/disabled、placeholder、popup、toast、dialog、media error、dragを確認。文字なし/対象外/既存差には理由を残す |
+| 落とし穴                             | 回避策                                           | 踏んでいないことの検証                                                                                                                        |
+| ------------------------------------ | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| CSS宣言だけを一致と見なす            | reset を含め実効値を観測                         | 比較デモと独立runtime、host font-size 16/20pxの双方で全役割の getComputedStyle と実 fillText font を照合。ボタン・×・オーバーレイを必須にする |
+| DOM 親と Canvas stage の継承差       | 文字役割を局所指定し親依存を除く                 | stage直下・panel/window内・popup・Grid editor の同じ role を比較する                                                                          |
+| DPRをfont-sizeにも掛ける二重拡大     | 既存469–479行の bitmap倍率を保持                 | DPR1/2で CSS幅、bitmap幅、transform、draw font を記録。fontは同値、bitmapだけ倍率を持つ。テーマ連打・resizeでtransformが累積しない            |
+| zoomで再描画されず旧DPR bitmapを使う | ResizeObserverの実際の発火と必要時の再描画を確認 | 描画済みページを100→200→100%に変更し、同じCSS幅の場合も再描画/位置/文字が一致する。DPRエミュレーションとは別記録                              |
+| fontロード後もfallback描画を残す     | 使用字体ロード後に再描画、dispose時に通知を解除  | 遅延font読込、読込失敗、dispose後完了を観測。fonts.ready前後の計測と再描画を比較。フォント名列とロード済み実字体を混同しない                  |
+| measureTextとdrawのfontが別値        | 同じ解決済み役割を使う                           | 左/中央/右寄せ、幅境界直前/直後、空文字・長い英数字・日本語で省略/折返しを確認する                                                            |
+| SVGサイズ属性だけを見る              | viewBox→CSSpx倍率と内容viewportを換算            | 390px/desktopで document/figure のSVG CTM と Canvas transform を採取。borderの2px差も含める                                                   |
+| native editorで文字サイズが跳ねる    | 通常値と編集roleを揃える                         | 通常→focus→入力→Enter確定→再編集→Escape取消。両面操作から値/stateが同期し、Grid拒否は下書きを保持する                                         |
+| 再描画でIME/選択/フォーカスを失う    | control再利用、composing guard維持               | composing中にテーマ変更・resize・再描画し同じnodeとactiveElement、選択、下書きを保持。合成イベントと実IMEを別記録                             |
+| 太さ/字体/line-heightの変化で欠ける  | 必要な計測・内側余白だけ調整                     | 日本語、英数字、空、長文、絵文字、複数行、22px metric、30px icon、狭いセルで画像目視。既存ellipsis/clipを超える重なりを増やさない             |
+| 一時状態をcoverageから漏らす         | kindとroleと状態を台帳に記録                     | light/dark、selected/disabled、placeholder、popup、toast、dialog、media error、dragを確認。文字なし/対象外/既存差には理由を残す               |
 
 今回に関係する並行性は fontロード完了と再描画・dispose、IME入力とテーマ/resizeの競合。暦計算・DST・通信認証・権限契約の変更は不要。カレンダーは文字役割の網羅に月移動・長い月名・月端の行数を使い、日付アルゴリズムを変更しない。
 
