@@ -199,3 +199,57 @@
   （表を足すだけ・復元はバイト列の書き戻しなので未コミットでも安全）。`grep`/`sed` は
   フックに拒否されるので `git grep` と Read ツールを使う。ブラウザを使うコマンドは
   サンドボックス外で実行する。
+
+## turn 18 — impl — F5 台帳と文書の事実誤り・古い記述・言い過ぎを直し最終 gate を通す
+
+- やったこと: `docs/renderer-font-parity.md` の数値と主張を証跡 JSON（`roles` /
+  `matrix` / `surfaces` / `before-fix/before.json`）とコードへ 1 件ずつ突き合わせ、F5 が
+  挙げた事実の誤り 9・古い記述 6・言い過ぎ 13 を直した。あわせて**現在の対象外・表現差・
+  限界だけを集めた節**（表 2 つ）を新設し、冒頭からそこへ誘導した。
+  `docs/runtime-distribution.md`（配布物で測った範囲）、`docs/testing.md`（Playwright
+  スクリプトは 3 本・うち検査 2 系統）、`.gsd-lite/PLAN.md`（T7 の「6 つ」・T8 の「6 画面」）
+  も訂正。**`src/` と `tests/` は 1 行も変更していない**（F5 は文書のみ）。
+- 実測で確かめた主な訂正: `XTYPE_SYNTHESIZED` = 5 件（`menuseparator` は engine の許可
+  リストにあり `XTYPE_SHAPES` も直接描かせるので画面定義に書ける）/ `CANVAS_KIND_CONTRACT`
+  = 37 件（T3 は `fieldset` を送ったので 36）/ `FONT_SAMPLES` の `日本語テキスト` だけ
+  `role: "caption"`（他は既定の `body`）/ `before.json` に `.ui-button` が出るのは 7 画面
+  中 6（grid-lab に無い）・`.ui-grid-*` は grid-lab のみ・`.ui-row` / `.ui-grid-header` は
+  1 件も採っていない / `matrix.json` のデモ面の `screen` は 7 種 / `surfaces.json` の
+  ダイアログアイコン 6 件 = 文字 4 ＋ 標準 SVG 2 / `matrix` は 39 役割のうち 26・37 kind の
+  うち 28 で、宣言サイズに 9px が 1 件も出ない / `applyCondition` は `change` を発火しないが
+  journey の倍率変更は無条件に合成する / `src/surfaces.js` に 12 / 14 / 16 がある。
+- 新しく実行して確かめたこと: (1) `--suite surfaces --suite lifecycle` を 1 プロセスで実行
+  → 両方 passed・exit 0。台帳の「suite を重ねると `lifecycle` が落ちる」は T9 の修正で
+  解消済みだったので現状へ書き換えた。(2) 代表画像を実際に開いた（配布物 7 枚、T8 の
+  uivolve-forms 修正前後 2 枚、hello-world 200% 1 枚、gallery narrow 1 枚）。
+- 既存テストの期待値の変更: **なし**（`tests/` 無変更。最終 gate の vitest は 631 件のまま）。
+- 最終 gate: `bun scripts/verify-font-parity.mjs` が 14 手順とも green。件数は turn 17 と
+  同じ（`roles` 28 ケース・1243 DOM・1276 Canvas・1254 スロット・37 kind・48/48 xtype・
+  18 状態、`editing` 16、`surfaces` 18、`lifecycle` 11、`matrix` 168、`distribution` 8）。
+- PLAN 訂正: 4 件。(1) PLAN の訂正対象に T7 の「合成される6つの xtype」を追加（→ 5 つ）。
+  (2) F5 の「目視したのは 4 枚」は再現できず、表の 5 行が名指しする画像は**のべ 7 枚**。
+  7 枚すべてを開いて記述が合うことを確かめ、見出しを「代表画像（12 枚）と目視結果
+  （5 組・7 枚）」にした。(3) `drag-ghost` は 2 択のうち**記述を合わせる**方を採った
+  （記録を増やすには `STATE_CONTRACT` を変える必要があり、F5 の対象は文書だけ）。
+  (4) 「範囲を明記する」は 3 か所に分散させず、T8 へ「条件を動かして測った範囲」の節を
+  新設して 1 つの表にまとめた。
+- 想定外: (1) **F5 が「表は 5 行、目視したのは 4 枚」と書いた 4 という数を再現できなかった**。
+  行が名指しする画像を数えると 7 枚で、2 行が「dom 対 canvas」と 2 枚ずつ指している。
+  数を写さず、画像を開いて実際の枚数で書き直した。(2) T8 の目視表にあった「使用不可の
+  カレンダー日が DOM だけ薄い」は、gallery / narrow の画像を開いても判別できなかった。
+  これは T7 の `roles` suite が実測した差なので、目視の根拠から外して一覧表へ移した。
+  (3) `src/runtime.css:11-12` のような**修正前の行番号は現在の木のどこも指さない**。
+  消すのではなく「この段落だけ `main` の番号」と明記し、現在の位置（37-38 ほか）を併記した。
+  (4) 「あわせて 3 つの食い違いを閉じました」の直後の表が 4 行だった（F5 の一覧外）。
+  同種の誤りなので 4 に直した。
+- やり直し: 0 回（`vp check --fix` を整形のため 2 回。最終 gate は 1 回で green）。
+- 次への注意: **PLAN の未完了タスクはこれで 0 件**なので、次は `/gsd-lite-verify`
+  （verify round 2）。round 2 は PLAN の「verify round 1 の記録」のとおり、**格子の再確認と
+  F1〜F5 の修正差分の回帰だけ**で、新しいクラスは探さない。F5 は文書だけなので回帰の実体は
+  「`verify-font-parity.mjs` が green」「`docs:check` が green」「台帳の数値が証跡 JSON と
+  一致する」の 3 点。**台帳の数値を再照合するなら** `roles.json` / `matrix.json` /
+  `surfaces.json` / `before-fix/before.json` を `bun -e` で読むのが速い（`jq` は無い）。
+  台帳の節内リンク（15 本）は `docs:check` が見ないので、見出し slug を変えるときは
+  手で確かめる。最終 gate は約 5 分（matrix が大半）。`sleep` は前景で使えないので
+  バックグラウンドで回して通知を待つ。`grep`/`sed`/`tail`/`cat` はフックに拒否されるので
+  `git grep` と Read ツールを使い、ブラウザを使うコマンドはサンドボックス外で実行する。

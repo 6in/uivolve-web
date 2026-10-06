@@ -337,7 +337,7 @@ bun run docs:check
     **ランタイム外の裸の 4 部品を対照群**として足した（規則が何にも一致しなくなった状態を
     「部品がフォントを守った」と読めてしまうため。変異 3 でこの歯を確認した）。
 
-- [ ] F5: 台帳と文書の事実誤り・古い記述・言い過ぎを直し、最終 gate を通す（verify round 1）
+- [x] F5: 台帳と文書の事実誤り・古い記述・言い過ぎを直し、最終 gate を通す（verify round 1）
   - 背景: verify が `docs/renderer-font-parity.md` の数値と主張を証跡 JSON・コードと照合した。現在の合計値（28 ケース / DOM 1243 / Canvas 1276 / 37 kind / 48 xtype / 168 ケースなど）は証跡と一致したが、下の項目が食い違っていた。行番号は 7b126a4 時点。F1〜F4 で変わった件数・挙動もここで最終値に揃える。
   - 完了基準: 下の全項目を直し、`bun scripts/verify-font-parity.mjs` が green。直した旧文言が残っていないことを grep で確認する。
     - 事実の誤り:
@@ -376,6 +376,24 @@ bun run docs:check
     - 目視の記録: 表の各行に面（デモ / 独立）とテーマを書く。uivolve-forms の修正前後の組を足す。
   - 対象: `docs/renderer-font-parity.md`、`docs/runtime-distribution.md`、`docs/testing.md`、`.gsd-lite/PLAN.md`（T8 訂正の「6 画面」）。
   - 依存: F4
+  - **PLAN 訂正（turn 18 / F5 実測）**: `.gsd-lite/PLAN.md` の訂正対象に **T7 訂正の
+    「合成される6つの xtype」**を足した（→ 5 つ）。F5 は T8 の「6 画面」だけを挙げていたが、
+    同じ種類の誤りで、`XTYPE_SYNTHESIZED` の要素数が 5 であることを実測したため。
+  - **PLAN 訂正（turn 18 / F5 実測）**: 「L1080『代表画像と目視結果（12 枚）』→ 表は 5 行、
+    目視したのは 4 枚」のうち、**4 枚は再現できなかった**。表の 5 行が名指しする画像は
+    のべ 7 枚（`embed-16px-light` / `embed-20px-dark` / `minimal-dom-20px-light` /
+    `minimal-canvas-20px-light` / `minimal-dom-16px-light` / `minimal-canvas-16px-light` /
+    `minimal-canvas-16px-dark`）で、このターンで 7 枚すべてを開いて記述が合うことを
+    確かめた。見出しを「代表画像（12 枚）と目視結果（5 組・7 枚）」にし、残り 5 枚は
+    自動数値だけが根拠だと明記した。
+  - **PLAN 訂正（turn 18 / F5 実測）**: 「L790 drag-ghost の観測ケース」は**記述を合わせる**
+    方（もう一方の「Canvas 側の ghost も状態として記録する」ではない）を採った。F5 の対象
+    ファイルが文書だけで、記録を増やすには `tests/browser/font-parity.mjs` の
+    `STATE_CONTRACT` を変える必要があるため。Canvas の ghost は同じ `roles` suite で
+    `kanban-card` の kind としてサイズを検査済みで、未検査の範囲は増えていない。
+  - **PLAN 訂正（turn 18 / F5 実測）**: 「L826 の言い過ぎ」を直すために、T8 の節へ
+    **「条件を動かして測った範囲」**を新設した（表 1 つ）。「範囲を明記する」を各タスクの
+    節に分散して書くと、`matrix` が何を測っていないかが 3 か所に散って読めないため。
 
 ## 決めた事項
 
