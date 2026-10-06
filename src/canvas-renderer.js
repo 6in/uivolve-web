@@ -349,7 +349,8 @@ export class CanvasRenderer {
     this.closeEditor();
     const record = createControl(widget, this.dispatch, "canvas");
     const { input } = record;
-    input.className = "canvas-editor";
+    // The Grid editor overlay takes the cell's size; every other overlay keeps the field's.
+    input.className = `canvas-editor${widget.config.gridEditor ? " grid-editor" : ""}`;
     record.key = widget.key;
     input.addEventListener("keydown", (event) => {
       if (record.composing || event.isComposing || event.keyCode === 229) return;
@@ -877,6 +878,9 @@ export class CanvasRenderer {
     const colors = this.scene.theme.colors;
     const label = c.labelHeight ?? 24;
     if (label) this.text(text, x, y + 10, width, colors.muted, "label", 500);
+    // A field paints its value at the body size; a Grid cell editor keeps the cell's
+    // caption size, so the painted value matches the cell it replaces and the overlay.
+    const valueRole = c.gridEditor ? "caption" : "body";
     const top = y + label;
     const h = height - label;
     const border = this.focusKey === widget.key ? colors.focus : colors.border;
@@ -887,7 +891,7 @@ export class CanvasRenderer {
         top + h / 2,
         width,
         colors.text,
-        "body",
+        valueRole,
         400,
         this.fonts.family,
         c.align || "left",
@@ -896,7 +900,7 @@ export class CanvasRenderer {
       const cy = top + h / 2;
       if (kind === "checkbox") {
         this.box(x, cy - 8, 17, 17, c.checked ? colors.primary : colors.background, border, 3);
-        if (c.checked) this.text("✓", x + 2, cy, 14, colors.onPrimary, "body", 600);
+        if (c.checked) this.text("✓", x + 2, cy, 14, colors.onPrimary, valueRole, 600);
       } else {
         ctx.beginPath();
         ctx.arc(x + 8, cy, 8, 0, Math.PI * 2);
@@ -911,7 +915,7 @@ export class CanvasRenderer {
           ctx.fill();
         }
       }
-      this.text(c.boxLabel || text, x + 25, cy, width - 25);
+      this.text(c.boxLabel || text, x + 25, cy, width - 25, colors.text, valueRole);
     } else if (kind === "slider") {
       const min = c.min ?? 0;
       const max = c.max ?? 100;
@@ -938,11 +942,11 @@ export class CanvasRenderer {
             ctx.fillStyle = colors.selected;
             ctx.fillRect(x + 1, rowY + 1, width - 2, 28);
           }
-          this.text(o.text, x + 11, rowY + 15, width - 22);
+          this.text(o.text, x + 11, rowY + 15, width - 22, colors.text, valueRole);
         });
       } else if (kind === "textarea") {
         const lines = [];
-        ctx.font = this.fonts.font("body", 400, c.monospace ? "monospace" : this.fonts.family);
+        ctx.font = this.fonts.font(valueRole, 400, c.monospace ? "monospace" : this.fonts.family);
         for (const paragraph of value.split("\n")) {
           let line = "";
           for (const char of paragraph) {
@@ -964,7 +968,7 @@ export class CanvasRenderer {
               top + 17 + i * 20,
               width - 22,
               value ? colors.text : colors.muted,
-              "body",
+              valueRole,
               400,
               c.monospace ? "monospace" : this.fonts.family,
               c.align || "left",
@@ -983,12 +987,13 @@ export class CanvasRenderer {
           top + h / 2,
           width - (kind === "combobox" ? 42 : 22),
           value ? colors.text : colors.muted,
-          "body",
+          valueRole,
           400,
           this.fonts.family,
           c.align || "left",
         );
-        if (kind === "combobox") this.text("▾", x + width - 24, top + h / 2, 16, colors.muted);
+        if (kind === "combobox")
+          this.text("▾", x + width - 24, top + h / 2, 16, colors.muted, valueRole);
       }
       ctx.restore();
     }

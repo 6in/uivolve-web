@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "id": "font-parity-edit",
+  "title": "フォント一致検査・編集",
+  "script": "font-parity-edit.rhai",
+  "state": {
+    "rows": [
+      {
+        "id": 1,
+        "name": "顧客 1",
+        "count": 12,
+        "joined": "2026-01-15",
+        "status": "受注",
+        "active": true
+      },
+      {
+        "id": 2,
+        "name": "顧客 2",
+        "count": 34,
+        "joined": "2026-02-20",
+        "status": "出荷済",
+        "active": false
+      }
+    ],
+    "editing": null,
+    "search": "",
+    "code": "fn init(s) {\n  s\n}\n"
+  },
+  "ui": {
+    "xtype": "container",
+    "layout": "vbox",
+    "items": [
+      {
+        "xtype": "textfield",
+        "itemId": "search",
+        "fieldLabel": "通常の入力欄",
+        "bind": "search",
+        "emptyText": "placeholder の文字"
+      },
+      {
+        "xtype": "codeeditor",
+        "itemId": "codeArea",
+        "fieldLabel": "等幅の複数行",
+        "bind": "code",
+        "language": "rhai",
+        "rows": 4
+      },
+      {
+        "xtype": "gridpanel",
+        "itemId": "people",
+        "title": "編集できる一覧",
+        "bind": "rows",
+        "editingBind": "editing",
+        "pageSize": 5,
+        "columns": [
+          { "text": "番号", "dataIndex": "id", "flex": 1, "align": "right" },
+          {
+            "text": "名前",
+            "dataIndex": "name",
+            "flex": 2,
+            "editor": { "xtype": "textfield", "allowBlank": false }
+          },
+          {
+            "text": "数量",
+            "dataIndex": "count",
+            "flex": 1,
+            "align": "right",
+            "editor": { "xtype": "numberfield", "minValue": 0, "maxValue": 999 }
+          },
+          {
+            "text": "登録日",
+            "dataIndex": "joined",
+            "flex": 2,
+            "editor": { "xtype": "datefield" }
+          },
+          {
+            "text": "状況",
+            "dataIndex": "status",
+            "flex": 2,
+            "editor": { "xtype": "combobox", "options": ["受注", "出荷済"] }
+          },
+          {
+            "text": "有効",
+            "dataIndex": "active",
+            "flex": 1,
+            "editor": { "xtype": "checkbox" }
+          }
+        ]
+      }
+    ]
+  }
+}

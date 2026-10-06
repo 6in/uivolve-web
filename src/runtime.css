@@ -373,6 +373,15 @@
   background: var(--ui-background);
 }
 
+/* A Grid cell keeps the cell's own 12px while it is being edited, on both surfaces. The
+   flag comes from the edited widget itself (`config.gridEditor`), so every other field
+   keeps the 13px declared above. */
+:where(.uivolve-runtime) .ui-field.grid-editor > :is(input, select, textarea),
+:where(.uivolve-runtime) .ui-field.grid-editor .box-control,
+:where(.uivolve-runtime) .canvas-editor.grid-editor {
+  font-size: var(--ui-font-size-caption);
+}
+
 :where(.uivolve-runtime) .ui-field > textarea,
 :where(.uivolve-runtime) textarea.canvas-editor {
   padding: 7px 10px;

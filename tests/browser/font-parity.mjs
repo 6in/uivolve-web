@@ -745,7 +745,8 @@ const CANVAS_KIND_CONTRACT = {
   // The drag ghost paints the card's own two roles at the pointer, so it needs no entry
   // of its own; it is attributed to whichever card or lane it is being held over.
   "kanban-card": ["caption", "label", "meta"],
-  // Fields paint their label and their value. T4 narrows the Grid editor to caption.
+  // Fields paint their label and their value. A Grid cell editor is the exception and is
+  // handled below: its label strip is zero-height and its value takes the cell's caption.
   textfield: ["label", "body"],
   numberfield: ["label", "body"],
   datefield: ["label", "body"],
@@ -859,7 +860,9 @@ function assertCanvasRoles(capture, problems) {
       note(`"${record.text.slice(0, 18)}" (${record.x},${record.y}) を部品に対応付けられない`);
       continue;
     }
-    const allowed = CANVAS_KIND_CONTRACT[record.kind];
+    // A Grid cell editor replaces the cell, so it paints at the cell's size instead of the
+    // field's. The flag comes from the Scene widget, not from the kind.
+    const allowed = record.gridEditor ? ["caption"] : CANVAS_KIND_CONTRACT[record.kind];
     if (!allowed) {
       note(`kind ${record.kind} に契約が無い（"${record.text.slice(0, 18)}"）`);
       continue;
@@ -1057,6 +1060,581 @@ async function runRoles({ context, origin, evidenceDir, viewport, log }) {
   };
 }
 
+// --- editing ----------------------------------------------------------------------
+// The sizes an edit has to produce. A Grid cell keeps the cell's caption size in the cell,
+// in the DOM editor and in the Canvas overlay; every other field keeps the body size. The
+// two are measured on the same screen at the same moment, because the defect this closes is
+// a size exception reaching the fields it was not meant for.
+const EDIT_ROLE_CONTRACT = [
+  { role: "field-input", selector: ".ui-field:not(.grid-editor) > input", size: "body" },
+  { role: "field-select", selector: ".ui-field:not(.grid-editor) > select", size: "body" },
+  { role: "field-textarea", selector: ".ui-field:not(.grid-editor) > textarea", size: "body" },
+  { role: "field-box", selector: ".ui-field:not(.grid-editor) .box-control", size: "body" },
+  { role: "field-option", selector: ".ui-field:not(.grid-editor) select option", size: "body" },
+  { role: "grid-cell", selector: ".ui-grid-cell", size: "caption" },
+  { role: "grid-editor-input", selector: ".ui-field.grid-editor > input", size: "caption" },
+  { role: "grid-editor-select", selector: ".ui-field.grid-editor > select", size: "caption" },
+  { role: "grid-editor-option", selector: ".ui-field.grid-editor select option", size: "caption" },
+  { role: "grid-editor-box", selector: ".ui-field.grid-editor .box-control", size: "caption" },
+  { role: "overlay", selector: ".canvas-editor:not(.grid-editor)", size: "body" },
+  { role: "overlay-option", selector: ".canvas-editor:not(.grid-editor) option", size: "body" },
+  { role: "overlay-grid", selector: ".canvas-editor.grid-editor", size: "caption" },
+  { role: "overlay-grid-option", selector: ".canvas-editor.grid-editor option", size: "caption" },
+].map((entry) => ({ ...entry, px: SIZE_CONTRACT[entry.size] }));
+
+for (const entry of EDIT_ROLE_CONTRACT)
+  if (entry.px === undefined) throw new Error(`Edit role ${entry.role} names an unknown size`);
+
+const editRoleSpecs = () =>
+  EDIT_ROLE_CONTRACT.map(({ role, selector }) => ({ role, selector, pseudo: null }));
+
+const EDIT_FIXTURE_SCREEN = "/tests/browser/font-parity-edit.json";
+const FORMS_SCREEN = "screens/uivolve-forms.json";
+
+// One case per editor the engine lets a Grid column use (textfield / numberfield /
+// datefield / combobox / checkbox), on both surfaces. grid-lab carries three of them next
+// to an ordinary textfield, and the fixture screen carries the two no application screen
+// uses. `requires` is the proof the case actually produced what it was added for.
+const EDIT_FIXTURES = [
+  {
+    name: "grid-lab-textfield",
+    screen: "screens/grid-lab.json",
+    edit: { surface: "dom", column: "customer" },
+    requires: ["grid-cell", "grid-editor-input", "field-input"],
+  },
+  {
+    name: "grid-lab-numberfield",
+    screen: "screens/grid-lab.json",
+    edit: { surface: "dom", column: "quantity" },
+    requires: ["grid-editor-input", "field-input"],
+  },
+  {
+    name: "grid-lab-combobox",
+    screen: "screens/grid-lab.json",
+    edit: { surface: "dom", column: "status" },
+    requires: ["grid-editor-select", "grid-editor-option", "field-input"],
+  },
+  {
+    name: "grid-lab-textfield-canvas",
+    screen: "screens/grid-lab.json",
+    edit: { surface: "canvas", column: "customer" },
+    requires: ["overlay-grid", "grid-cell", "field-input"],
+  },
+  {
+    name: "grid-lab-combobox-canvas",
+    screen: "screens/grid-lab.json",
+    edit: { surface: "canvas", column: "status" },
+    requires: ["overlay-grid", "overlay-grid-option"],
+  },
+  {
+    name: "edit-datefield",
+    screen: EDIT_FIXTURE_SCREEN,
+    edit: { surface: "dom", column: "joined" },
+    requires: ["grid-editor-input", "field-input", "field-textarea", "grid-cell"],
+  },
+  {
+    name: "edit-datefield-canvas",
+    screen: EDIT_FIXTURE_SCREEN,
+    edit: { surface: "canvas", column: "joined" },
+    requires: ["overlay-grid"],
+  },
+  // A checkbox editor puts its caption in `.box-control`, not in the input, so it needs its
+  // own rule and its own measurement.
+  {
+    name: "edit-checkbox",
+    screen: EDIT_FIXTURE_SCREEN,
+    edit: { surface: "dom", column: "active" },
+    requires: ["grid-editor-box", "field-input"],
+  },
+  // The Canvas overlay for an ordinary field: one case per editor kind, because openEditor
+  // keeps a single overlay at a time. The DOM side of all six is measured in every case.
+  ...[
+    ["textfield", "personName", []],
+    ["numberfield", "quantity", []],
+    ["datefield", "due", []],
+    ["textarea", "memo", []],
+    ["combobox", "department", ["overlay-option"]],
+    ["listbox", "languages", ["overlay-option"]],
+  ].map(([kind, target, extra]) => ({
+    name: `forms-overlay-${kind}`,
+    screen: FORMS_SCREEN,
+    steps: [{ surface: "canvas", target }],
+    requires: [
+      "overlay",
+      "field-input",
+      "field-select",
+      "field-textarea",
+      "field-box",
+      "field-option",
+      ...extra,
+    ],
+  })),
+  // Monospace is the one family override the contract allows; the size must stay body.
+  {
+    name: "text-overlay-monospace",
+    screen: "/tests/browser/font-parity-text.json",
+    steps: [{ surface: "canvas", target: "codeArea" }],
+    requires: ["overlay", "field-textarea"],
+  },
+  // The dialog prompt is an ordinary 13px field with a 22px label strip, inside a window.
+  {
+    name: "dialogs-prompt",
+    screen: "screens/dialogs.yaml",
+    steps: [{ surface: "dom", selector: '.ui-button[data-target="showPrompt"]' }],
+    requires: ["field-input"],
+    dialogPrompt: true,
+  },
+];
+
+async function captureEditing(page, fixture) {
+  await page.evaluate(
+    async (input) => {
+      const module = await import("/tests/browser/font-parity-harness.js");
+      const harness = await module.createFontParityHarness({ screen: input.screen });
+      window.__fontParityHarness = harness;
+      try {
+        await harness.settle();
+        for (const step of input.steps ?? [])
+          if (step.surface === "dom") await harness.clickDom(step.selector);
+          else await harness.clickCanvas(step.target);
+        if (input.edit) await harness.editCell(input.edit);
+      } catch (error) {
+        document.getElementById("font-parity-error").textContent = error.stack ?? String(error);
+        throw error;
+      }
+    },
+    { screen: fixture.screen, steps: fixture.steps, edit: fixture.edit },
+  );
+  const observed = await page.evaluate(
+    (contract) => ({
+      ...window.__fontParityHarness.roles(contract),
+      snapshot: window.__fontParityHarness.editSnapshot(),
+    }),
+    editRoleSpecs(),
+  );
+  return {
+    fixture: fixture.name,
+    mode: "light",
+    hostFontSize: "16px",
+    requires: fixture.requires,
+    dialogPrompt: Boolean(fixture.dialogPrompt),
+    ...observed,
+  };
+}
+
+// The engine marks the three label strips apart: 0 for a Grid editor and for a box with no
+// field label, 22 for the dialog prompt, 24 for every other field.
+function expectedLabelHeight(field) {
+  if (field.gridEditor) return 0;
+  if (field.dialog) return 22;
+  if (["checkbox", "radio"].includes(field.kind) && !field.text) return 0;
+  return 24;
+}
+
+function assertEditCase(capture, problems) {
+  const note = (message) => problems.push(`${capture.fixture}: ${message}`);
+  if (capture.errors.length) note(`runtime errors: ${capture.errors.join("; ")}`);
+  const asserted = [];
+  for (const sample of roleSamples(capture)) {
+    const entry = EDIT_ROLE_CONTRACT.find((candidate) => candidate.role === sample.role);
+    if (!entry) continue;
+    asserted.push(sample);
+    // An option in a closed combobox has no box, but it still carries the size the popup
+    // list paints, so the size is asserted on every sample and visibility only recorded.
+    if (sample.fontSize !== entry.px)
+      note(`${sample.role} is ${sample.fontSize}px, expected ${entry.px}px (${sample.path})`);
+  }
+  for (const role of capture.requires)
+    if (!asserted.some((sample) => sample.role === role)) note(`role ${role} was never measured`);
+  // The same contract read off the live controls instead of off a selector: whatever markup
+  // the host chose, a Grid editor is 12px and nothing else is.
+  for (const editor of capture.snapshot.editors) {
+    const expected = editor.gridEditor ? SIZE_CONTRACT.caption : SIZE_CONTRACT.body;
+    if (editor.fontSize !== expected)
+      note(
+        `editor ${editor.id} (gridEditor=${editor.gridEditor}) is ${editor.fontSize}px,` +
+          ` expected ${expected}px`,
+      );
+  }
+  for (const field of capture.snapshot.fields) {
+    const expected = expectedLabelHeight(field);
+    if (field.labelHeight !== expected)
+      note(`${field.kind} ${field.key} labelHeight ${field.labelHeight}, expected ${expected}`);
+  }
+  if (capture.dialogPrompt) {
+    const prompt = capture.snapshot.fields.find((field) => field.dialog);
+    if (!prompt) note("dialog prompt の field が Scene に現れなかった");
+  }
+  return asserted;
+}
+
+// --- editing operations -----------------------------------------------------------
+// Real operations, not dispatches: focus, begin, type, confirm, re-edit, cancel, and the
+// Rhai refusal. Each step records the engine's revision and the bound state so a size that
+// only looks right in a still frame cannot pass.
+const FIELD_OPERATIONS = [
+  {
+    name: "hello-world-dom",
+    screen: "screens/hello-world.json",
+    surface: "dom",
+    target: "nameInput",
+    paths: ["name"],
+  },
+  {
+    name: "hello-world-canvas",
+    screen: "screens/hello-world.json",
+    surface: "canvas",
+    target: "nameInput",
+    paths: ["name"],
+  },
+  {
+    name: "forms-canvas-textarea",
+    screen: FORMS_SCREEN,
+    surface: "canvas",
+    target: "memo",
+    paths: ["memo"],
+    kind: "textarea",
+  },
+  {
+    name: "orders-dom",
+    screen: "screens/orders.json",
+    surface: "dom",
+    target: "customer",
+    paths: ["draftCustomer"],
+  },
+  {
+    name: "orders-canvas",
+    screen: "screens/orders.json",
+    surface: "canvas",
+    target: "customer",
+    paths: ["draftCustomer"],
+  },
+];
+
+const GRID_OPERATIONS = [
+  { name: "grid-lab-dom", surface: "dom" },
+  { name: "grid-lab-canvas", surface: "canvas" },
+];
+
+const TYPED_TEXT = "日本語の入力";
+
+// Only the Canvas stage's controls are overlays; the DOM stage's inputs are always there.
+const overlays = (snapshot) => snapshot.editors.filter((editor) => editor.surface === "canvas");
+
+async function openHarness(page, screen) {
+  await page.evaluate(
+    async (input) => {
+      const module = await import("/tests/browser/font-parity-harness.js");
+      const harness = await module.createFontParityHarness({ screen: input.screen });
+      window.__fontParityHarness = harness;
+      try {
+        await harness.settle();
+      } catch (error) {
+        document.getElementById("font-parity-error").textContent = error.stack ?? String(error);
+        throw error;
+      }
+    },
+    { screen },
+  );
+}
+
+const snapshotOf = (page, paths) =>
+  page.evaluate((input) => window.__fontParityHarness.editSnapshot(input), paths);
+
+// Type over whatever the control holds, with real key events, so the engine sees the same
+// input stream a user produces.
+async function retype(page, text) {
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.type(text, { delay: 10 });
+  await page.evaluate(() => window.__fontParityHarness.afterFrame());
+}
+
+async function runFieldOperation(page, operation, problems) {
+  const note = (message) => problems.push(`${operation.name}: ${message}`);
+  const steps = [];
+  const record = async (label) => {
+    const snapshot = await snapshotOf(page, operation.paths);
+    steps.push({ label, ...snapshot });
+    return snapshot;
+  };
+  await openHarness(page, operation.screen);
+  const start = await record("loaded");
+  await page.evaluate((input) => window.__fontParityHarness.focusField(input), {
+    surface: operation.surface,
+    target: operation.target,
+  });
+  const focused = await record("focused");
+  if (!focused.active.present) note("focus が入力欄へ入らなかった");
+  // The Canvas overlay only exists while the field is being edited; the DOM control is
+  // always there. Either way the focused control is the one that takes the typing.
+  if (operation.surface === "canvas" && !focused.active.classes.includes("canvas-editor"))
+    note(`Canvas の編集オーバーレイが開かなかった（${focused.active.classes.join(".")}）`);
+  if (focused.active.fontSize !== SIZE_CONTRACT.body)
+    note(`編集中の入力欄が ${focused.active.fontSize}px（通常 field は ${SIZE_CONTRACT.body}px）`);
+  await retype(page, TYPED_TEXT);
+  const typed = await record("typed");
+  if (typed.state[operation.paths[0]] !== TYPED_TEXT)
+    note(`入力後の state が ${JSON.stringify(typed.state[operation.paths[0]])}`);
+  if (!(typed.revision > start.revision)) note("入力で revision が増えていない");
+  // Enter confirms. A textarea takes the newline instead, which is the host's own rule.
+  await page.keyboard.press("Enter");
+  await page.evaluate(() => window.__fontParityHarness.afterFrame());
+  const confirmed = await record("enter");
+  if (confirmed.state[operation.paths[0]].replace(/\n$/u, "") !== TYPED_TEXT)
+    note(`Enter 後の state が ${JSON.stringify(confirmed.state[operation.paths[0]])}`);
+  if (operation.surface === "canvas" && operation.kind !== "textarea" && overlays(confirmed).length)
+    note("Enter で Canvas のオーバーレイが閉じていない");
+  // Re-edit, then Escape. For an ordinary field Escape closes the overlay; it does not undo
+  // the value, because the value was already committed on input. That is existing behaviour.
+  await page.evaluate((input) => window.__fontParityHarness.focusField(input), {
+    surface: operation.surface,
+    target: operation.target,
+  });
+  const reopened = await record("re-focused");
+  if (operation.surface === "canvas" && !overlays(reopened).length)
+    note("再編集でオーバーレイが開かなかった");
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => window.__fontParityHarness.afterFrame());
+  const cancelled = await record("escape");
+  if (operation.surface === "canvas" && overlays(cancelled).length)
+    note("Escape で Canvas のオーバーレイが閉じていない");
+  if (cancelled.state[operation.paths[0]] !== confirmed.state[operation.paths[0]])
+    note("Escape が確定済みの値を変えた");
+  await page.evaluate(() => window.__fontParityHarness.dispose());
+  return { operation: operation.name, surface: operation.surface, steps };
+}
+
+const GRID_PATHS = ["cellEdit", "records.1.customer", "records.1.quantity", "edited"];
+
+async function runGridOperation(page, operation, problems) {
+  const note = (message) => problems.push(`${operation.name}: ${message}`);
+  const steps = [];
+  const record = async (label) => {
+    const snapshot = await snapshotOf(page, GRID_PATHS);
+    steps.push({ label, ...snapshot });
+    return snapshot;
+  };
+  const edit = (column) =>
+    page.evaluate((input) => window.__fontParityHarness.editCell(input), {
+      surface: operation.surface,
+      column,
+      index: 1,
+    });
+  await openHarness(page, "screens/grid-lab.json");
+  const start = await record("loaded");
+  await edit("customer");
+  const opened = await record("begin-edit");
+  if (!opened.active.present) note("編集開始で入力欄へ focus が移らなかった");
+  if (opened.active.fontSize !== SIZE_CONTRACT.caption)
+    note(`Grid 編集中の入力欄が ${opened.active.fontSize}px（セルは ${SIZE_CONTRACT.caption}px）`);
+  if (!opened.state.cellEdit) note("編集開始で cellEdit が立たなかった");
+  await retype(page, TYPED_TEXT);
+  const drafted = await record("draft");
+  if (drafted.state.cellEdit?.value !== TYPED_TEXT)
+    note(`下書きが ${JSON.stringify(drafted.state.cellEdit?.value)}`);
+  if (drafted.state["records.1.customer"] === TYPED_TEXT) note("確定前に行が書き換わっている");
+  await page.keyboard.press("Enter");
+  await page.evaluate(() => window.__fontParityHarness.afterFrame());
+  const committed = await record("commit");
+  if (committed.state["records.1.customer"] !== TYPED_TEXT)
+    note(`Enter 確定後の行が ${JSON.stringify(committed.state["records.1.customer"])}`);
+  if (committed.state.cellEdit !== null) note("確定後も cellEdit が残っている");
+  if (!(committed.revision > drafted.revision)) note("確定で revision が増えていない");
+  // Re-edit the same cell and cancel: the committed value must come back.
+  await edit("customer");
+  await retype(page, "取り消される値");
+  const second = await record("re-edit");
+  if (second.state["records.1.customer"] !== TYPED_TEXT) note("再編集中に行が書き換わっている");
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => window.__fontParityHarness.afterFrame());
+  const cancelled = await record("cancel");
+  if (cancelled.state.cellEdit !== null) note("Escape 後も cellEdit が残っている");
+  if (cancelled.state["records.1.customer"] !== TYPED_TEXT)
+    note(`Escape 後の行が ${JSON.stringify(cancelled.state["records.1.customer"])}`);
+  // The Rhai handler refuses a quantity over 500. The editor has to stay open with the
+  // draft intact, and the row must not move.
+  await edit("quantity");
+  await retype(page, "600");
+  const refusedDraft = await record("reject-draft");
+  await page.keyboard.press("Enter");
+  await page.evaluate(() => window.__fontParityHarness.afterFrame());
+  const refused = await record("reject");
+  if (refused.state["records.1.quantity"] !== start.state["records.1.quantity"])
+    note(`拒否されたのに行が ${JSON.stringify(refused.state["records.1.quantity"])}`);
+  if (refused.state.cellEdit === null) note("拒否で編集が閉じてしまった");
+  if (String(refused.state.cellEdit?.value) !== "600")
+    note(`拒否後の下書きが ${JSON.stringify(refused.state.cellEdit?.value)}`);
+  if (refused.active.fontSize !== SIZE_CONTRACT.caption)
+    note(`拒否後の入力欄が ${refused.active.fontSize}px`);
+  if (String(refusedDraft.state.cellEdit?.value) !== "600") note("拒否前の下書きが残っていない");
+  // The refusal has to reach the host as an error; a silently dropped commit would leave
+  // the same state behind and pass every check above.
+  if (refused.errors.length <= refusedDraft.errors.length)
+    note(`拒否が報告されなかった（errors: ${JSON.stringify(refused.errors)}）`);
+  else if (!refused.errors.at(-1).includes("500"))
+    note(`拒否の報告が想定外の内容（${refused.errors.at(-1)}）`);
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => window.__fontParityHarness.afterFrame());
+  const closed = await record("close");
+  if (closed.state.cellEdit !== null) note("最後の Escape で編集が閉じていない");
+  await page.evaluate(() => window.__fontParityHarness.dispose());
+  return { operation: operation.name, surface: operation.surface, steps };
+}
+
+// --- composition ------------------------------------------------------------------
+// What a repaint during an unfinished conversion must not break. The events are the real
+// ones in the real order, but they are dispatched from the page: a real IME cannot be
+// driven here, so the two are kept apart in the ledger and in this constant.
+const COMPOSITION = {
+  text: "にほんご",
+  method: "compositionstart → input(isComposing) → compositionend をページ内で dispatch する",
+  realIme: false,
+  realImeReason:
+    "無人の headless Chromium では OS の IME を操作できない。実 IME での変換は手動確認の項目として" +
+    "台帳に残し、ここでの結果を実 IME の確認として読み替えない",
+};
+
+const COMPOSITION_CASES = [
+  { name: "composition-dom", surface: "dom" },
+  { name: "composition-canvas", surface: "canvas" },
+];
+
+async function runCompositionCase(page, { name, surface }, problems) {
+  const note = (message) => problems.push(`${name}: ${message}`);
+  await openHarness(page, "screens/hello-world.json");
+  const paths = ["name"];
+  const before = await snapshotOf(page, paths);
+  await page.evaluate((input) => window.__fontParityHarness.focusField(input), {
+    surface,
+    target: "nameInput",
+  });
+  await page.evaluate(() => window.__fontParityHarness.markActive());
+  const composing = await page.evaluate(
+    (text) => window.__fontParityHarness.startComposition(text),
+    COMPOSITION.text,
+  );
+  if (!composing.same) note("変換開始の時点で入力欄が作り直されている");
+  const steps = [{ label: "composing", active: composing }];
+  // A repaint, a theme change and a resize, each while the conversion is unfinished.
+  for (const [label, action] of [
+    ["render", () => page.evaluate(() => window.__fontParityHarness.rerender())],
+    [
+      "theme",
+      () => page.evaluate(() => window.__fontParityHarness.applyThemeUrl("/themes/dark.json")),
+    ],
+    ["resize", () => page.evaluate(() => window.__fontParityHarness.resizeHostTo("62%"))],
+  ]) {
+    await action();
+    const snapshot = await snapshotOf(page, paths);
+    steps.push({ label, ...snapshot });
+    const active = snapshot.active;
+    if (!active.same) note(`${label} で入力欄が別の要素に置き換わった`);
+    if (!active.inside || !active.connected) note(`${label} で focus がステージの外へ出た`);
+    if (active.value !== COMPOSITION.text) note(`${label} で未確定の値が ${active.value}`);
+    if (active.selectionStart !== composing.selectionStart)
+      note(`${label} で selection が ${active.selectionStart}/${active.selectionEnd}`);
+    // The engine must not see the unfinished conversion.
+    if (snapshot.state.name !== before.state.name)
+      note(`${label} で未確定の値が state へ入った（${JSON.stringify(snapshot.state.name)}）`);
+  }
+  await page.evaluate(() => window.__fontParityHarness.endComposition());
+  await page.evaluate(() => window.__fontParityHarness.afterFrame());
+  const committed = await snapshotOf(page, paths);
+  steps.push({ label: "compositionend", ...committed });
+  if (committed.state.name !== COMPOSITION.text)
+    note(`変換確定後の state が ${JSON.stringify(committed.state.name)}`);
+  if (!committed.active.same) note("変換確定で入力欄が作り直された");
+  await page.evaluate(() => window.__fontParityHarness.dispose());
+  return { case: name, surface, steps };
+}
+
+async function runEditing({ context, origin, evidenceDir, viewport, log }) {
+  const { page, pageErrors } = await instrument(
+    context,
+    `${origin}/tests/browser/font-parity.html`,
+    viewport,
+  );
+  const file = resolve(evidenceDir, "editing.json");
+  const captures = [];
+  const operations = [];
+  const compositions = [];
+  const problems = [];
+  try {
+    for (const fixture of EDIT_FIXTURES) {
+      const capture = await captureEditing(page, fixture);
+      const image = resolve(evidenceDir, `editing-${fixture.name}.png`);
+      await page.locator("#font-parity-host").screenshot({ path: image });
+      await page.evaluate(() => window.__fontParityHarness?.dispose());
+      captures.push({ ...capture, image });
+    }
+    for (const operation of FIELD_OPERATIONS)
+      operations.push(await runFieldOperation(page, operation, problems));
+    for (const operation of GRID_OPERATIONS)
+      operations.push(await runGridOperation(page, operation, problems));
+    for (const probe of COMPOSITION_CASES)
+      compositions.push(await runCompositionCase(page, probe, problems));
+  } finally {
+    await writeFile(
+      file,
+      `${JSON.stringify(
+        { composition: COMPOSITION, captures, operations, compositions, pageErrors },
+        null,
+        2,
+      )}\n`,
+    );
+    log(`Editing ledger: ${file}`);
+    await page.close();
+  }
+  if (pageErrors.length) problems.push(`page errors: ${pageErrors.join("; ")}`);
+  const asserted = captures.flatMap((capture) => assertEditCase(capture, problems));
+  const canvas = captures.map((capture) => assertCanvasRoles(capture, problems));
+  const canvasAsserted = canvas.flatMap((entry) => entry.asserted);
+  // Every role in the edit contract has to be measured somewhere, and the Canvas side has
+  // to have painted a Grid editor at the cell size: a check nothing reached is not a pass.
+  for (const entry of EDIT_ROLE_CONTRACT)
+    if (!asserted.some((sample) => sample.role === entry.role))
+      problems.push(`edit role ${entry.role} (${entry.selector}) was never measured`);
+  const gridDraws = canvasAsserted.filter((record) => record.gridEditor);
+  if (!gridDraws.length) problems.push("Canvas で Grid 編集中の描画が 1 件も採れなかった");
+  for (const record of gridDraws)
+    if (record.declaredFontSize !== SIZE_CONTRACT.caption)
+      problems.push(
+        `canvas grid editor "${record.text.slice(0, 18)}" は ${record.declaredFontSize}px`,
+      );
+  // The three label strips and both font families have to appear, or the kinds the task
+  // names were never actually on screen.
+  const strips = new Set(
+    captures.flatMap((capture) => capture.snapshot.fields.map((field) => field.labelHeight)),
+  );
+  for (const height of [0, 22, 24])
+    if (!strips.has(height)) problems.push(`labelHeight ${height} の field を実測していない`);
+  const families = asserted.map((sample) => sample.fontFamily ?? "");
+  if (!families.some((family) => /monospace/u.test(family)))
+    problems.push("等幅の入力欄を実測していない");
+  if (!families.some((family) => !/monospace/u.test(family)))
+    problems.push("等幅でない入力欄を実測していない");
+  if (!asserted.some((sample) => sample.placeholder))
+    problems.push("placeholder を持つ入力欄を実測していない");
+  const kinds = new Set(
+    captures.flatMap((capture) =>
+      capture.snapshot.fields.filter((field) => field.gridEditor).map((field) => field.kind),
+    ),
+  );
+  for (const kind of ["textfield", "numberfield", "datefield", "combobox", "checkbox"])
+    if (!kinds.has(kind)) problems.push(`Grid 編集の ${kind} を実測していない`);
+  log(
+    `${captures.length} cases, ${asserted.length} DOM samples, ` +
+      `${canvasAsserted.length} Canvas draws (${gridDraws.length} grid editor), ` +
+      `grid editor kinds ${[...kinds].sort().join("/")}, ` +
+      `labelHeight ${[...strips].sort((a, b) => a - b).join("/")}, ` +
+      `${operations.length} operation scripts, ${compositions.length} composition probes ` +
+      `(real IME: ${COMPOSITION.realIme})`,
+  );
+  if (problems.length)
+    throw new Error(`editing: ${problems.length} problems\n- ${problems.join("\n- ")}`);
+  return { cases: captures.length, samples: asserted.length, operations: operations.length, file };
+}
+
 // Every suite named by the plan is registered. Suites a later task owns have no runner
 // and must fail loudly: an unimplemented check is never reported as a pass.
 export const SUITES = [
@@ -1064,7 +1642,7 @@ export const SUITES = [
   // T2 covers the DOM declarations, the parent contexts and the shared size source;
   // T3 adds the Canvas draw/measure comparison for the same roles.
   { name: "roles", owner: "T2/T3", run: runRoles },
-  { name: "editing", owner: "T4", run: null },
+  { name: "editing", owner: "T4", run: runEditing },
   { name: "surfaces", owner: "T5", run: null },
   { name: "lifecycle", owner: "T6", run: null },
   { name: "matrix", owner: "T8", run: null },

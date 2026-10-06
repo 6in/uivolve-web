@@ -11,6 +11,8 @@ DOM 版と Canvas 版が同じ役割の文字を同じ実効サイズで表示�
 - 観測コード: [`tests/browser/font-parity.mjs`](../tests/browser/font-parity.mjs) ・
   [`tests/browser/font-parity-harness.js`](../tests/browser/font-parity-harness.js) ・
   [`tests/browser/font-parity.html`](../tests/browser/font-parity.html)
+- 補助 fixture: [`tests/browser/font-parity-text.json`](../tests/browser/font-parity-text.json)（文字の形）・
+  [`tests/browser/font-parity-edit.json`](../tests/browser/font-parity-edit.json)（列エディタの kind）
 - runner 自体の検査: [`tests/font-parity-runner.test.js`](../tests/font-parity-runner.test.js)
 
 ## 実行方法
@@ -19,6 +21,7 @@ DOM 版と Canvas 版が同じ役割の文字を同じ実効サイズで表示�
 bun run build:wasm
 bun scripts/test-font-parity-browser.mjs --suite baseline
 bun scripts/test-font-parity-browser.mjs --suite roles
+bun scripts/test-font-parity-browser.mjs --suite editing
 ```
 
 - `--suite <name>` は繰り返し指定できます。`--list` で登録済み suite と実装状態を表示します。
@@ -40,7 +43,7 @@ bun scripts/test-font-parity-browser.mjs --suite roles
 | -------------- | ----- | --------------------------------------------------------------- |
 | `baseline`     | T1    | 修正前の台帳。差があっても報告のみで成功する                    |
 | `roles`        | T2/T3 | 役割別サイズと reset（T2 済）、Canvas 描画・計測の照合（T3 済） |
-| `editing`      | T4    | 通常値・編集オーバーレイ・Grid 編集                             |
+| `editing`      | T4    | 通常値・編集オーバーレイ・Grid 編集（T4 済）                    |
 | `surfaces`     | T5    | document / figure / dialog / media の実効倍率                   |
 | `lifecycle`    | T6    | フォント完了・DPR 変更時の再描画と解放                          |
 | `matrix`       | T8    | 幅・拡大・配色の行列と代表画像                                  |
@@ -134,7 +137,7 @@ Canvas の描画／計測との突き合わせを足しました（実行時の�
 | 項目                                 | 状態・理由                                                        |
 | ------------------------------------ | ----------------------------------------------------------------- |
 | 比較デモ側の Scene オブジェクト      | デモは Scene を公開しないため、DOM の `.ui-widget` 矩形で代用した |
-| 実 IME での変換中入力                | 無人環境では実行できない。T4 で合成 composition と分けて記録する  |
+| 実 IME での変換中入力                | 無人環境では実行できない。T4 が合成 composition と分けて記録した  |
 | 実ブラウザのズーム 100/200%          | T8 で実施方法と代用（DPR エミュレーション）を分けて記録する       |
 | ホスト外枠（デモのページ装飾）の文字 | ランタイム外の表示であり、本マイルストーンの対象外                |
 | 字体そのもの（グリフ形状）の差       | 対象はサイズの一致。字体はシステムのフォールバックに依存する      |
@@ -317,9 +320,9 @@ drag ghost は押しっぱなしでしか存在せず、pointer capture は実�
 | `media` の空／エラー案内                              | T5。Canvas は現在 13px、DOM は 12px（`src/runtime.css:539-548`）。**既知の不一致**で、T5 が DOM 側へ揃える                                                                                                                                       |
 | `fieldset`                                            | `uivolve-forms` の fieldset は collapsible でタイトルを `panel-toggle` が描くため、本体の描画は空文字で内容からは対応付けられない。canvas-renderer では panel と同じ分岐（`kind === "panel" \|\| kind === "fieldset"`）。T7 が kind 単位で閉じる |
 | `extra-button` の太さ                                 | Canvas は 12px/500、DOM は 12px/400（`.ui-extra-button` は font-weight を宣言しない）。**サイズは一致**。太さの差は本マイルストーンの対象外として台帳に残す（T7 が表現差として扱う）                                                             |
-| drag ghost の ID                                      | ghost は Canvas でも DOM でも ID を出しません（Canvas はタイトルと説明だけを描き、DOM の `::after` は `.ui-kanban-card` にしか当たりません）。**両面で同じ**なので既存差として記録のみ                                                            |
+| drag ghost の ID                                      | ghost は Canvas でも DOM でも ID を出しません（Canvas はタイトルと説明だけを描き、DOM の `::after` は `.ui-kanban-card` にしか当たりません）。**両面で同じ**なので既存差として記録のみ                                                           |
 | 幅境界の「ちょうど 1px 手前／後」                     | 省略の分岐は描画記録から px 単位では特定できない（`text()` に渡す width は記録に無い）。省略された描画と省略されなかった描画の**両方**を実測して分岐の両側を押さえている                                                                         |
-| Grid 編集の 12px と通常 field の 13px                 | T4。T3 は通常 field の `label` + `body` までを接続した                                                                                                                                                                                           |
+| Grid 編集の 12px と通常 field の 13px                 | **T4 で実施**（下記）。T3 は通常 field の `label` + `body` までを接続した                                                                                                                                                                        |
 | 一時状態（selected/disabled/calendar 月端など）の網羅 | T7。T3 は fixture が出す状態で kind を網羅した                                                                                                                                                                                                   |
 
 ### 検査に歯があることの確認
@@ -327,6 +330,117 @@ drag ghost は押しっぱなしでしか存在せず、pointer capture は実�
 `metric` の値の役割を `metric`(22px) から `body`(13px) に差し替えて `roles` を実行すると、
 `components` と `grid-lab` の全ケースで「canvas metric … は 13px（役割 body）。許可:
 label=11px, metric=22px」として非 0 になりました。確認後に元へ戻しています。
+
+## 通常値と編集オーバーレイ、Grid 編集（T4）
+
+### 決めたこと — サイズの例外は編集中のセルだけ
+
+通常の field は値も placeholder も `body` 13px、Grid のセルは表示中も編集中も `caption`
+12px です。例外の目印は**編集されている widget 自身の `config.gridEditor`** だけで、
+同じ画面の他の field には届きません。
+
+| 面                        | 対象                                                                       | サイズ                                   |
+| ------------------------- | -------------------------------------------------------------------------- | ---------------------------------------- |
+| DOM・通常 field           | `.ui-field:not(.grid-editor) > :is(input, select, textarea)`、`option`     | `body` 13px                              |
+| DOM・Grid 編集            | `.ui-field.grid-editor > :is(input, select, textarea)`、`option`           | `caption` 12px                           |
+| DOM・Grid 編集の box      | `.ui-field.grid-editor .box-control`（checkbox 編集のキャプション）        | `caption` 12px                           |
+| Canvas・通常オーバーレイ  | `.canvas-editor:not(.grid-editor)`                                         | `body` 13px                              |
+| Canvas・Grid オーバーレイ | `.canvas-editor.grid-editor`                                               | `caption` 12px                           |
+| Canvas の描画             | `paintField` の値（`displayfield`・box・listbox・textarea・combobox 共通） | `gridEditor` なら `caption`、他は `body` |
+
+- CSS の例外は 1 ブロックだけです（`src/runtime.css`）。詳細度は `.ui-field.grid-editor > input`
+  が 0,2,1 で基準の `.ui-field > input`（0,1,1）に勝ちます。`!important` は使いません。
+- DOM 側の目印は `src/dom-renderer.js` が field を描くときに
+  `root.classList.toggle("grid-editor", Boolean(widget.config.gridEditor))` で毎回付け直します。
+  Canvas 側のオーバーレイは `openEditor` が同じ条件で class を付けます。
+- Canvas の描画は `paintField` の中で役割を 1 つ選び（`gridEditor ? "caption" : "body"`）、
+  値・box キャプション・listbox の行・textarea の折返し計測・combobox の `▾` すべてに同じ
+  役割を渡します。**ラベル帯（`label` 11px）は別**で、Grid 編集では `labelHeight` が 0 なので
+  そもそも描かれません。
+- Grid の列エディタに使える xtype はエンジン側で `textfield` / `numberfield` / `datefield` /
+  `combobox` / `checkbox` に限られます（`engine/src/grid.rs:61-67`）。`textarea` と `listbox` は
+  列エディタにはなれないため、この 2 つは**通常 field と Canvas オーバーレイ**として検査します。
+
+### ラベル帯の 3 種類
+
+`labelHeight` はエンジンが付ける値で、サイズを CSS から読み直さずに 3 つの場合を見分けられます。
+
+| `labelHeight` | 場合                                                    | 根拠                                                 |
+| ------------- | ------------------------------------------------------- | ---------------------------------------------------- |
+| `0`           | Grid 編集中のセル / `fieldLabel` の無い checkbox・radio | `engine/src/grid.rs:564`、`engine/src/fields.rs:365` |
+| `22`          | dialog の prompt 入力欄                                 | `engine/src/dialogs.rs:481`                          |
+| `24`          | その他すべての field                                    | `engine/src/fields.rs:365`                           |
+
+### `editing` suite が確認していること
+
+`bun scripts/test-font-parity-browser.mjs --suite editing`。実 WASM の **16 ケース・DOM 353 件・
+Canvas 描画 665 件（うち Grid 編集中 11 件）**と、**7 本の操作スクリプト**・**2 本の変換プローブ**を
+実行します。
+
+- 14 役割の computed font-size（上の表）。**通常 field と Grid 編集を必ず同じ画面・同じ瞬間に
+  実測**します。セレクタでの照合に加えて、画面上の全入力欄を列挙して
+  「`gridEditor` なら 12px、それ以外は 13px」も直接確かめます（マークアップが変わっても効く形）
+- Grid 編集の 5 kind（`textfield` / `numberfield` / `datefield` / `combobox` / `checkbox`）が
+  すべて実測されていること。`labelHeight` の 0 / 22 / 24 がすべて現れていること。
+  等幅・非等幅の入力欄と placeholder を持つ入力欄がそれぞれ 1 件以上あること。
+  **1 つでも欠けたら非 0**（契約に挙げた役割が 1 件も採れない場合も同じ）
+- Canvas 側は `roles` と同じ突き合わせを通し、`gridEditor` の描画は `caption` だけを許可します
+- 操作スクリプト（実キー入力）:
+  - 通常 field（Hello World・uivolve-forms の textarea・orders を DOM / Canvas 両面）
+    focus → オーバーレイが開く → 入力 → `Enter` → 再 focus → `Escape`。各段で
+    `revision`・束縛された state・入力欄のサイズを記録します
+  - Grid（grid-lab を DOM / Canvas 両面）編集開始 → 入力 → `Enter` 確定 → 再編集 →
+    `Escape` 取消 → **Rhai 拒否**（数量 600 は `gridChanged` が 500 超で `throw`）。
+    拒否では行が変わらず、編集が閉じず、下書き（`cellEdit.value`）が残り、サイズが 12px の
+    ままで、エラーがホストへ報告されることを確かめます
+- 変換プローブ（合成 composition）: 変換中に `render()` / テーマ変更 / ホストの幅変更を
+  起こしても、**同じ入力要素**（要素の同一性で比較）・`activeElement`・selection・未確定値が
+  保持され、未確定値が state に入らないこと。`compositionend` で初めて state に入ること
+- 証跡: `editing.json` と `editing-<ケース名>.png` 16 枚
+
+### 既存の挙動として記録すること（変更しない）
+
+| 挙動                                            | 記録                                                                                                                     |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| 通常 field の `Escape` は値を戻さない           | 値は入力のたびに確定済みなので、`Escape` は Canvas のオーバーレイを閉じるだけ。Grid 編集の `Escape` だけが下書きを捨てる |
+| textarea の `Enter` は改行                      | オーバーレイは閉じない（`src/canvas-renderer.js` の `widget.kind !== "textarea"` 条件）                                  |
+| Grid 列エディタに `textarea` / `listbox` は無い | エンジンが拒否する（`engine/src/grid.rs:61-67`）。両者は通常 field とオーバーレイで検査した                              |
+
+### T4 の時点で未実施・対象外（理由付き）
+
+| 項目                            | 状態・理由                                                                                                                                                                                                                                                |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **実 IME での変換**             | 無人の headless Chromium では OS の IME を操作できない。`editing` suite の変換は `compositionstart` → `input(isComposing)` → `compositionend` を**ページ内で dispatch する合成**で、実 IME の確認として読み替えない。実 IME は手動確認の項目として残す    |
+| Canvas 面の押下                 | 両面を縦に積む fixture では下の面が折り返しの外に出るため、押下・ダブルクリックは既存の `clickCanvas` と同じく**ページ内で dispatch**する（hit test・listener・dispatch はホスト自身のもの）。**キー入力は実キーボード**（Playwright の `page.keyboard`） |
+| datefield 編集での文字入力      | `input[type="date"]` の入力は区切りごとの別扱いで locale に依存するため、datefield はサイズの実測と `Escape` までとし、入力・確定の操作は textfield / numberfield で行う                                                                                  |
+| dialog prompt の `Enter` 確定   | prompt の `Enter` は `accept` を投げてダイアログを閉じる既存経路。T4 はサイズ（13px）とラベル帯（22px）の実測までとし、ダイアログの状態遷移は既存の `tests/dialogs.test.js` が担保する                                                                    |
+| 幅・DPR・テーマの行列           | T8。`editing` は 1440x1000 / DPR 1 / ライト / ホスト 16px 固定（テーマとホストサイズに対する独立性は T2 の 8 ケースが実測済み）                                                                                                                           |
+| media / surface / dialog 絵文字 | T5。`editing` でも T5 送りの kind は `roles` と同じ理由で除外する                                                                                                                                                                                         |
+
+### 検査に歯があることの確認
+
+2 系統それぞれを壊して `editing` を実行しました。
+
+| 壊した場所                                                 | 出た不一致                                                                                                          |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `src/runtime.css` の例外ブロックを削除                     | DOM / オーバーレイの 21 件が「13px、expected 12px」。`option` も 13px になるため、`option` のサイズ検査も効いている |
+| `src/canvas-renderer.js` の `valueRole` を `"body"` へ固定 | Canvas の Grid 編集描画 11 件が「13px」、`checkbox` は「役割 body。許可: caption=12px」                             |
+
+どちらも確認後に元へ戻しています。
+
+### T4 で足した fixture
+
+| fixture                            | 画面                                  | 採れる役割                                                                     |
+| ---------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------ |
+| `grid-lab-*`                       | `screens/grid-lab.json`               | Grid 編集の `textfield` / `numberfield` / `combobox`、同じ画面の通常 textfield |
+| `edit-datefield` / `edit-checkbox` | `tests/browser/font-parity-edit.json` | Grid 編集の `datefield` / `checkbox`（どの画面にも無い列エディタ）             |
+| `forms-overlay-*`（6 件）          | `screens/uivolve-forms.json`          | Canvas オーバーレイの 6 kind、`labelHeight` 0 の box、placeholder、`option`    |
+| `text-overlay-monospace`           | `tests/browser/font-parity-text.json` | 等幅のオーバーレイ（family だけ `monospace`、サイズは `body`）                 |
+| `dialogs-prompt`                   | `screens/dialogs.yaml`                | dialog prompt（13px・`labelHeight` 22・window の中）                           |
+
+`font-parity-edit.json` ＋ `.rhai` は実 WASM の補助 fixture です。列エディタの 5 kind のうち
+`datefield` と `checkbox` はどのアプリ画面にも無いため、**実際に編集状態を描かせてから**
+サイズを測ります。
 
 ## 実行環境（T1 で確定）
 

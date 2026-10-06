@@ -72,11 +72,28 @@ bun run docs:check
   - **PLAN 訂正（turn 6 / T3 実測）**: 対象ファイルに2件追加した。(1) 新設 `tests/browser/font-parity-text.json` ＋ `font-parity-text.rhai`（実WASMの補助fixture）。既存のアプリ画面には「左/中央/右寄せ・空・日本語・長い英数字・幅境界の両側・等幅の複数行」が揃って出ないため、条件を実際に描かせないと「measureTextと描画fontが一致」を主張できない。実測で確認: 寄せはCanvas側では `textAlign` ではなくxの事前計算で行われる箇所が多く、既存画面の描画は全件 `textAlign: "left"` だった。(2) `tests/fields.test.js` の既存テスト1件（`text()` のシグネチャ変更に追従）。
   - **PLAN 訂正（turn 6 / T3 実測）**: 完了基準の「全roleがDOM実効pxと一致」のうち **media（image/video/iframe）の空/エラー案内は T5 の担当**とする。Canvas 13px 対 DOM 12px（`src/runtime.css:539-548`）で、PLANのT5完了基準が既に「mediaの空/エラー案内はDOM12pxへ合わせ」と明記しているため。T3では kind と理由を `roles.json` の除外に記録した。`fieldset` も T7 送り（`uivolve-forms` の fieldset は collapsible でタイトルが panel-toggle に移り、本体の描画が空文字のため内容で対応付けられない。canvas-renderer では panel と同一分岐）。
 
-- [ ] T4: 通常値と編集オーバーレイ、Grid編集を揃える
+- [x] T4: 通常値と編集オーバーレイ、Grid編集を揃える
   - 完了基準: 通常fieldは13px、Grid cellの表示/DOM編集/Canvas編集は12px。gridEditorを局所識別して通常fieldを変更しない。labelHeight=0/有り、textfield/number/date/textarea/combobox/listbox、placeholder/option/monospace、dialog promptを両面で確認。Hello World・フォーム・orders/grid-labでfocus→編集開始→入力→Enter確定→再編集→Escape取消、GridのRhai拒否と下書き保持を実操作しstate/value/revisionを照合する。composing中のtheme/resize/renderでも同じinput、activeElement、selection、未確定値を保持する。合成composition試験と実IME確認の有無を分ける。フォーム関連・Grid・dialogの既存状態テストも成功。
   - 対象: `src/dom-renderer.js`、`src/canvas-renderer.js`、`src/runtime.css`、必要なら `src/field-control.js`、`tests/browser/font-parity.mjs`、`tests/browser/font-parity-harness.js`、変更契約に応じ `tests/fields.test.js` / `tests/grid-navigation.test.js` / `tests/dialogs.test.js`、`docs/renderer-font-parity.md`。
   - 依存: T3
   - 並列サブ作業: なし（共通編集契約と両面の操作試験を一緒に検証）。
+  - **PLAN 訂正（turn 7 / T4 実測）**: 対象ファイルに新設 `tests/browser/font-parity-edit.json` ＋
+    `font-parity-edit.rhai`（実WASMの補助fixture）を追加した。Grid の列エディタに使える xtype は
+    エンジンが `textfield` / `numberfield` / `datefield` / `combobox` / `checkbox` に限っており
+    （`engine/src/grid.rs:61-67`）、このうち `datefield` と `checkbox` の列エディタは**どのアプリ画面にも
+    存在しない**ため、実際に編集状態を描かせないと「date を両面で確認」を主張できない。
+  - **PLAN 訂正（turn 7 / T4 実測）**: 完了基準の kind 一覧のうち **`textarea` と `listbox` は Grid の
+    列エディタになれない**（同上のエンジン制約）。この2つは「通常 field ＋ Canvas 編集オーバーレイ」
+    として検査した。あわせて、一覧に無い `checkbox` 列エディタもエンジンが許すため
+    `.ui-field.grid-editor .box-control` を 12px 側へ入れて実測した（放置するとセル12px対
+    キャプション13pxの不一致が残るため）。
+  - **PLAN 訂正（turn 7 / T4 実測）**: 「Enter確定→再編集→Escape取消」のうち**通常 field の
+    `Escape` は値を戻さない**（値は入力のたびに確定済みで、`Escape` は Canvas のオーバーレイを
+    閉じるだけ）。`textarea` の `Enter` は改行でオーバーレイを閉じない。どちらも既存の挙動として
+    台帳に記録し、下書きの破棄は Grid 編集の `Escape` でのみ検査した。
+  - **PLAN 訂正（turn 7 / T4 実測）**: `datefield` の編集は**サイズの実測と `Escape` まで**とした。
+    `input[type="date"]` の文字入力は区切りごとの別扱いで locale に依存するため、入力・確定・拒否の
+    操作は `textfield` / `numberfield` で行う。
 
 - [ ] T5: 文書・図表とdialog/media文字の実効倍率を合わせる
   - 完了基準: 共有spritesを維持し、DOM SVGのborder内側viewport/CTMとCanvasのローカルtransformを同じ内容矩形に揃える。documentタイトル14・見出し16・本文/code12とfigureのScene fontSizeをCSS px換算して一致を検証する。WASM補完値を使用しDSLの省略を勝手に別値にしない。字体差が幅/欠けに影響する非code文字はruntime字体へ揃え、monospaceを保つ。dialog絵文字/任意テキスト30pxのmaxWidthによる意図しない縮小を防ぐ。mediaの空/エラー案内はDOM12pxへ合わせ、native overlayも確認する。desktop/390pxで日本語・英数字・絵文字・空・長文・複数行を数値と画像で確認。iframe内部・画像内文字・非文字SVGアイコンは対象外理由を残す。gallery/dialog状態回帰も成功。

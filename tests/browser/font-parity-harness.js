@@ -340,6 +340,12 @@ function sceneRecord(scene) {
       gridEditor: Boolean(widget.config?.gridEditor),
       monospace: Boolean(widget.config?.monospace),
       align: widget.config?.align ?? null,
+      // The label strip is what tells a Grid editor (0) and a dialog prompt (22) apart
+      // from an ordinary field (24) without reading the size back out of the CSS.
+      labelHeight: widget.config?.labelHeight ?? null,
+      dialog: Boolean(widget.config?.dialog),
+      placeholder: widget.config?.placeholder ?? null,
+      column: widget.payload?.column ?? null,
       // Every string this widget can paint. Attribution uses it together with the draw
       // position, never on its own, so repeated strings stay distinguishable.
       strings: [
@@ -355,6 +361,53 @@ function sceneRecord(scene) {
       ].filter((value) => typeof value === "string" && value !== ""),
     })),
   };
+}
+
+// The control that currently has focus, plus the state an ongoing edit must not lose.
+// `same` compares against the node remembered by markActive(): a repaint that rebuilds
+// the input would pass a value comparison and fail this one.
+function activeControl(host) {
+  const element = host.ownerDocument.activeElement;
+  if (!element || !host.contains(element))
+    return { present: false, inside: false, same: false, tag: null };
+  const style = getComputedStyle(element);
+  return {
+    present: true,
+    inside: true,
+    same: element === window.__fontParityProbe,
+    connected: element.isConnected,
+    tag: element.tagName.toLowerCase(),
+    id: element.id,
+    classes: [...element.classList],
+    type: element.type ?? null,
+    value: element.value ?? null,
+    selectionStart: (() => {
+      try {
+        return element.selectionStart ?? null;
+      } catch {
+        // Date and number inputs refuse selection access; that is data, not a failure.
+        return null;
+      }
+    })(),
+    selectionEnd: (() => {
+      try {
+        return element.selectionEnd ?? null;
+      } catch {
+        return null;
+      }
+    })(),
+    fontSize: Number.parseFloat(style.fontSize),
+    fontFamily: style.fontFamily,
+  };
+}
+
+function lookupPath(state, path) {
+  let value = state;
+  for (const part of path.split(".")) {
+    if (value == null) return null;
+    value = Array.isArray(value) ? value[Number(part)] : value[part];
+  }
+  return value === undefined ? null : value;
 }
 
 // A standalone UiRuntime with its own DOM and Canvas surface: the same host code an
@@ -437,16 +490,158 @@ export async function createFontParityHarness({
       await runtime.whenIdle();
       await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
     },
+    // --- editing -------------------------------------------------------------------
+    // Everything an editing step has to compare: the engine's own numbers, the control
+    // that has focus, and the overlay classes the sizes hang off. Only the state paths the
+    // caller names are read, so a 500-row fixture does not travel through the ledger.
+    editSnapshot(paths = []) {
+      return {
+        revision: runtime.revision,
+        errors: [...errors],
+        state: Object.fromEntries(paths.map((path) => [path, lookupPath(runtime.state, path)])),
+        active: activeControl(host),
+        // Every editor on screen, by surface, with the class that decides its size.
+        editors: ["dom", "canvas"].flatMap((surface) =>
+          [
+            ...(surface === "dom" ? domStage : canvasStage).querySelectorAll(
+              "input,select,textarea",
+            ),
+          ]
+            .filter((element) => element.closest(".ui-field, .canvas-editor"))
+            .map((element) => ({
+              surface,
+              id: element.id,
+              tag: element.tagName.toLowerCase(),
+              gridEditor: element.closest(".grid-editor") !== null,
+              value: element.value,
+              fontSize: Number.parseFloat(getComputedStyle(element).fontSize),
+            })),
+        ),
+        fields: (sceneRecord(runtime.scenes[1])?.widgets ?? [])
+          .filter((widget) => widget.labelHeight !== null)
+          .map(({ key, kind, text, gridEditor, labelHeight, dialog, value, monospace }) => ({
+            key,
+            kind,
+            text,
+            gridEditor,
+            labelHeight,
+            dialog,
+            value,
+            monospace,
+          })),
+      };
+    },
+    // Put focus where a click would: on the DOM control itself, or on the Canvas overlay the
+    // host opens when the painted field is pressed. Typing is done with real keys afterwards.
+    async focusField({ surface, target }) {
+      if (surface === "canvas") {
+        await this.clickCanvas(target);
+      } else {
+        const node = domStage.querySelector(
+          `.ui-field[data-target="${target}"] :is(input, select, textarea)`,
+        );
+        if (!node) throw new Error(`DOM側に target="${target}" の入力欄がありません`);
+        node.focus();
+        node.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+        await this.afterFrame();
+      }
+      return activeControl(host);
+    },
+    // Begin editing a Grid cell the way a user does: press the cell, then double click it.
+    // The events are dispatched in the page rather than driven by the mouse because the
+    // fixture stacks both surfaces and the lower one sits below the fold; the hit test, the
+    // listener and the resulting dispatch are all the host's own.
+    async editCell({ surface, column, index = 0 }) {
+      const scene = runtime.scenes[surface === "canvas" ? 1 : 0];
+      const cell = (scene?.widgets ?? []).filter(
+        (widget) => widget.kind === "grid-cell" && widget.payload?.column === column,
+      )[index];
+      if (!cell) throw new Error(`${surface}側に列 ${column} の grid-cell がありません`);
+      if (surface === "canvas") {
+        const rect = canvas.getBoundingClientRect();
+        const at = {
+          clientX: rect.left + ((cell.x + cell.width / 2) * rect.width) / scene.width,
+          clientY: rect.top + ((cell.y + cell.height / 2) * rect.height) / scene.height,
+        };
+        canvas.dispatchEvent(
+          new PointerEvent("pointerdown", { bubbles: true, cancelable: true, pointerId: 1, ...at }),
+        );
+        await this.afterFrame();
+        canvas.dispatchEvent(
+          new MouseEvent("dblclick", { bubbles: true, cancelable: true, ...at }),
+        );
+      } else {
+        const node = domStage.querySelector(`[data-key="${CSS.escape(cell.key)}"]`);
+        if (!node) throw new Error(`DOM側に key ${cell.key} の節点がありません`);
+        node.focus();
+        node.click();
+        await this.afterFrame();
+        node.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
+      }
+      await this.afterFrame();
+      return activeControl(host);
+    },
+    markActive() {
+      window.__fontParityProbe = host.ownerDocument.activeElement;
+      return activeControl(host);
+    },
+    activeControl() {
+      return activeControl(host);
+    },
+    // A synthetic composition: the real events in the real order, with the value set the
+    // way an IME sets it. This is NOT a real IME run — see the ledger's limits table.
+    startComposition(text) {
+      const input = host.ownerDocument.activeElement;
+      if (!input || !host.contains(input)) throw new Error("変換を始める入力欄に焦点がありません");
+      input.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, data: "" }));
+      input.value = text;
+      input.setSelectionRange(text.length, text.length);
+      input.dispatchEvent(
+        new InputEvent("input", { bubbles: true, isComposing: true, data: text }),
+      );
+      return activeControl(host);
+    },
+    endComposition() {
+      const input = host.ownerDocument.activeElement;
+      if (!input || !host.contains(input)) throw new Error("変換を終える入力欄に焦点がありません");
+      input.dispatchEvent(
+        new CompositionEvent("compositionend", { bubbles: true, data: input.value }),
+      );
+      return activeControl(host);
+    },
+    async applyThemeUrl(url) {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`テーマ ${url} を取得できません (${response.status})`);
+      runtime.theme(await response.json());
+      await this.afterFrame();
+      return activeControl(host);
+    },
+    async resizeHostTo(width) {
+      host.style.width = width;
+      await this.afterFrame();
+      return activeControl(host);
+    },
+    async rerender() {
+      runtime.render();
+      await this.afterFrame();
+      return activeControl(host);
+    },
     // Page coordinates for the centre of a Scene widget. Dragging needs pointer capture,
     // which only real browser input grants, so the caller drives the mouse from outside
     // the page and asks here where to put it.
-    widgetPoint({ surface, kind, index = 0 }) {
+    // `column` picks one Grid cell out of a row: the sizes differ per column editor, so a
+    // step has to be able to say which cell it means instead of taking the first one.
+    widgetPoint({ surface, kind, column = null, index = 0 }) {
       const scene = runtime.scenes[surface === "canvas" ? 1 : 0];
-      const matches = scene?.widgets.filter((entry) => entry.kind === kind) ?? [];
+      const matches =
+        scene?.widgets.filter(
+          (entry) => entry.kind === kind && (column === null || entry.payload?.column === column),
+        ) ?? [];
       const widget = matches[index];
       if (!widget)
         throw new Error(
-          `${surface}側の ${kind} は ${matches.length} 個しかありません（index ${index} を要求）`,
+          `${surface}側の ${kind}${column ? `（列 ${column}）` : ""} は ${matches.length} 個しか` +
+            `ありません（index ${index} を要求）`,
         );
       const box = (surface === "canvas" ? canvas : domStage).getBoundingClientRect();
       return {
@@ -501,6 +696,9 @@ export async function createFontParityHarness({
       runtime.dispose();
       host.textContent = "";
       host.style.removeProperty("font-size");
+      // The composition probes resize the host; the next case must start from the default.
+      host.style.removeProperty("width");
+      window.__fontParityProbe = null;
     },
   };
 }
