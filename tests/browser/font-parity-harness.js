@@ -321,6 +321,46 @@ export function dialogIconSurfaces(stage) {
   });
 }
 
+// Every native control a stage mounts, with the box it is sitting in. The DOM stage lays
+// its controls out inside the field widget; the Canvas stage positions the editing overlay
+// by hand from the Scene box. A width, a ratio or a zoom change that moves one of them off
+// its widget shows up here as a number instead of only in a screenshot.
+export function controlBoxes(stage, label) {
+  const origin = stage.getBoundingClientRect();
+  return [...stage.querySelectorAll("input, select, textarea")]
+    .filter(
+      (element) => element.closest(".ui-field") || element.classList.contains("canvas-editor"),
+    )
+    .map((element) => {
+      const style = getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      const widget = widgetOf(element);
+      return {
+        surface: label,
+        // The Canvas overlay has no widget ancestor, so it carries no key: the caller knows
+        // which field it opened and matches it against that widget.
+        overlay: element.classList.contains("canvas-editor"),
+        gridEditor:
+          element.closest(".grid-editor") !== null || element.classList.contains("grid-editor"),
+        key: widget.key,
+        target: widget.target,
+        tag: element.tagName.toLowerCase(),
+        type: element.type ?? null,
+        fontSize: Number.parseFloat(style.fontSize),
+        visible: style.display !== "none" && style.visibility !== "hidden" && rect.width > 0,
+        x: rect.x - origin.x,
+        y: rect.y - origin.y,
+        width: rect.width,
+        height: rect.height,
+        // What the renderer wrote, kept apart from what the layout produced.
+        styleLeft: Number.parseFloat(element.style.left),
+        styleTop: Number.parseFloat(element.style.top),
+        styleWidth: Number.parseFloat(element.style.width),
+        styleHeight: Number.parseFloat(element.style.height),
+      };
+    });
+}
+
 // Advance widths measured with the font the Canvas renderer resolves for this stage, so a
 // font that finished loading shows up as a different number instead of only a different
 // name. The probe strings identify the face rather than its size: a monospaced font gives
@@ -920,6 +960,17 @@ export async function createFontParityHarness({
         pixelRatio: window.devicePixelRatio,
         disposed: runtime.disposed,
         errors: [...errors],
+      };
+    },
+    // The lifecycle probe plus the native control boxes and the DOM Scene: the width /
+    // ratio / zoom / theme matrix has to show that no condition moves a declared size and
+    // that no input leaves the widget box the engine laid out for it.
+    matrix(probe) {
+      return {
+        ...this.lifecycle(probe),
+        domScene: sceneRecord(runtime.scenes[0]),
+        controls: [...controlBoxes(domStage, "dom"), ...controlBoxes(canvasStage, "canvas")],
+        hostFrame: hostFrame(host),
       };
     },
     // Page coordinates for the centre of a Scene widget. Dragging needs pointer capture,

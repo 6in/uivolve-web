@@ -170,11 +170,32 @@ bun run docs:check
     **使用不可のカレンダー日の濃さ**（DOM は `:disabled` に `opacity: 0.5`、Canvas は薄くしない）で、
     色・不透明度の差でありサイズは両面とも一致するため、既存の表現差として台帳に記録した。
 
-- [ ] T8: 幅・拡大・配色の行列を実行し代表画像を目視する
+- [x] T8: 幅・拡大・配色の行列を実行し代表画像を目視する
   - 完了基準: Hello World、uivolve-forms、orders/grid-lab、components、uivolve-galleryについて、比較デモ/独立runtime × desktop/約390px × DPR1/2 × light/darkで全可視roleのCSS pxと入力位置を検証。viewportを狭めるだけでなく100/200%相当の拡大を別条件として実施し、方法とCSS座標換算を記録する。可能なら実ブラウザ100→200→100%も実施し、DPRエミュレーションやCSS拡大と別記録にする。focus/編集中にtheme/resize/拡大を変え、状態同期とnode/selectionを確認。修正前後の代表画像を同じ字体ロード後に撮影し、目視でサイズ差解消と長文/22px metric/30px icon/狭いセルの新たな欠け・重なりなしを記録する。自動数値結果、画像パス、目視結果、実IME/実ズームの限界を台帳に分けて残す。matrix suite成功。
   - 対象: `tests/browser/font-parity.mjs`、`tests/browser/font-parity-harness.js`、`scripts/test-font-parity-browser.mjs`、`docs/renderer-font-parity.md`。画像・JSONは `.gsd-lite/logs/renderer-font-size-parity/`。
   - 依存: T7
   - 並列サブ作業: なし（同じsuiteと目視記録を更新する）。
+  - **PLAN 訂正（turn 11 / T8 実測）**: 画面の一覧を **7 画面**にした。「orders/grid-lab」は
+    orders と grid-lab の 2 画面として読み、さらに **dialogs を足した**。完了基準が求める
+    「30px icon の新たな欠け・重なりなし」の 30px 文字アイコンと長いダイアログ本文は
+    **ダイアログを開いている間しか出ない**ため、5 画面だけでは目視の対象が画面に現れない。
+  - **PLAN 訂正（turn 11 / T8 実測）**: 完了基準の「全可視 role の CSS px と入力位置を検証」の
+    うち、**入力位置の照合は独立 runtime の 2 面だけ**で行う。比較デモは Scene を公開しないため
+    入力欄を突き合わせる矩形が無い。デモ面では代わりに「描いた宣言サイズの集合・字体・描画時の
+    倍率が独立 runtime と一致すること」を照合した（6 画面すべてで集合は一致）。
+  - **PLAN 訂正（turn 11 / T8 実測）**: 拡大は **CSS viewport ÷ Z と devicePixelRatio × Z の
+    同値変換**（1 回の metrics override）で実施した。実ブラウザのズーム操作は headless Chromium
+    では実行できず（CDP にページズームの命令が無く `setPageScaleFactor` は再レイアウトしない）、
+    CSS の `zoom` は埋め込み側の指定で利用者のズームとは別物なので使わない。3 者は台帳で別記録。
+  - **PLAN 訂正（turn 11 / T8 実測）**: 修正前の代表画像は **378af26（T1 完了時点）の git
+    worktree を立てて撮影**した。現在の harness は `src/font-metrics.js` を import するので
+    修正前の木では動かず、計測は selector ごとの computed font-size と Canvas の font 文字列に
+    絞っている。engine と `public/` はこのマイルストーンで不変なので、生成済みの `engine.wasm`
+    と配信 manifest を複製した。
+  - **PLAN 訂正（turn 11 / T8 実測）**: 観測コードの `attribute()` に**装飾文字の表**を足した
+    （既存 suite と共通）。combobox の `▾` はどの widget の文字列にも無いため、720 CSS px の
+    条件で隣のボタンへ吸われ「button が 13px」として落ちた。文字列で対応付くときは従来どおり
+    （ツリーの開閉印は自分で `▾` を持つ）。
 
 - [ ] T9: 独立配布と最終検査を通し検証手順を文書化する
   - 完了基準: build:runtime/build:minimalの生成物を実ブラウザへ読み込み、ホスト16/20pxのDOM/Canvas、Hello World編集、日本語、dark切替とサイズ一致を確認する。全suiteは未実装skipなし、台帳の全対象roleに実測値・差・状態を持つ。`bun scripts/verify-font-parity.mjs` がクリーンなcontext/所有サーバーから非0検査を隠さず成功。README/配布/検証文書へ既存DOM基準・検証方法・限界を反映し、追従先の旧文言残存0件とdocs:checkを確認する。新依存・DSL/テーマのfont API・公開/デプロイなし。最終証跡と目視結果をまとめてverifyへ渡す。

@@ -125,6 +125,17 @@ function toCss(draw) {
   };
 }
 
+// Glyphs the renderer paints itself. They appear in no widget's strings, so position alone
+// would decide, and the matrix found the combobox arrow landing inside a neighbouring button's
+// box at 720 CSS px. Naming the kinds that paint them keeps the attribution honest without
+// inventing a string for the widget.
+const DECORATIONS = [
+  // src/canvas-renderer.js:1016 — the combobox arrow, at the field's own value size.
+  { glyph: (text) => text === "▾", kinds: ["combobox"] },
+  // src/canvas-renderer.js:923 — the checkbox tick.
+  { glyph: (text) => text === "✓", kinds: ["checkbox"] },
+];
+
 // Duplicate strings are matched by position, key and role — never by the string alone.
 //
 // Three filters, in this order. A draw can only belong to a kind that paints characters, so
@@ -156,7 +167,15 @@ function attribute(draw, widgets) {
   const named = needle
     ? inside.filter((widget) => widget.strings?.some((value) => value.includes(needle)))
     : [];
-  const candidates = named.length ? named : inside;
+  // Only when no widget declares the string: a decoration can then only have come from the kind
+  // that paints it, and a widget of that kind that does not contain the point leaves the draw
+  // unattributed rather than letting a neighbour claim it. A widget that does declare the glyph
+  // (the tree toggle carries its own "▾") keeps winning by its string.
+  const decoration = named.length ? null : DECORATIONS.find((entry) => entry.glyph(draw.text));
+  const pool = decoration
+    ? inside.filter((widget) => decoration.kinds.includes(widget.kind))
+    : inside;
+  const candidates = named.length ? named : pool;
   candidates.sort(
     (left, right) =>
       left.width * left.height - right.width * right.height || right.layer - left.layer,
@@ -3293,12 +3312,11 @@ async function serveProbeFonts(page, bytes) {
 }
 
 // Open an edit and type a draft into it, so a repaint can be checked for keeping the very
-// node, selection and uncommitted text the user is working in.
-async function openDraft(page, note, target = "nameInput") {
-  await page.evaluate(
-    (input) => window.__fontParityHarness.focusField({ surface: "canvas", target: input }),
-    target,
-  );
+// node, selection and uncommitted text the user is working in. The Canvas overlay is the
+// default because that is the control a repaint can destroy; the matrix suite also opens the
+// DOM stage's own control through the same helper.
+async function openDraft(page, note, { surface = "canvas", target = "nameInput" } = {}) {
+  await page.evaluate((input) => window.__fontParityHarness.focusField(input), { surface, target });
   await page.keyboard.press("ControlOrMeta+a");
   await page.keyboard.type(DRAFT, { delay: 10 });
   await page.evaluate(() => window.__fontParityHarness.afterFrame());
@@ -3328,7 +3346,7 @@ async function runFontArrival(page, context, { gate, evidenceDir, problems }) {
   const note = (message) => problems.push(`fonts-arrival: ${message}`);
   await openHarness(page, ARRIVAL_SCREEN);
   await declareProbeFont(page, gate);
-  const marked = await openDraft(page, note, "longAscii");
+  const marked = await openDraft(page, note, { target: "longAscii" });
   const before = await page.evaluate(
     (input) => window.__fontParityHarness.useFontFamily(input.family, input.probe),
     { family: gate.family, probe: LIFECYCLE_PROBE },
@@ -3750,6 +3768,843 @@ async function runLifecycle({ context, origin, evidenceDir, viewport, log }) {
   return { cases: cases.length, file: resolve(evidenceDir, "lifecycle.json") };
 }
 
+// --- matrix -------------------------------------------------------------------------
+// The grid of conditions a user meets, over the screens the task names plus the dialog that
+// owns the 30px character icon: both surfaces (the comparison demo and a standalone
+// UiRuntime), a desktop and a ~390px width, device pixel ratio 1 and 2, light and dark, and
+// browser zoom 100% / 200%. No new role is measured here. What this suite proves is that none
+// of those conditions moves a declared size, and that the native controls keep sitting on the
+// box the Scene laid out for them.
+
+const NARROW_VIEWPORT = { width: 390, height: 844 };
+const MATRIX_RATIOS = [1, 2];
+
+// Zoom is not "a narrower viewport": Chromium's page zoom Z divides the CSS viewport by Z and
+// multiplies devicePixelRatio by Z, so it is applied as both at once. The two methods that are
+// deliberately not used are recorded beside it, because reading an emulated zoom as a real
+// zoom is exactly what the requirement forbids.
+const MATRIX_ZOOM = {
+  method: "metrics-override",
+  how:
+    "CDP Emulation.setDeviceMetricsOverride に CSS 幅・高さ（基準 ÷ Z）と " +
+    "deviceScaleFactor（DPR × Z）を 1 回で指定する",
+  conversion:
+    "CSS px の定義は変えない。レイアウト viewport が 1/Z（1440→720 CSS px）、物理px ÷ CSS px が " +
+    "DPR×Z（1→2）。役割サイズは CSS px のまま比べ、bitmap だけが DPR×Z 倍になる",
+  realBrowserZoom: false,
+  realBrowserZoomWhy:
+    "実ブラウザのズーム操作は headless Chromium では実行できない（CDP にページズームの命令はなく、" +
+    "Emulation.setPageScaleFactor はピンチズームで再レイアウトしない）。実ズーム 100→200→100% は" +
+    "手動確認の項目として台帳に残し、ここでの結果を実ズームの確認として読み替えない",
+  cssZoom: false,
+  cssZoomWhy:
+    "CSS の zoom は埋め込み側が書いたときだけ現れるもので、利用者のズームとは別物。要件が求めるのは" +
+    "利用者のズームなので上の同値変換で実施した",
+};
+
+const MATRIX_LIMITS = {
+  zoom: MATRIX_ZOOM,
+  realIme: { used: COMPOSITION.realIme, why: COMPOSITION.realImeReason },
+  demoScene:
+    "比較デモは Scene を公開していないため、デモ面では描画の部品対応付けと入力位置の照合を行わず、" +
+    "宣言サイズの集合・字体・描画時の倍率を独立 runtime の結果と突き合わせる",
+  visual:
+    "目視結果は docs/renderer-font-parity.md に記録する（この JSON は自動数値結果と画像パスだけ）",
+};
+
+const MATRIX_SCREENS = [
+  { name: "hello-world", screen: LIFECYCLE_SCREEN, page: "hello-world" },
+  { name: "uivolve-forms", screen: FORMS_SCREEN, page: "uivolve-forms" },
+  { name: "orders", screen: "screens/orders.json", page: "orders" },
+  { name: "grid-lab", screen: "screens/grid-lab.json", page: "grid-lab" },
+  { name: "components", screen: "screens/components.json", page: "components" },
+  { name: "uivolve-gallery", screen: GALLERY_SCREEN, page: "uivolve-gallery" },
+  // The 30px character icon and the dialog message only exist while a dialog is open, and the
+  // visual check this task owns is about exactly those at 390px.
+  {
+    name: "dialog-text-icon",
+    screen: DIALOGS_SCREEN,
+    page: "dialogs",
+    steps: [
+      { selector: ICON_SELECT, value: "custom-text" },
+      { selector: '.ui-button[data-target="showConfirm"]' },
+    ],
+  },
+];
+
+// The roles these screens have to produce somewhere in the matrix. A run that measured none of
+// them would pass every size check by measuring nothing.
+const MATRIX_REQUIRED_ROLES = [
+  "button",
+  "label",
+  "panel",
+  "field-label",
+  "field-input",
+  "grid-column",
+  "grid-cell",
+  "tab",
+  "metric-caption",
+  "metric-value",
+  "window-title",
+  "dialog-message",
+];
+
+// One edit per surface, held open across a theme change, two resizes and the zoom round trip.
+const MATRIX_JOURNEYS = [
+  { name: "journey-canvas", surface: "canvas", target: "nameInput" },
+  { name: "journey-dom", surface: "dom", target: "nameInput" },
+];
+
+// Each step changes exactly one thing while the edit is open. The last two are the round trip:
+// 100% -> 200% -> 100% has to come back to the frame it started from.
+const JOURNEY_STEPS = [
+  { label: "theme-dark", theme: ROLE_THEMES[1] },
+  { label: "resize-narrow", width: "narrow" },
+  { label: "resize-desktop", width: "desktop" },
+  { label: "zoom-200", zoom: 2 },
+  { label: "zoom-100", zoom: 1 },
+];
+
+const MATRIX_PROBE = { specs: roleSpecs(), samples: [], selectors: [] };
+
+const matrixCondition = (width, size, ratio, zoom) => ({
+  name: `${width}-dpr${ratio}-zoom${zoom * 100}`,
+  width,
+  ratio,
+  zoom,
+  base: size,
+  css: { width: Math.round(size.width / zoom), height: Math.round(size.height / zoom) },
+  pixelRatio: ratio * zoom,
+});
+
+// zoom 100%: the full width x ratio grid. zoom 200%: both widths at ratio 1, because the zoom
+// already doubles the device pixel ratio — 2 x 2 would only repeat the bitmap arithmetic the
+// lifecycle suite owns.
+function matrixConditions(viewport) {
+  const widths = [
+    ["desktop", viewport],
+    ["narrow", NARROW_VIEWPORT],
+  ];
+  const conditions = [];
+  for (const zoom of [1, 2])
+    for (const ratio of zoom === 1 ? MATRIX_RATIOS : [1])
+      for (const [width, size] of widths)
+        conditions.push(matrixCondition(width, size, ratio, zoom));
+  return conditions;
+}
+
+// The CSS size and the ratio are set in one metrics override, because that is what a zoom is:
+// both at once. `page.setViewportSize` is deliberately not used — it writes its own override,
+// so the two calls raced and left the viewport one step behind the ratio.
+async function applyCondition(page, cdp, condition) {
+  const problems = [];
+  await page.evaluate(() => window.__fontParity?.reset());
+  await cdp.send("Emulation.setDeviceMetricsOverride", {
+    width: condition.css.width,
+    height: condition.css.height,
+    deviceScaleFactor: condition.pixelRatio,
+    mobile: false,
+  });
+  // The page learns its new metrics asynchronously; a measurement taken before it does would
+  // belong to the previous condition.
+  await page
+    .waitForFunction(
+      (expected) =>
+        window.devicePixelRatio === expected.ratio && window.innerWidth === expected.width,
+      { ratio: condition.pixelRatio, width: condition.css.width },
+      { timeout: 10000 },
+    )
+    .catch(() => problems.push(`条件 ${condition.name} が適用されなかった`));
+  const live = await page.evaluate(() => ({
+    ratio: window.devicePixelRatio,
+    width: window.innerWidth,
+  }));
+  if (live.ratio !== condition.pixelRatio)
+    problems.push(`devicePixelRatio が ${live.ratio}（${condition.pixelRatio} を要求）`);
+  if (live.width !== condition.css.width)
+    problems.push(`CSS viewport 幅が ${live.width}（${condition.css.width} を要求）`);
+  return problems;
+}
+
+// Screenshots go through CDP: `locator.screenshot()` restores Playwright's own metrics when it
+// is done, which silently dropped the emulated ratio for every case after the first. Shooting
+// beyond the viewport matters at 390px, where the demo stacks its two stages.
+async function shootMatrix(page, cdp, selector, path) {
+  const clip = await page.locator(selector).evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return {
+      // Page coordinates: the clip is in document space while a bounding box is relative to
+      // the viewport, and opening an overlay scrolls the page.
+      x: rect.x + window.scrollX,
+      y: rect.y + window.scrollY,
+      // The narrow conditions overflow their host — both pages floor the stage at 240 CSS px —
+      // so the image is as wide as the content, not as wide as the box.
+      width: Math.max(rect.width, element.scrollWidth),
+      height: Math.max(rect.height, element.scrollHeight),
+      scale: 1,
+    };
+  });
+  const shot = await cdp.send("Page.captureScreenshot", {
+    format: "png",
+    clip,
+    captureBeyondViewport: true,
+  });
+  await writeFile(path, Buffer.from(shot.data, "base64"));
+  return path;
+}
+
+// Every visible role sample keeps its declared size and weight, the resolver agrees with the
+// contract on both stages, and the bitmap follows the ratio. Nothing here may depend on the
+// condition except the bitmap: that is the whole claim.
+function assertMatrixCase(capture, problems) {
+  const note = (message) => problems.push(`${capture.label}: ${message}`);
+  if (capture.errors?.length) note(`runtime errors: ${capture.errors.join("; ")}`);
+  for (const [surface, resolved] of Object.entries(capture.resolved)) {
+    if (!resolved.ok) {
+      note(`${surface} resolver failed: ${resolved.error}`);
+      continue;
+    }
+    for (const [size, expected] of Object.entries(SIZE_CONTRACT))
+      if (resolved.sizes[size] !== expected)
+        note(`${surface} resolved ${size}=${resolved.sizes[size]}px, contract ${expected}px`);
+  }
+  if (capture.pixelRatio !== capture.condition.pixelRatio)
+    note(`devicePixelRatio が ${capture.pixelRatio}`);
+  const canvas = capture.environment.canvasStage.canvas;
+  if (canvas?.bitmapWidth !== Math.round((canvas?.cssWidth ?? 0) * capture.pixelRatio))
+    note(
+      `bitmap 幅が ${canvas?.bitmapWidth}（CSS ${canvas?.cssWidth} × ${capture.pixelRatio} を期待）`,
+    );
+  if (canvas?.bitmapHeight !== Math.round((canvas?.cssHeight ?? 0) * capture.pixelRatio))
+    note(`bitmap 高さが ${canvas?.bitmapHeight}`);
+  const roles = new Set();
+  let measured = 0;
+  for (const [surface, groups] of Object.entries(capture.roles))
+    for (const group of groups) {
+      const entry = ROLE_CONTRACT.find((candidate) => candidate.role === group.role);
+      for (const sample of group.samples.filter((candidate) => candidate.visible)) {
+        measured++;
+        roles.add(group.role);
+        if (sample.fontSize !== entry.px)
+          note(
+            `${surface}/${group.role} が ${sample.fontSize}px（宣言は ${entry.px}px・${sample.path}）`,
+          );
+        if (entry.weight && sample.fontWeight !== entry.weight)
+          note(
+            `${surface}/${group.role} の weight が ${sample.fontWeight}（${entry.weight}を期待）`,
+          );
+      }
+    }
+  if (!measured) note("可視の役割サンプルが 1 件も無い");
+  return { measured, roles };
+}
+
+// The input positions: every control the stage mounted has to sit inside the widget box the
+// engine laid out for it, at every width, ratio and zoom. The comparison demo exposes no
+// Scene, so there the check is skipped rather than faked (MATRIX_LIMITS.demoScene).
+// A native control carries its own UA margins — Chromium gives `input[type="range"]` a 2px
+// margin, which src/runtime.css:407-411 does not reset — so "on its widget" is the centre inside
+// the box and the edges within this much of it. A control that lost its position is off by the
+// pitch of the layout (tens of px), not by two.
+const CONTROL_SLACK = 4;
+
+function assertMatrixControls(capture, problems) {
+  if (!capture.domScene && !capture.scene) return null;
+  const note = (message) => problems.push(`${capture.label}: ${message}`);
+  let checked = 0;
+  let slack = 0;
+  for (const control of capture.controls.filter((entry) => entry.visible && !entry.overlay)) {
+    const scene = control.surface === "dom" ? capture.domScene : capture.scene;
+    const widget = scene?.widgets.find((entry) => entry.key === control.key);
+    if (!widget) {
+      note(`入力欄 ${control.key ?? control.tag} に対応する Scene の部品が無い`);
+      continue;
+    }
+    checked++;
+    const over = Math.max(
+      widget.x - control.x,
+      widget.y - control.y,
+      control.x + control.width - (widget.x + widget.width),
+      control.y + control.height - (widget.y + widget.height),
+    );
+    slack = Math.max(slack, over);
+    const centre = { x: control.x + control.width / 2, y: control.y + control.height / 2 };
+    const inside =
+      centre.x >= widget.x &&
+      centre.x <= widget.x + widget.width &&
+      centre.y >= widget.y &&
+      centre.y <= widget.y + widget.height;
+    if (!inside || over > CONTROL_SLACK)
+      note(
+        `入力欄 ${control.key} の位置 (${control.x.toFixed(1)}, ${control.y.toFixed(1)}, ` +
+          `${control.width.toFixed(1)}x${control.height.toFixed(1)}) が部品の矩形 ` +
+          `(${widget.x}, ${widget.y}, ${widget.width}x${widget.height}) から ` +
+          `${over.toFixed(1)}px はみ出している`,
+      );
+  }
+  return { checked, slack: Number(slack.toFixed(2)) };
+}
+
+// The Canvas editing overlay has no widget ancestor: the renderer positions it from the Scene
+// box, so the box it was given is compared with the widget it belongs to.
+function assertOverlayBox(capture, target, note) {
+  const overlay = capture.controls.find((control) => control.overlay);
+  if (!overlay) return null;
+  const widget = capture.scene?.widgets.find((entry) => entry.target === target);
+  if (!widget) {
+    note(`Scene に target="${target}" の部品が無い`);
+    return overlay;
+  }
+  const strip = widget.labelHeight ?? 0;
+  for (const [name, written, expected] of [
+    ["left", overlay.styleLeft, widget.x],
+    ["top", overlay.styleTop, widget.y + strip],
+    ["width", overlay.styleWidth, widget.width],
+    ["height", overlay.styleHeight, widget.height - strip],
+  ])
+    if (Math.abs(written - expected) > 0.01)
+      note(`オーバーレイの ${name} が ${written}（部品は ${expected}）`);
+  if (Math.abs(overlay.x - widget.x) > 1 || Math.abs(overlay.y - (widget.y + strip)) > 1)
+    note(
+      `オーバーレイの実測位置が (${overlay.x.toFixed(1)}, ${overlay.y.toFixed(1)})` +
+        `（指定は (${widget.x}, ${widget.y + strip})）`,
+    );
+  return overlay;
+}
+
+// Text that reaches past its own widget box without being truncated: the pointers the visual
+// check follows. Recorded as data, not asserted — a narrower viewport legitimately truncates
+// more, and which of those is acceptable is what the eyes in the ledger decide.
+function matrixOverflow(records, scene) {
+  const widgets = new Map((scene?.widgets ?? []).map((widget) => [widget.key, widget]));
+  const rows = [];
+  for (const record of records) {
+    const widget = widgets.get(record.key);
+    if (!widget || record.text === "" || record.text.endsWith("…")) continue;
+    const over = record.x + record.effectiveWidth - (widget.x + widget.width);
+    if (over > 1)
+      rows.push({
+        kind: record.kind,
+        text: record.text.slice(0, 24),
+        fontSize: record.declaredFontSize,
+        over: Number(over.toFixed(2)),
+      });
+  }
+  return rows;
+}
+
+const declaredSizes = (records) =>
+  [...new Set(records.map((record) => record.declaredFontSize))].sort((a, b) => a - b);
+
+const frameShape = (capture) =>
+  (capture.canvasSurface?.draws ?? []).map((draw) => ({
+    text: draw.text,
+    font: draw.font,
+    a: draw.transform.a,
+    d: draw.transform.d,
+    bitmap: draw.bitmapWidth,
+  }));
+
+// One image per screen, width and theme at 100% / ratio 1 — the set the pre-fix captures are
+// paired with — plus Hello World's zoomed and ratio-2 desktop frames, where a second condition
+// is what makes the before/after comparison readable.
+const matrixShoots = (screen, condition) =>
+  (condition.zoom === 1 && condition.ratio === 1) ||
+  (screen.name === "hello-world" && condition.width === "desktop");
+
+const matrixImage = (evidenceDir, surface, screen, condition, mode) =>
+  resolve(evidenceDir, `matrix-${surface}-${screen.name}-${condition.name}-${mode}.png`);
+
+async function openMatrixHarness(page, screen, theme) {
+  await page.evaluate(
+    async (input) => {
+      const module = await import("/tests/browser/font-parity-harness.js");
+      const harness = await module.createFontParityHarness({
+        screen: input.screen,
+        hostFontSize: input.hostFontSize,
+        themeUrl: input.themeUrl,
+      });
+      window.__fontParityHarness = harness;
+      try {
+        await harness.settle();
+        for (const step of input.steps)
+          if (step.value !== undefined) await harness.selectDom(step.selector, step.value);
+          else await harness.clickDom(step.selector);
+      } catch (error) {
+        document.getElementById("font-parity-error").textContent = error.stack ?? String(error);
+        throw error;
+      }
+    },
+    {
+      screen: screen.screen,
+      hostFontSize: ROLE_HOST_SIZES[0],
+      themeUrl: theme.url,
+      steps: screen.steps ?? [],
+    },
+  );
+}
+
+const observeMatrix = (page) =>
+  page.evaluate((probe) => window.__fontParityHarness.matrix(probe), MATRIX_PROBE);
+
+// One row per case: counts, the sizes that were painted and the overflow pointers. The raw
+// per-draw dump stays in the browser — 168 full captures would bury the answer the ledger has
+// to give.
+function matrixRow({ surface, screen, condition, mode, capture, canvas, image, problems }) {
+  const before = problems.length;
+  const sizes = assertMatrixCase(capture, problems);
+  const boxes = assertMatrixControls(capture, problems);
+  return {
+    surface,
+    screen: screen.name,
+    condition: condition.name,
+    width: condition.width,
+    zoom: condition.zoom,
+    ratio: condition.ratio,
+    theme: mode,
+    cssViewport: capture.environment.domStage.viewport,
+    pixelRatio: capture.pixelRatio,
+    hostFontSize: capture.hostFrame?.hostFontSize ?? null,
+    bitmap: capture.environment.canvasStage.canvas,
+    domSamples: sizes.measured,
+    roles: [...sizes.roles].sort(),
+    controls: boxes?.checked ?? null,
+    controlSlack: boxes?.slack ?? null,
+    ...canvas,
+    image,
+    problems: problems.length - before,
+  };
+}
+
+async function runMatrixJourney(page, cdp, { journey, viewport, evidenceDir, problems }) {
+  const note = (message) => problems.push(`${journey.name}: ${message}`);
+  const sizeOf = (width) => (width === "desktop" ? viewport : NARROW_VIEWPORT);
+  let current = matrixCondition("desktop", viewport, 1, 1);
+  let armed = current.pixelRatio;
+  let mode = ROLE_THEMES[0].mode;
+  for (const message of await applyCondition(page, cdp, current)) note(`start: ${message}`);
+  await openMatrixHarness(page, { screen: LIFECYCLE_SCREEN }, ROLE_THEMES[0]);
+  const marked = await openDraft(page, note, { surface: journey.surface, target: journey.target });
+  const steps = [];
+  const frames = new Map();
+  const record = async (label) => {
+    const observed = await observeMatrix(page);
+    const capture = {
+      ...observed,
+      label: `${journey.name}/${label}`,
+      fixture: `${journey.name}/${label}`,
+      mode,
+      hostFontSize: ROLE_HOST_SIZES[0],
+      condition: current,
+    };
+    assertMatrixCase(capture, problems);
+    assertCanvasRoles(capture, problems);
+    assertMatrixControls(capture, problems);
+    assertDraftHeld(`${journey.name}/${label}`, marked, observed, note);
+    if (journey.surface === "canvas" && !assertOverlayBox(capture, journey.target, note))
+      note(`${label}: Canvas の編集オーバーレイが無くなっている`);
+    frames.set(label, frameShape(observed));
+    const image = resolve(evidenceDir, `matrix-${journey.name}-${label}.png`);
+    await shootMatrix(page, cdp, "#font-parity-host", image);
+    steps.push({
+      label,
+      condition: current.name,
+      theme: mode,
+      pixelRatio: observed.pixelRatio,
+      viewport: observed.environment.domStage.viewport,
+      bitmap: observed.environment.canvasStage.canvas,
+      active: {
+        same: observed.active.same,
+        value: observed.active.value,
+        selectionStart: observed.active.selectionStart,
+        selectionEnd: observed.active.selectionEnd,
+        fontSize: observed.active.fontSize,
+        classes: observed.active.classes,
+      },
+      overlay: observed.controls.find((control) => control.overlay) ?? null,
+      image,
+    });
+    return observed;
+  };
+  await record("start");
+  for (const step of JOURNEY_STEPS) {
+    if (step.theme) {
+      await page.evaluate((url) => window.__fontParityHarness.applyThemeUrl(url), step.theme.url);
+      mode = step.theme.mode;
+    } else {
+      const width = step.width ?? current.width;
+      const next = matrixCondition(width, sizeOf(width), 1, step.zoom ?? current.zoom);
+      for (const message of await applyCondition(page, cdp, next))
+        note(`${step.label}: ${message}`);
+      current = next;
+      if (next.pixelRatio !== armed) {
+        const fired = await page.evaluate(
+          (media) => window.__fontParityMedia.fire(media),
+          `(resolution: ${armed}dppx)`,
+        );
+        if (fired.matches)
+          note(
+            `${step.label}: (resolution: ${armed}dppx) がまだ一致している（倍率が変わっていない）`,
+          );
+        await ratioFrame(page, next.pixelRatio).catch((error) =>
+          note(`${step.label}: 倍率 ${next.pixelRatio} で再描画されなかった: ${error.message}`),
+        );
+        armed = next.pixelRatio;
+      } else {
+        await page.evaluate(() => window.__fontParityHarness.afterFrame());
+      }
+    }
+    await record(step.label);
+  }
+  if (JSON.stringify(frames.get("zoom-100")) !== JSON.stringify(frames.get("resize-desktop")))
+    note("ズームを戻したフレームが拡大前のフレームと一致しない（倍率が累積している）");
+  await page.evaluate(() => window.__fontParityHarness?.dispose());
+  return { journey: journey.name, surface: journey.surface, draft: DRAFT, steps };
+}
+
+async function runMatrixStandalone({
+  context,
+  origin,
+  evidenceDir,
+  viewport,
+  conditions,
+  problems,
+}) {
+  const { page, pageErrors } = await instrument(
+    context,
+    `${origin}/tests/browser/font-parity.html`,
+    viewport,
+    [mediaRecorder],
+  );
+  const cdp = await context.newCDPSession(page);
+  const rows = [];
+  const images = [];
+  const journeys = [];
+  try {
+    for (const condition of conditions) {
+      for (const message of await applyCondition(page, cdp, condition))
+        problems.push(`standalone/${condition.name}: ${message}`);
+      for (const screen of MATRIX_SCREENS) {
+        await openMatrixHarness(page, screen, ROLE_THEMES[0]);
+        for (const theme of ROLE_THEMES) {
+          if (theme !== ROLE_THEMES[0])
+            await page.evaluate((url) => window.__fontParityHarness.applyThemeUrl(url), theme.url);
+          const observed = await observeMatrix(page);
+          const capture = {
+            ...observed,
+            label: `standalone/${screen.name}/${condition.name}/${theme.mode}`,
+            fixture: `${screen.name}/${condition.name}`,
+            mode: theme.mode,
+            hostFontSize: ROLE_HOST_SIZES[0],
+            condition,
+          };
+          if (capture.environment.domStage.themeMode !== theme.mode)
+            problems.push(`${capture.label}: テーマが ${capture.environment.domStage.themeMode}`);
+          const canvas = assertCanvasRoles(capture, problems);
+          let image = null;
+          if (matrixShoots(screen, condition)) {
+            image = matrixImage(evidenceDir, "standalone", screen, condition, theme.mode);
+            await shootMatrix(page, cdp, "#font-parity-host", image);
+            images.push(image);
+          }
+          rows.push(
+            matrixRow({
+              surface: "standalone",
+              screen,
+              condition,
+              mode: theme.mode,
+              capture,
+              canvas: {
+                canvasDraws: canvas.asserted.length,
+                canvasKinds: [...new Set(canvas.asserted.map((record) => record.kind))].sort(),
+                declaredSizes: declaredSizes([...canvas.asserted, ...canvas.deferred]),
+                truncated: canvas.asserted.filter((record) => record.text.endsWith("…")).length,
+                overflow: matrixOverflow(canvas.asserted, capture.scene),
+              },
+              image,
+              problems,
+            }),
+          );
+        }
+        await page.evaluate(() => window.__fontParityHarness?.dispose());
+      }
+    }
+    for (const journey of MATRIX_JOURNEYS)
+      journeys.push(
+        await runMatrixJourney(page, cdp, { journey, viewport, evidenceDir, problems }),
+      );
+  } finally {
+    // Hand the page back the way it was found, then close what this suite owns.
+    await cdp.send("Emulation.clearDeviceMetricsOverride").catch(() => {});
+    await cdp.detach().catch(() => {});
+    await page.close();
+  }
+  return { rows, images, journeys, pageErrors };
+}
+
+// A frame the demo painted after its fonts settled. The host subscribes to the font set (T6),
+// so this waits for that repaint instead of forcing one.
+const demoFrame = (page) =>
+  page.waitForFunction(
+    () => {
+      const entry = window.__fontParity.snapshot().find((bucket) => bucket.label === "canvas");
+      return (
+        (entry?.draws.length ?? 0) > 0 && entry.draws.every((draw) => draw.fontsStatus === "loaded")
+      );
+    },
+    undefined,
+    { timeout: 20000 },
+  );
+
+async function openMatrixDemo(page, origin, screen) {
+  await page.goto(`${origin}/pages/${screen.page}`, { waitUntil: "domcontentloaded" });
+  await page.locator("#dom-stage .ui-widget").first().waitFor({ state: "visible" });
+  await page.evaluate(() => document.fonts.ready);
+  await demoFrame(page);
+  for (const step of screen.steps ?? []) {
+    await page.evaluate(() => window.__fontParity.reset());
+    if (step.value !== undefined)
+      await page.selectOption(`#dom-stage ${step.selector}`, step.value);
+    else await page.click(`#dom-stage ${step.selector}`);
+    await demoFrame(page);
+  }
+}
+
+// The demo's own theme control, used the way a user does.
+async function setDemoTheme(page, mode) {
+  if ((await page.getAttribute("#dom-stage", "data-theme-mode")) === mode) return;
+  await page.evaluate(() => window.__fontParity.reset());
+  await page.selectOption("#theme-select", mode);
+  await page.waitForFunction(
+    (expected) => document.getElementById("dom-stage").dataset.themeMode === expected,
+    mode,
+    { timeout: 20000 },
+  );
+  await demoFrame(page);
+}
+
+const observeDemo = (page) =>
+  page.evaluate(async (probe) => {
+    const module = await import("/tests/browser/font-parity-harness.js");
+    const stage = document.getElementById("dom-stage");
+    const canvasStage = document.getElementById("canvas-stage");
+    const canvas = document.getElementById("canvas");
+    return {
+      roles: {
+        dom: module.measureRoles(stage, probe.specs),
+        canvasStage: module.measureRoles(canvasStage, probe.specs),
+      },
+      controls: [
+        ...module.controlBoxes(stage, "dom"),
+        ...module.controlBoxes(canvasStage, "canvas"),
+      ],
+      resolved: { dom: module.resolvedMetrics(stage), canvas: module.resolvedMetrics(canvasStage) },
+      environment: {
+        domStage: module.environment(stage, null),
+        canvasStage: module.environment(canvasStage, canvas),
+      },
+      hostFrame: module.hostFrame(stage.parentElement),
+      canvasSurface: window.__fontParity.forCanvas(canvas),
+      pixelRatio: window.devicePixelRatio,
+      scene: null,
+      domScene: null,
+      errors: [],
+    };
+  }, MATRIX_PROBE);
+
+// The demo page exposes no Scene, so a draw cannot be attributed to a widget there. What the
+// demo has to show is that the sizes it paints are the sizes the standalone runtime paints for
+// the same screen: the fix lives in the runtime, not in either host page.
+function assertDemoCanvas(capture, allowed, problems) {
+  const note = (message) => problems.push(`${capture.label}: canvas ${message}`);
+  const draws = capture.canvasSurface?.draws ?? [];
+  if (!draws.length) note("描画が記録されなかった");
+  const family = capture.resolved.canvas.ok ? capture.resolved.canvas.family : null;
+  const sizes = new Set();
+  for (const draw of draws) {
+    const size = fontSizeOf(draw.font);
+    if (size === null) {
+      note(`解釈できない font "${draw.font}"`);
+      continue;
+    }
+    sizes.add(size);
+    if (draw.devicePixelRatio !== capture.pixelRatio)
+      note(`描画時の倍率が ${draw.devicePixelRatio}（${capture.pixelRatio} を期待）`);
+    if (family && !draw.font.endsWith(family) && !draw.font.endsWith("monospace"))
+      note(`font "${draw.font}" がステージの字体 "${family}" ではない`);
+  }
+  for (const size of sizes)
+    if (!allowed.has(size)) note(`${size}px は独立 runtime が同じ画面で描かなかったサイズ`);
+  const painted = new Set(draws.map((draw) => draw.font));
+  for (const measurement of capture.canvasSurface?.measurements ?? [])
+    if (!painted.has(measurement.font))
+      note(`計測 font "${measurement.font}" ("${measurement.text.slice(0, 18)}") で描画していない`);
+  return { draws, sizes: [...sizes].sort((a, b) => a - b) };
+}
+
+async function runMatrixDemo({
+  context,
+  origin,
+  evidenceDir,
+  viewport,
+  conditions,
+  problems,
+  sizesByScreen,
+}) {
+  const { page, pageErrors } = await instrument(
+    context,
+    `${origin}/pages/${MATRIX_SCREENS[0].page}`,
+    viewport,
+  );
+  const cdp = await context.newCDPSession(page);
+  const rows = [];
+  const images = [];
+  try {
+    for (const condition of conditions) {
+      for (const message of await applyCondition(page, cdp, condition))
+        problems.push(`demo/${condition.name}: ${message}`);
+      for (const screen of MATRIX_SCREENS) {
+        await openMatrixDemo(page, origin, screen);
+        for (const theme of ROLE_THEMES) {
+          await setDemoTheme(page, theme.mode);
+          const observed = await observeDemo(page);
+          const capture = {
+            ...observed,
+            label: `demo/${screen.name}/${condition.name}/${theme.mode}`,
+            mode: theme.mode,
+            condition,
+          };
+          const canvas = assertDemoCanvas(capture, sizesByScreen.get(screen.name), problems);
+          let image = null;
+          if (matrixShoots(screen, condition)) {
+            image = matrixImage(evidenceDir, "demo", screen, condition, theme.mode);
+            await shootMatrix(page, cdp, ".comparison", image);
+            images.push(image);
+          }
+          rows.push(
+            matrixRow({
+              surface: "demo",
+              screen,
+              condition,
+              mode: theme.mode,
+              capture,
+              canvas: {
+                canvasDraws: canvas.draws.length,
+                canvasKinds: null,
+                declaredSizes: canvas.sizes,
+                truncated: canvas.draws.filter((draw) => draw.text.endsWith("…")).length,
+                overflow: null,
+              },
+              image,
+              problems,
+            }),
+          );
+        }
+      }
+    }
+  } finally {
+    // Hand the page back the way it was found, then close what this suite owns.
+    await cdp.send("Emulation.clearDeviceMetricsOverride").catch(() => {});
+    await cdp.detach().catch(() => {});
+    await page.close();
+  }
+  return { rows, images, pageErrors };
+}
+
+async function runMatrix({ context, origin, evidenceDir, viewport, log }) {
+  const conditions = matrixConditions(viewport);
+  const file = resolve(evidenceDir, "matrix.json");
+  const problems = [];
+  const rows = [];
+  const images = [];
+  const journeys = [];
+  const pageErrors = [];
+  try {
+    const standalone = await runMatrixStandalone({
+      context,
+      origin,
+      evidenceDir,
+      viewport,
+      conditions,
+      problems,
+    });
+    rows.push(...standalone.rows);
+    images.push(...standalone.images);
+    journeys.push(...standalone.journeys);
+    pageErrors.push(...standalone.pageErrors);
+    // The sizes the runtime paints per screen, which the demo page then has to match.
+    const sizesByScreen = new Map();
+    for (const row of standalone.rows) {
+      const set = sizesByScreen.get(row.screen) ?? new Set();
+      for (const size of row.declaredSizes) set.add(size);
+      sizesByScreen.set(row.screen, set);
+    }
+    const demo = await runMatrixDemo({
+      context,
+      origin,
+      evidenceDir,
+      viewport,
+      conditions,
+      problems,
+      sizesByScreen,
+    });
+    rows.push(...demo.rows);
+    images.push(...demo.images);
+    pageErrors.push(...demo.pageErrors);
+    // Reported, never asserted: a size the demo did not paint is a narrower stage, not a
+    // parity defect.
+    for (const [screen, set] of sizesByScreen) {
+      const painted = new Set(
+        rows
+          .filter((row) => row.surface === "demo" && row.screen === screen)
+          .flatMap((r) => r.declaredSizes),
+      );
+      const missing = [...set].filter((size) => !painted.has(size));
+      if (missing.length)
+        log(`demo/${screen}: 独立 runtime だけが描いたサイズ ${missing.join("/")}`);
+    }
+  } finally {
+    await writeFile(
+      file,
+      `${JSON.stringify(
+        { limits: MATRIX_LIMITS, conditions, cases: rows, journeys, images, pageErrors },
+        null,
+        2,
+      )}\n`,
+    );
+    log(`Matrix ledger: ${file}`);
+  }
+  if (pageErrors.length) problems.push(`page errors: ${pageErrors.join("; ")}`);
+  const expected = MATRIX_SCREENS.length * conditions.length * ROLE_THEMES.length * 2;
+  if (rows.length !== expected) problems.push(`ケース数が ${rows.length}（${expected} を期待）`);
+  const roleUnion = new Set(rows.flatMap((row) => row.roles));
+  for (const role of MATRIX_REQUIRED_ROLES)
+    if (!roleUnion.has(role)) problems.push(`役割 ${role} をどの条件でも実測していない`);
+  const widths = new Set(rows.map((row) => row.cssViewport.width));
+  if (widths.size < 4)
+    problems.push(`CSS viewport 幅が ${[...widths].join("/")} の ${widths.size} 種類しかない`);
+  const bitmaps = new Set(rows.map((row) => row.bitmap?.bitmapWidth));
+  if (bitmaps.size < 4) problems.push(`bitmap 幅が ${bitmaps.size} 種類しかない`);
+  for (const theme of ROLE_THEMES)
+    if (!rows.some((row) => row.theme === theme.mode))
+      problems.push(`テーマ ${theme.mode} のケースが無い`);
+  if (journeys.length !== MATRIX_JOURNEYS.length)
+    problems.push(`編集中の条件変更が ${journeys.length} 本（${MATRIX_JOURNEYS.length} 本を期待）`);
+  if (!images.length) problems.push("代表画像を 1 枚も撮っていない");
+  log(
+    `${rows.length} cases (${MATRIX_SCREENS.length} screens × ${conditions.length} conditions × ` +
+      `${ROLE_THEMES.length} themes × 2 surfaces), ` +
+      `${rows.reduce((total, row) => total + row.domSamples, 0)} DOM role samples, ` +
+      `${rows.reduce((total, row) => total + row.canvasDraws, 0)} Canvas draws, ` +
+      `${roleUnion.size} roles, viewports ${[...widths].sort((a, b) => a - b).join("/")}, ` +
+      `bitmap widths ${bitmaps.size}, ${journeys.length} edit journeys, ${images.length} images, ` +
+      `zoom ${MATRIX_ZOOM.method} (real browser zoom: ${MATRIX_ZOOM.realBrowserZoom})`,
+  );
+  if (problems.length)
+    throw new Error(`matrix: ${problems.length} problems\n- ${problems.join("\n- ")}`);
+  return { cases: rows.length, images: images.length, journeys: journeys.length, file };
+}
+
 // Every suite named by the plan is registered. Suites a later task owns have no runner
 // and must fail loudly: an unimplemented check is never reported as a pass.
 export const SUITES = [
@@ -3761,7 +4616,8 @@ export const SUITES = [
   { name: "editing", owner: "T4", run: runEditing },
   { name: "surfaces", owner: "T5", run: runSurfaces },
   { name: "lifecycle", owner: "T6", run: runLifecycle },
-  { name: "matrix", owner: "T8", run: null },
+  // T8 holds the same roles over the width / zoom / ratio / theme grid, on both surfaces.
+  { name: "matrix", owner: "T8", run: runMatrix },
   { name: "distribution", owner: "T9", run: null },
 ];
 
