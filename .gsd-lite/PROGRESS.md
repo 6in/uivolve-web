@@ -346,3 +346,10 @@
   F2〜F4 のたびに古くなり F5・F6 の 2 ラウンドを文書だけで消費した（F6 で「証跡を指す」方針に変えた）、
   (b) verify round 1 の格子を一括で立てたことで round 2 以降は回帰確認だけで済んだ、(c) 無人ターンの
   gate 所要の記録が 70 秒〜20 分で食い違い続けた。`github` リモートへの push は人間の判断。
+
+## turn 22 — reflect — renderer-font-size-parity
+
+- やったこと: 振り返りを .gsd-lite/reflect/20261007-0457-renderer-font-size-parity.md に作成（提案 11 件）。turns.jsonl の 22 試行（8.1 時間・Claude 分 337.37 USD）をフェーズ別・ターン別に集計し、PROGRESS turn 1〜21・PLAN の verify round 記録・VERIFICATION・BLOCKED 履歴・前回 2 件の振り返りと突き合わせた。state を done にする。
+- 想定外: lean-ctx のフックが `cat .gsd-lite/state.json` を「project root 外」で拒否した（root が別プロジェクトを指す。turn 13 以降の記録と同じ現象で、提案に入れた）。turn 18 が「無い」とした `jq` は本ターンで使えた。
+- やり直し: 0 回（ツール指定修正 1 回。拒否された `cat` を Read ツールへ）。
+- 次への注意: 提案の要点は、ブラウザ必須なら sandbox 内の実起動プローブを開始条件にする／変異表と main との比較を impl の完了基準に前倒しする／台帳は生の実測値を写さず証跡 JSON を指す／並列サブ作業と gate を 600 秒上限の同じターンで重ねない／lean-ctx フックの root を直す。
