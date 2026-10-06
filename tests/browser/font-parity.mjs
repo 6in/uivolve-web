@@ -70,6 +70,14 @@ function canvasRecorder() {
     return originalClearRect.apply(this, arguments);
   };
   window.__fontParity = {
+    // Buckets are keyed by the canvas element, so a page that builds a second surface with
+    // the same id can still ask for exactly the one it owns instead of the first match.
+    forCanvas(canvas) {
+      const entry = surfaces.get(canvas);
+      return entry
+        ? { label: entry.label, draws: entry.draws, measurements: entry.measurements }
+        : null;
+    },
     reset() {
       for (const entry of surfaces.values()) {
         entry.draws = [];
@@ -115,15 +123,29 @@ function toCss(draw) {
 }
 
 // Duplicate strings are matched by position, key and role — never by the string alone.
+//
+// Three filters, in this order. A draw can only belong to a kind that paints characters, so
+// a backdrop or a row background can never absorb another widget's text. A draw carrying a
+// local scale can only have come from the shared surface sprites, which live on figure and
+// document. Among what is left, a widget that can actually produce the string is preferred,
+// and position (smallest box, then latest paint) decides between equals.
 function attribute(draw, widgets) {
   const point = toCss(draw);
-  const candidates = widgets.filter(
+  const scaled = Math.abs(point.localScale - 1) > 0.001;
+  const owners = scaled ? SURFACE_KINDS : TEXT_PAINTING_KINDS;
+  const inside = widgets.filter(
     (widget) =>
+      owners.has(widget.kind) &&
       point.x >= widget.x - 1 &&
       point.x <= widget.x + widget.width + 1 &&
       point.y >= widget.y - 1 &&
       point.y <= widget.y + widget.height + 1,
   );
+  const needle = draw.text.replace(/…+$/u, "").trim();
+  const named = needle
+    ? inside.filter((widget) => widget.strings?.some((value) => value.includes(needle)))
+    : [];
+  const candidates = named.length ? named : inside;
   candidates.sort(
     (left, right) =>
       left.width * left.height - right.width * right.height || right.layer - left.layer,
@@ -462,7 +484,14 @@ const ROLE_CONTRACT = [
   { role: "window-close", selector: ".ui-window-close", size: "close" },
   { role: "metric-caption", selector: ".ui-metric span", size: "label" },
   { role: "metric-value", selector: ".ui-metric strong", size: "metric", weight: "600" },
-  { role: "field-label", selector: ".ui-field > label", size: "label", weight: "500" },
+  // `.box-control` is a <label> child too, and it carries the value size, not the caption
+  // size, so the field caption has to exclude it.
+  {
+    role: "field-label",
+    selector: ".ui-field > label:not(.box-control)",
+    size: "label",
+    weight: "500",
+  },
   { role: "field-input", selector: ".ui-field > input", size: "body" },
   { role: "label", selector: ".ui-label", size: "label" },
   { role: "canvas-editor", selector: ".canvas-editor", size: "body" },
@@ -471,6 +500,32 @@ const ROLE_CONTRACT = [
   { role: "grid-column", selector: ".ui-grid-column", size: "caption" },
   { role: "grid-cell", selector: ".ui-grid-cell", size: "caption" },
   { role: "tab", selector: ".ui-tab", size: "caption" },
+  // T3 adds the DOM counterpart of every Canvas role it connects, so each Canvas size has
+  // a measured declaration to be equal to rather than only a number in SIZE_CONTRACT.
+  { role: "field-select", selector: ".ui-field > select", size: "body" },
+  { role: "field-textarea", selector: ".ui-field > textarea", size: "body" },
+  { role: "box-control", selector: ".box-control", size: "body", weight: "400" },
+  { role: "displayfield-label", selector: ".ui-displayfield > span", size: "label", weight: "500" },
+  { role: "displayfield-value", selector: ".ui-displayfield > div", size: "body" },
+  { role: "extra-button", selector: ".ui-extra-button", size: "caption" },
+  { role: "grid-page", selector: ".ui-grid-page", size: "caption" },
+  { role: "grid-select", selector: ".ui-grid-select", size: "caption" },
+  { role: "grid-header", selector: ".ui-grid-header", size: "label", weight: "500" },
+  { role: "row", selector: ".ui-row", size: "caption" },
+  { role: "tree-shell", selector: ".ui-tree-shell", size: "caption", weight: "600" },
+  { role: "tree-node", selector: ".ui-tree-node", size: "caption" },
+  { role: "tree-toggle", selector: ".ui-tree-toggle", size: "caption" },
+  { role: "toast", selector: ".ui-toast", size: "body" },
+  { role: "dialog-message", selector: ".ui-dialog-message", size: "body" },
+  { role: "progressbar", selector: ".ui-progressbar > span", size: "caption" },
+  { role: "kanban-lane-title", selector: ".ui-kanban-lane > strong", size: "caption" },
+  { role: "kanban-lane-count", selector: ".ui-kanban-lane > span", size: "label" },
+  { role: "kanban-card-title", selector: ".ui-kanban-card > strong", size: "caption" },
+  { role: "kanban-card-detail", selector: ".ui-kanban-card > span", size: "label" },
+  // Generated content: the card id has no element, so it is measured on the pseudo-element.
+  { role: "kanban-card-id", selector: ".ui-kanban-card", pseudo: "::after", size: "meta" },
+  { role: "ghost-title", selector: ".kanban-drag-ghost > strong", size: "caption" },
+  { role: "ghost-detail", selector: ".kanban-drag-ghost > span", size: "label" },
 ].map((entry) => ({ ...entry, px: SIZE_CONTRACT[entry.size] }));
 
 for (const entry of ROLE_CONTRACT)
@@ -497,10 +552,17 @@ const ROLE_HOST_SIZES = ["16px", "20px"];
 
 // Steps are data, not functions: they cross into page.evaluate. Every overlay and popup
 // is opened with a real click so the measured node is the one the host builds.
+//
+// `cases` picks the theme x host-font-size grid. The two fixtures T2 proved run the full
+// grid, because that is what shows a component's own declaration beating the host's value.
+// The kinds T3 adds get one light/16px case each: the Canvas sizes come from the same
+// per-frame resolution those four cases already exercise, so repeating the grid for every
+// new screen would add runtime without adding a way for a wrong role name to hide.
 const ROLE_FIXTURES = [
   {
     name: "components",
     screen: "screens/components.json",
+    cases: "grid",
     steps: [
       { surface: "dom", selector: '.ui-button[data-target="openEditor"]' },
       { surface: "canvas", target: "draftName" },
@@ -509,12 +571,109 @@ const ROLE_FIXTURES = [
   {
     name: "grid-lab",
     screen: "screens/grid-lab.json",
+    cases: "grid",
     steps: [{ surface: "dom", selector: ".ui-menu-trigger" }],
+  },
+  // The tree and the memo textarea live on the second and third tab, so the tabs are
+  // switched with real clicks instead of measuring whatever the first tab happens to show.
+  {
+    name: "grid-lab-tree",
+    screen: "screens/grid-lab.json",
+    cases: "single",
+    steps: [{ surface: "dom", selector: ".ui-tab:nth-of-type(2)" }],
+  },
+  {
+    name: "grid-lab-memo",
+    screen: "screens/grid-lab.json",
+    cases: "single",
+    steps: [{ surface: "dom", selector: ".ui-tab:nth-of-type(3)" }],
+  },
+  { name: "forms", screen: "screens/uivolve-forms.json", cases: "single", steps: [] },
+  // A real WASM screen whose only job is the text shapes the measure/draw agreement has to
+  // hold for: the three alignments, empty, Japanese, long ASCII, both sides of a width
+  // boundary, and wrapped monospace lines. The application screens contain none of these
+  // together, and asserting the conditions needs them actually painted.
+  {
+    name: "text-shapes",
+    screen: "/tests/browser/font-parity-text.json",
+    cases: "single",
+    steps: [],
+  },
+  { name: "kanban", screen: "screens/kanban.yaml", cases: "single", steps: [] },
+  { name: "orders", screen: "screens/orders.json", cases: "single", steps: [] },
+  {
+    name: "gallery",
+    screen: "screens/uivolve-gallery.json",
+    cases: "single",
+    steps: [{ surface: "dom", selector: '.ui-button[data-target="showToast"]' }],
+  },
+  // Charts reach the shared surface sprites, whose sizes T5 owns: the case is here so the
+  // exemption is backed by measured draws instead of only being declared.
+  {
+    name: "gallery-chart",
+    screen: "screens/uivolve-gallery.json",
+    cases: "single",
+    steps: [{ surface: "dom", selector: ".ui-tab:nth-of-type(3)" }],
+  },
+  {
+    name: "dialogs",
+    screen: "screens/dialogs.yaml",
+    cases: "single",
+    steps: [{ surface: "dom", selector: '.ui-button[data-target="showAlert"]' }],
+  },
+  // The drag ghost only exists while a pointer is held down, and pointer capture needs
+  // real input, so these two cases drive the mouse instead of dispatching events.
+  {
+    name: "kanban-drag-dom",
+    screen: "screens/kanban.yaml",
+    cases: "single",
+    steps: [],
+    drag: { surface: "dom", from: "kanban-card", to: "kanban-lane", toIndex: 2 },
+  },
+  {
+    name: "kanban-drag-canvas",
+    screen: "screens/kanban.yaml",
+    cases: "single",
+    steps: [],
+    drag: { surface: "canvas", from: "kanban-card", to: "kanban-lane", toIndex: 2 },
   },
 ];
 
+function roleCases(fixture) {
+  if (fixture.cases === "single")
+    return [{ theme: ROLE_THEMES[0], hostFontSize: ROLE_HOST_SIZES[0] }];
+  return ROLE_THEMES.flatMap((theme) =>
+    ROLE_HOST_SIZES.map((hostFontSize) => ({ theme, hostFontSize })),
+  );
+}
+
+const roleSpecs = () =>
+  ROLE_CONTRACT.map(({ role, selector, pseudo }) => ({ role, selector, pseudo: pseudo ?? null }));
+
+// Hold a real drag open across the measurement: press at the card, move into another lane,
+// measure, then cancel with Escape so the fixture state is left as it was found.
+async function holdDrag(page, drag) {
+  const at = (kind, index) =>
+    page.evaluate((input) => window.__fontParityHarness.widgetPoint(input), {
+      surface: drag.surface,
+      kind,
+      index,
+    });
+  const from = await at(drag.from, drag.fromIndex ?? 0);
+  const to = await at(drag.to, drag.toIndex ?? 0);
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(to.x, to.y, { steps: 8 });
+  await page.evaluate(() => window.__fontParityHarness.afterFrame());
+  return async () => {
+    await page.keyboard.press("Escape");
+    await page.mouse.up();
+    await page.evaluate(() => window.__fontParityHarness.afterFrame());
+  };
+}
+
 async function captureRoles(page, { fixture, theme, hostFontSize }) {
-  const observed = await page.evaluate(
+  await page.evaluate(
     async (input) => {
       const module = await import("/tests/browser/font-parity-harness.js");
       const harness = await module.createFontParityHarness({
@@ -528,7 +687,6 @@ async function captureRoles(page, { fixture, theme, hostFontSize }) {
         for (const step of input.steps)
           if (step.surface === "dom") await harness.clickDom(step.selector);
           else await harness.clickCanvas(step.target);
-        return harness.roles(input.contract);
       } catch (error) {
         document.getElementById("font-parity-error").textContent = error.stack ?? String(error);
         throw error;
@@ -539,10 +697,223 @@ async function captureRoles(page, { fixture, theme, hostFontSize }) {
       hostFontSize,
       themeUrl: theme.url,
       steps: fixture.steps,
-      contract: ROLE_CONTRACT.map(({ role, selector }) => ({ role, selector })),
     },
   );
-  return { fixture: fixture.name, mode: theme.mode, hostFontSize, ...observed };
+  const release = fixture.drag ? await holdDrag(page, fixture.drag) : null;
+  const observed = await page.evaluate(
+    (contract) => window.__fontParityHarness.roles(contract),
+    roleSpecs(),
+  );
+  return {
+    capture: { fixture: fixture.name, mode: theme.mode, hostFontSize, ...observed },
+    release,
+  };
+}
+
+// --- Canvas side of the same roles ------------------------------------------------
+// Which sizes each Canvas kind is allowed to paint, named as roles. The pixels come from
+// SIZE_CONTRACT, which the DOM samples above are measured against as well, so a Canvas
+// size and its DOM declaration cannot drift apart without one of the two checks failing.
+const CANVAS_KIND_CONTRACT = {
+  label: ["label"],
+  empty: ["caption"],
+  displayfield: ["label", "body"],
+  metric: ["label", "metric"],
+  button: ["caption"],
+  "extra-button": ["caption"],
+  panel: ["caption"],
+  fieldset: ["caption"],
+  window: ["caption"],
+  "window-close": ["close"],
+  "panel-toggle": ["caption"],
+  "tree-shell": ["caption"],
+  "tree-node": ["caption"],
+  "tree-toggle": ["caption"],
+  tab: ["caption"],
+  "menu-trigger": ["caption"],
+  "menu-item": ["caption"],
+  "grid-column": ["caption"],
+  "grid-cell": ["caption"],
+  "grid-select": ["caption"],
+  "grid-page": ["caption"],
+  "grid-header": ["label"],
+  row: ["caption"],
+  progressbar: ["caption"],
+  toast: ["body"],
+  "dialog-message": ["body"],
+  "kanban-lane": ["caption", "label"],
+  // The drag ghost paints the card's own two roles at the pointer, so it needs no entry
+  // of its own; it is attributed to whichever card or lane it is being held over.
+  "kanban-card": ["caption", "label", "meta"],
+  // Fields paint their label and their value. T4 narrows the Grid editor to caption.
+  textfield: ["label", "body"],
+  numberfield: ["label", "body"],
+  datefield: ["label", "body"],
+  textarea: ["label", "body"],
+  combobox: ["label", "body"],
+  listbox: ["label", "body"],
+  checkbox: ["label", "body"],
+  radio: ["label", "body"],
+  slider: ["label"],
+};
+
+// Canvas text a later task owns. Recorded with the task and the reason instead of dropped,
+// so an exemption is visible in the ledger rather than implied by a missing check.
+const CANVAS_DEFERRED_KINDS = {
+  figure: "T5: figure sprites の内容矩形換算",
+  document: "T5: 文書 sprites の内容矩形換算",
+  "dialog-icon": "T5: ダイアログ絵文字の 30px と maxWidth",
+  image: "T5: media の空/エラー案内を DOM の 12px へ",
+  video: "T5: media の空/エラー案内を DOM の 12px へ",
+  iframe: "T5: media の空/エラー案内を DOM の 12px へ",
+};
+
+// Kinds these fixtures really render, and the ones they cannot reach. Both lists are
+// asserted against CANVAS_KIND_CONTRACT so a kind can never fall out of the check by
+// being forgotten in either direction.
+const REQUIRED_CANVAS_KINDS = [
+  "label",
+  "displayfield",
+  "metric",
+  "button",
+  "extra-button",
+  "panel",
+  "window",
+  "window-close",
+  "panel-toggle",
+  "tree-shell",
+  "tree-node",
+  "tab",
+  "menu-trigger",
+  "menu-item",
+  "grid-column",
+  "grid-cell",
+  "grid-header",
+  "row",
+  "toast",
+  "dialog-message",
+  "kanban-lane",
+  "kanban-card",
+  "textfield",
+  "numberfield",
+  "datefield",
+  "textarea",
+  "combobox",
+  "listbox",
+  "checkbox",
+  "radio",
+  "slider",
+  "progressbar",
+  "grid-page",
+  "grid-select",
+  "tree-toggle",
+  "empty",
+];
+const CANVAS_COVERAGE_GAPS = {
+  fieldset:
+    "uivolve-forms の fieldset は collapsible で、タイトルは panel-toggle が描く。本体の描画は" +
+    "空文字なので内容では対応付けられない。canvas-renderer では panel と同じ分岐（kind === " +
+    '"panel" || kind === "fieldset"）なので panel の実測が同じコードを通る。T7 が kind 単位で閉じる',
+};
+
+for (const kind of REQUIRED_CANVAS_KINDS)
+  if (!CANVAS_KIND_CONTRACT[kind]) throw new Error(`Required Canvas kind ${kind} has no contract`);
+for (const kind of Object.keys(CANVAS_KIND_CONTRACT))
+  if (!REQUIRED_CANVAS_KINDS.includes(kind) && !CANVAS_COVERAGE_GAPS[kind])
+    throw new Error(`Canvas kind ${kind} is neither required nor recorded as a gap`);
+
+// Used by attribute(): a draw belongs to a kind that paints characters, and a scaled draw
+// belongs to the surface that scaled it.
+const SURFACE_KINDS = new Set(["figure", "document"]);
+const TEXT_PAINTING_KINDS = new Set([
+  ...Object.keys(CANVAS_KIND_CONTRACT),
+  ...Object.keys(CANVAS_DEFERRED_KINDS),
+]);
+
+const sizeRoleOf = (px) =>
+  Object.entries(SIZE_CONTRACT).find(([, value]) => value === px)?.[0] ?? null;
+
+// Every Canvas draw of a kind this task owns: its size must be one of that kind's roles,
+// it must carry no local scaling, and it must use the family the stage resolved.
+function assertCanvasRoles(capture, problems) {
+  const where = `${capture.fixture}/${capture.mode}/host ${capture.hostFontSize}`;
+  const note = (message) => problems.push(`${where}: canvas ${message}`);
+  if (!capture.scene) {
+    note("Scene が取得できなかった");
+    return { asserted: [], deferred: [] };
+  }
+  if (!capture.canvasSurface?.draws.length) {
+    note("描画が記録されなかった");
+    return { asserted: [], deferred: [] };
+  }
+  const records = canvasRecords(capture.canvasSurface, capture.scene.widgets, capture.fixture);
+  const family = capture.resolved.canvas.ok ? capture.resolved.canvas.family : null;
+  const asserted = [];
+  const deferred = [];
+  for (const record of records) {
+    if (record.kind && CANVAS_DEFERRED_KINDS[record.kind]) {
+      deferred.push({ ...record, reason: CANVAS_DEFERRED_KINDS[record.kind] });
+      continue;
+    }
+    if (!record.kind) {
+      note(`"${record.text.slice(0, 18)}" (${record.x},${record.y}) を部品に対応付けられない`);
+      continue;
+    }
+    const allowed = CANVAS_KIND_CONTRACT[record.kind];
+    if (!allowed) {
+      note(`kind ${record.kind} に契約が無い（"${record.text.slice(0, 18)}"）`);
+      continue;
+    }
+    asserted.push({ ...record, sizeRole: sizeRoleOf(record.declaredFontSize) });
+    const role = sizeRoleOf(record.declaredFontSize);
+    if (!role || !allowed.includes(role))
+      note(
+        `${record.kind} "${record.text.slice(0, 18)}" は ${record.declaredFontSize}px` +
+          `（役割 ${role ?? "不明"}）。許可: ${allowed.map((name) => `${name}=${SIZE_CONTRACT[name]}px`).join(", ")}`,
+      );
+    // A local transform would make the painted size differ from the declared one.
+    if (Math.abs(record.localScale - 1) > 0.001)
+      note(`${record.kind} "${record.text.slice(0, 18)}" の localScale が ${record.localScale}`);
+    if (Math.abs(record.effectiveFontSize - record.declaredFontSize) > 0.01)
+      note(
+        `${record.kind} の実効 ${record.effectiveFontSize}px が宣言 ${record.declaredFontSize}px と違う`,
+      );
+    // Monospace is the one family override the contract allows (textarea code input).
+    if (family && !record.font.endsWith(family) && !record.font.endsWith("monospace"))
+      note(`${record.kind} の font "${record.font}" がステージの字体 "${family}" ではない`);
+  }
+  // measureText and fillText must agree: an ellipsis or centring decision taken at one
+  // size and painted at another is exactly the defect this milestone is about.
+  const painted = new Set(records.map((record) => record.font));
+  for (const measurement of capture.canvasSurface.measurements)
+    if (!painted.has(measurement.font))
+      note(`計測 font "${measurement.font}" ("${measurement.text.slice(0, 18)}") で描画していない`);
+  return { asserted, deferred, shapes: textShapes(records) };
+}
+
+// The text shapes the measure/draw agreement has to be shown for. Counted over the real
+// draws so the conditions are observed, not assumed: an empty run of one of them means the
+// fixtures stopped producing it and the agreement above proves less than it claims.
+const TEXT_SHAPES = {
+  "align-left": (record) => record.textAlign === "left",
+  "align-center": (record) => record.textAlign === "center",
+  "align-right": (record) => record.textAlign === "right",
+  empty: (record) => record.text === "",
+  japanese: (record) => [...record.text].some((ch) => ch.codePointAt(0) > 0xff),
+  "long-ascii": (record) => /^[\x20-\x7e]{24,}$/.test(record.text),
+  // The ellipsis branch is the width boundary: it measured `${value}…` at the draw font.
+  truncated: (record) => record.text.endsWith("…"),
+  // Just inside the boundary: a full-width string that was not truncated.
+  untruncated: (record) =>
+    !record.text.endsWith("…") && record.measuredWidth > 0 && record.text.length >= 12,
+  monospace: (record) => record.font.includes("monospace"),
+};
+
+function textShapes(records) {
+  const counts = {};
+  for (const [name, matches] of Object.entries(TEXT_SHAPES))
+    counts[name] = records.filter(matches).length;
+  return counts;
 }
 
 // Flatten the per-surface role measurements into one list of asserted samples.
@@ -615,19 +986,22 @@ async function runRoles({ context, origin, evidenceDir, viewport, log }) {
       return module.resolverRejections();
     });
     for (const fixture of ROLE_FIXTURES)
-      for (const theme of ROLE_THEMES)
-        for (const hostFontSize of ROLE_HOST_SIZES) {
-          const capture = await captureRoles(page, { fixture, theme, hostFontSize });
-          const image = resolve(
-            evidenceDir,
-            `roles-${fixture.name}-${theme.mode}-host${hostFontSize.replace("px", "")}.png`,
-          );
-          await page.locator("#font-parity-host").screenshot({ path: image });
-          await page.evaluate(() => window.__fontParityHarness?.dispose());
-          captures.push({ ...capture, image });
-        }
+      for (const { theme, hostFontSize } of roleCases(fixture)) {
+        const { capture, release } = await captureRoles(page, { fixture, theme, hostFontSize });
+        const image = resolve(
+          evidenceDir,
+          `roles-${fixture.name}-${theme.mode}-host${hostFontSize.replace("px", "")}.png`,
+        );
+        await page.locator("#font-parity-host").screenshot({ path: image });
+        await release?.();
+        await page.evaluate(() => window.__fontParityHarness?.dispose());
+        captures.push({ ...capture, image });
+      }
   } finally {
-    await writeFile(file, `${JSON.stringify({ rejections, captures, pageErrors }, null, 2)}\n`);
+    await writeFile(
+      file,
+      `${JSON.stringify({ rejections, gaps: CANVAS_COVERAGE_GAPS, captures, pageErrors }, null, 2)}\n`,
+    );
     log(`Roles ledger: ${file}`);
     await page.close();
   }
@@ -638,6 +1012,9 @@ async function runRoles({ context, origin, evidenceDir, viewport, log }) {
       problems.push(`resolver accepted ${rejection.label}: ${rejection.message}`);
   if (rejections.length !== 3) problems.push(`expected 3 resolver rejection probes`);
   const asserted = captures.flatMap((capture) => assertRoleCase(capture, problems));
+  const canvas = captures.map((capture) => assertCanvasRoles(capture, problems));
+  const canvasAsserted = canvas.flatMap((entry) => entry.asserted);
+  const canvasDeferred = canvas.flatMap((entry) => entry.deferred);
   // Nothing may drop out silently: every contracted role and every required parent
   // context has to carry at least one real measurement.
   for (const entry of ROLE_CONTRACT)
@@ -646,17 +1023,38 @@ async function runRoles({ context, origin, evidenceDir, viewport, log }) {
   for (const parent of REQUIRED_CONTEXTS)
     if (!asserted.some((sample) => sample.context === parent))
       problems.push(`parent context ${parent} was never measured`);
+  // The same rule on the Canvas side: a kind listed as required and never painted is a
+  // hole in the check, not a pass. Gaps are declared above with the task that closes them.
+  for (const kind of REQUIRED_CANVAS_KINDS)
+    if (!canvasAsserted.some((record) => record.kind === kind))
+      problems.push(`canvas kind ${kind} was never painted`);
+  const shapes = {};
+  for (const name of Object.keys(TEXT_SHAPES))
+    shapes[name] = canvas.reduce((total, entry) => total + (entry.shapes?.[name] ?? 0), 0);
+  for (const [name, count] of Object.entries(shapes))
+    if (!count) problems.push(`text shape ${name} was never painted`);
   // The page outside the runtime must read the same before and after the fix.
   const bodySizes = [...new Set(captures.map((capture) => capture.hostFrame.bodyFontSize))];
   if (bodySizes.length !== 1) problems.push(`host page font-size moved: ${bodySizes.join(", ")}`);
   log(
-    `${captures.length} cases, ${asserted.length} role samples, ` +
+    `${captures.length} cases, ${asserted.length} DOM role samples, ` +
+      `${canvasAsserted.length} Canvas draws over ` +
+      `${new Set(canvasAsserted.map((record) => record.kind)).size} kinds ` +
+      `(${canvasDeferred.length} deferred to T5), ` +
+      `shapes ${Object.entries(shapes)
+        .map(([name, count]) => `${name}=${count}`)
+        .join(" ")}, ` +
       `contexts ${[...new Set(asserted.map((sample) => sample.context))].sort().join("/")}, ` +
       `host page ${bodySizes.join(",")}`,
   );
   if (problems.length)
     throw new Error(`roles: ${problems.length} problems\n- ${problems.join("\n- ")}`);
-  return { cases: captures.length, samples: asserted.length, file };
+  return {
+    cases: captures.length,
+    samples: asserted.length,
+    canvasDraws: canvasAsserted.length,
+    file,
+  };
 }
 
 // Every suite named by the plan is registered. Suites a later task owns have no runner

@@ -138,22 +138,29 @@ export function observeDom(stage, label) {
 
 // Measure one named role everywhere it appears, queried by selector so a role the
 // fixture does not render comes back with `found: 0` instead of quietly disappearing.
+// A spec may name a pseudo-element: the Kanban card id is generated content, so it has
+// no element of its own and would otherwise be invisible to this check.
 export function measureRoles(stage, specs) {
   return specs.map((spec) => ({
     role: spec.role,
     selector: spec.selector,
+    pseudo: spec.pseudo ?? null,
     samples: [...stage.querySelectorAll(spec.selector)].map((element) => {
-      const style = getComputedStyle(element);
+      const style = getComputedStyle(element, spec.pseudo ?? undefined);
       const rect = element.getBoundingClientRect();
+      const box = style.display !== "none" && style.visibility !== "hidden" && rect.width > 0;
       return {
         context: contextOf(element, stage),
-        path: cssPath(element, stage),
-        text: (element.value ?? directText(element) ?? "").slice(0, 24),
-        placeholder: element.placeholder ?? null,
+        path: spec.pseudo ? `${cssPath(element, stage)}${spec.pseudo}` : cssPath(element, stage),
+        text: (spec.pseudo ? style.content : (element.value ?? directText(element) ?? "")).slice(
+          0,
+          24,
+        ),
+        placeholder: spec.pseudo ? null : (element.placeholder ?? null),
         fontSize: Number.parseFloat(style.fontSize),
         fontWeight: style.fontWeight,
         fontFamily: style.fontFamily,
-        visible: style.display !== "none" && style.visibility !== "hidden" && rect.width > 0,
+        visible: spec.pseudo ? box && style.content !== "none" : box,
       };
     }),
   }));
@@ -333,6 +340,19 @@ function sceneRecord(scene) {
       gridEditor: Boolean(widget.config?.gridEditor),
       monospace: Boolean(widget.config?.monospace),
       align: widget.config?.align ?? null,
+      // Every string this widget can paint. Attribution uses it together with the draw
+      // position, never on its own, so repeated strings stay distinguishable.
+      strings: [
+        widget.text,
+        widget.value,
+        ...(widget.cells ?? []),
+        widget.payload?.id,
+        widget.config?.boxLabel,
+        widget.config?.placeholder,
+        widget.config?.count === undefined ? null : String(widget.config.count),
+        ...(widget.config?.lines ?? []),
+        ...(widget.config?.options?.map((option) => option.text) ?? []),
+      ].filter((value) => typeof value === "string" && value !== ""),
     })),
   };
 }
@@ -417,10 +437,37 @@ export async function createFontParityHarness({
       await runtime.whenIdle();
       await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
     },
+    // Page coordinates for the centre of a Scene widget. Dragging needs pointer capture,
+    // which only real browser input grants, so the caller drives the mouse from outside
+    // the page and asks here where to put it.
+    widgetPoint({ surface, kind, index = 0 }) {
+      const scene = runtime.scenes[surface === "canvas" ? 1 : 0];
+      const matches = scene?.widgets.filter((entry) => entry.kind === kind) ?? [];
+      const widget = matches[index];
+      if (!widget)
+        throw new Error(
+          `${surface}側の ${kind} は ${matches.length} 個しかありません（index ${index} を要求）`,
+        );
+      const box = (surface === "canvas" ? canvas : domStage).getBoundingClientRect();
+      return {
+        key: widget.key,
+        x: box.left + (widget.x + widget.width / 2) * (box.width / scene.width),
+        y: box.top + (widget.y + widget.height / 2) * (box.height / scene.height),
+      };
+    },
+    async afterFrame() {
+      await runtime.whenIdle();
+      await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+    },
     roles(specs) {
+      // The Canvas frame currently on screen, recorded by the init script through the
+      // original fillText/measureText, paired with the Scene those calls were painted from.
+      // Asked for by element: earlier harnesses left behind buckets under the same id.
       return {
         dom: measureRoles(domStage, specs),
         canvasStage: measureRoles(canvasStage, specs),
+        canvasSurface: window.__fontParity?.forCanvas(canvas) ?? null,
+        scene: sceneRecord(runtime.scenes[1]),
         resolved: { dom: resolvedMetrics(domStage), canvas: resolvedMetrics(canvasStage) },
         hostFrame: hostFrame(host),
         environment: {

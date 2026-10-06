@@ -4,8 +4,8 @@ import { isField, isBox, isEditor, isInteractive as interactive } from "./widget
 import { paintSurface, syncMedia, mediaKinds, disposeMedia } from "./surfaces.js";
 import { CanvasDialogIcons } from "./dialog-icons.js";
 import { KanbanDrag, keyboardMove } from "./kanban-interaction.js";
+import { resolveFontMetrics } from "./font-metrics.js";
 
-const FONT = '"Inter", "Noto Sans JP", system-ui, sans-serif';
 export class CanvasRenderer {
   constructor(stage, canvas, dispatch) {
     this.stage = stage;
@@ -14,6 +14,8 @@ export class CanvasRenderer {
     if (!this.context) throw new Error("Canvas 2Dを利用できません");
     this.dispatch = dispatch;
     this.scene = null;
+    // Resolved once per frame in paint(); the roles, not the numbers, live in the call sites.
+    this.fonts = null;
     this.focusKey = null;
     this.editor = null;
     this.media = new Map();
@@ -532,19 +534,21 @@ export class CanvasRenderer {
     }
   }
 
+  // `role` names a size from src/runtime.css (see src/font-metrics.js); the family
+  // defaults to the stage's resolved one and is only overridden for monospace text.
   text(
     text,
     x,
     y,
     width,
     color = this.scene.theme.colors.text,
-    size = 13,
+    role = "body",
     weight = 400,
-    family = FONT,
+    family = this.fonts.family,
     align = "left",
   ) {
     const ctx = this.context;
-    ctx.font = `${weight} ${size}px ${family}`;
+    ctx.font = this.fonts.font(role, weight, family);
     ctx.textBaseline = "middle";
     ctx.textAlign = align;
     ctx.fillStyle = color;
@@ -558,6 +562,9 @@ export class CanvasRenderer {
 
   paint() {
     if (!this.scene) return;
+    // One resolution per frame, from the stage's computed style: every size below is a
+    // role name, so the DOM declarations stay the only place the pixels are written.
+    this.fonts = resolveFontMetrics(this.stage);
     const ctx = this.context;
     const colors = this.scene.theme.colors;
     ctx.clearRect(0, 0, this.scene.width, this.scene.height);
@@ -583,14 +590,14 @@ export class CanvasRenderer {
           this.kanban.drag?.drop?.lane.key === widget.key ? colors.focus : colors.border,
           8,
         );
-        this.text(text, x + 12, y + 23, width - 40, colors.text, 12, 600);
-        this.text(String(widget.config.count), x + width - 25, y + 23, 18, colors.muted, 11);
+        this.text(text, x + 12, y + 23, width - 40, colors.text, "caption", 600);
+        this.text(String(widget.config.count), x + width - 25, y + 23, 18, colors.muted, "label");
       } else if (kind === "kanban-card") {
         if (widget.disabled) ctx.globalAlpha = 0.5;
         this.box(x, y, width, height, colors.background, colors.border, 7);
-        this.text(text, x + 10, y + 23, width - 20, colors.text, 12, 600);
-        this.text(value, x + 10, y + 53, width - 20, colors.muted, 11);
-        this.text(widget.payload.id, x + 10, y + 72, width - 20, colors.muted, 9);
+        this.text(text, x + 10, y + 23, width - 20, colors.text, "caption", 600);
+        this.text(value, x + 10, y + 53, width - 20, colors.muted, "label");
+        this.text(widget.payload.id, x + 10, y + 72, width - 20, colors.muted, "meta");
       } else if (kind === "dialog-icon") {
         this.dialogIcons.paint(ctx, widget, colors);
       } else if (kind === "dialog-message") {
@@ -600,7 +607,8 @@ export class CanvasRenderer {
         const scroll = this.messageScroll.get(widget.key) ?? 0;
         widget.config.lines.forEach((line, i) => {
           const cy = y + 11 + i * 22 - scroll;
-          if (cy >= y - 11 && cy <= y + height + 11) this.text(line, x, cy, width, colors.text, 13);
+          if (cy >= y - 11 && cy <= y + height + 11)
+            this.text(line, x, cy, width, colors.text, "body");
         });
       } else if (["figure", "document"].includes(kind)) {
         paintSurface(ctx, widget, this.scene.theme);
@@ -640,15 +648,15 @@ export class CanvasRenderer {
         this.box(x, y, width, height, colors.background, colors.border, 9);
         ctx.restore();
         const inset = widget.config.dialog && widget.config.icon ? 58 : 14;
-        this.text(text, x + inset, y + 22, width - inset - 50, colors.text, 12, 600);
+        this.text(text, x + inset, y + 22, width - inset - 50, colors.text, "caption", 600);
       } else if (kind === "panel-toggle") {
-        this.text(text, x + 13, y + 21, width - 26, colors.text, 12, 600);
+        this.text(text, x + 13, y + 21, width - 26, colors.text, "caption", 600);
       } else if (kind === "window-close") {
         this.box(x, y, width, height, colors.subtle, null, 6);
-        this.text(text, x + 9, y + height / 2, width - 12, colors.muted, 20);
+        this.text(text, x + 9, y + height / 2, width - 12, colors.muted, "close");
       } else if (kind === "panel" || kind === "fieldset") {
         this.box(x, y, width, height, colors.surface, colors.border);
-        this.text(text, x + 14, y + 22, width - 28, colors.text, 12, 600);
+        this.text(text, x + 14, y + 22, width - 28, colors.text, "caption", 600);
       } else if (kind === "grid-shell" || kind === "menu-surface" || kind === "tree-shell") {
         this.box(
           x,
@@ -660,7 +668,7 @@ export class CanvasRenderer {
           kind === "menu-surface" ? 7 : 0,
         );
         if (kind === "tree-shell")
-          this.text(text, x + 10, y + 21, width - 20, colors.muted, 12, 600);
+          this.text(text, x + 10, y + 21, width - 20, colors.muted, "caption", 600);
       } else if (["grid-head", "grid-row", "tabbar"].includes(kind)) {
         ctx.fillStyle =
           kind === "grid-row"
@@ -705,7 +713,7 @@ export class CanvasRenderer {
         const align =
           widget.config.align ||
           (["tab", "grid-select", "tree-toggle", "grid-page"].includes(kind) ? "center" : "left");
-        ctx.font = `400 12px ${FONT}`;
+        ctx.font = this.fonts.font("caption");
         const tw = Math.min(width - 16, ctx.measureText(text).width);
         const tx =
           align === "right"
@@ -719,7 +727,7 @@ export class CanvasRenderer {
           y + height / 2,
           Math.max(1, width - 16),
           widget.disabled ? colors.muted : colors.text,
-          12,
+          "caption",
         );
         if (kind === "tab" && widget.selected) {
           ctx.fillStyle = colors.primary;
@@ -736,8 +744,8 @@ export class CanvasRenderer {
         };
         const [bg, fg] = themes[widget.variant] || themes.blue;
         this.box(x, y, width, height, bg);
-        this.text(text, x + 14, y + 22, width - 28, colors.muted, 11);
-        this.text(value, x + 14, y + 53, width - 28, fg, 22, 600);
+        this.text(text, x + 14, y + 22, width - 28, colors.muted, "label");
+        this.text(value, x + 14, y + 53, width - 28, fg, "metric", 600);
       } else if (isField(widget) || kind === "displayfield") {
         this.paintField(widget);
       } else if (kind === "progressbar") {
@@ -749,7 +757,7 @@ export class CanvasRenderer {
         ctx.fillStyle = colors.selected;
         ctx.fillRect(x, y, width * widget.config.fraction, height);
         ctx.restore();
-        this.text(text, x + 10, y + height / 2, width - 20, colors.text, 12);
+        this.text(text, x + 10, y + height / 2, width - 20, colors.text, "caption");
       } else if (kind === "button" || kind === "extra-button") {
         const primary = widget.variant === "primary";
         this.box(
@@ -760,7 +768,7 @@ export class CanvasRenderer {
           primary ? colors.primary : widget.selected ? colors.selected : colors.background,
           primary ? colors.primary : colors.border,
         );
-        ctx.font = `500 12px ${FONT}`;
+        ctx.font = this.fonts.font("caption", 500);
         const tx = x + Math.max(10, (width - ctx.measureText(text).width) / 2);
         this.text(
           text,
@@ -768,7 +776,7 @@ export class CanvasRenderer {
           y + height / 2,
           width - 20,
           primary ? colors.onPrimary : widget.variant === "muted" ? colors.muted : colors.text,
-          12,
+          "caption",
           500,
         );
       } else if (kind === "grid-header" || kind === "row") {
@@ -798,13 +806,13 @@ export class CanvasRenderer {
             y + height / 2,
             cellWidth - 20,
             kind === "grid-header" ? colors.muted : colors.text,
-            kind === "grid-header" ? 11 : 12,
+            kind === "grid-header" ? "label" : "caption",
             kind === "grid-header" ? 500 : 400,
           );
           offset += cellWidth;
         });
       } else if (kind === "empty") {
-        this.text(text, x + 10, y + height / 2, width - 20, colors.muted, 12);
+        this.text(text, x + 10, y + height / 2, width - 20, colors.muted, "caption");
       } else {
         this.text(
           text,
@@ -812,7 +820,7 @@ export class CanvasRenderer {
           y + height / 2,
           width,
           widget.variant === "muted" ? colors.muted : colors.text,
-          11,
+          "label",
         );
       }
       if (widget.key === this.focusKey && document.activeElement === this.canvas) {
@@ -848,10 +856,17 @@ export class CanvasRenderer {
         drag.y + 23,
         drag.card.width - 20,
         colors.text,
-        12,
+        "caption",
         600,
       );
-      this.text(drag.card.value, drag.x + 10, drag.y + 53, drag.card.width - 20, colors.muted, 11);
+      this.text(
+        drag.card.value,
+        drag.x + 10,
+        drag.y + 53,
+        drag.card.width - 20,
+        colors.muted,
+        "label",
+      );
       ctx.restore();
     }
   }
@@ -861,17 +876,27 @@ export class CanvasRenderer {
     const ctx = this.context;
     const colors = this.scene.theme.colors;
     const label = c.labelHeight ?? 24;
-    if (label) this.text(text, x, y + 10, width, colors.muted, 11, 500);
+    if (label) this.text(text, x, y + 10, width, colors.muted, "label", 500);
     const top = y + label;
     const h = height - label;
     const border = this.focusKey === widget.key ? colors.focus : colors.border;
     if (kind === "displayfield") {
-      this.text(value, x, top + h / 2, width, colors.text, 13, 400, FONT, c.align || "left");
+      this.text(
+        value,
+        x,
+        top + h / 2,
+        width,
+        colors.text,
+        "body",
+        400,
+        this.fonts.family,
+        c.align || "left",
+      );
     } else if (isBox(widget)) {
       const cy = top + h / 2;
       if (kind === "checkbox") {
         this.box(x, cy - 8, 17, 17, c.checked ? colors.primary : colors.background, border, 3);
-        if (c.checked) this.text("✓", x + 2, cy, 14, colors.onPrimary, 13, 600);
+        if (c.checked) this.text("✓", x + 2, cy, 14, colors.onPrimary, "body", 600);
       } else {
         ctx.beginPath();
         ctx.arc(x + 8, cy, 8, 0, Math.PI * 2);
@@ -917,7 +942,7 @@ export class CanvasRenderer {
         });
       } else if (kind === "textarea") {
         const lines = [];
-        ctx.font = `400 13px ${c.monospace ? "monospace" : FONT}`;
+        ctx.font = this.fonts.font("body", 400, c.monospace ? "monospace" : this.fonts.family);
         for (const paragraph of value.split("\n")) {
           let line = "";
           for (const char of paragraph) {
@@ -939,9 +964,9 @@ export class CanvasRenderer {
               top + 17 + i * 20,
               width - 22,
               value ? colors.text : colors.muted,
-              13,
+              "body",
               400,
-              c.monospace ? "monospace" : FONT,
+              c.monospace ? "monospace" : this.fonts.family,
               c.align || "left",
             ),
           );
@@ -958,9 +983,9 @@ export class CanvasRenderer {
           top + h / 2,
           width - (kind === "combobox" ? 42 : 22),
           value ? colors.text : colors.muted,
-          13,
+          "body",
           400,
-          FONT,
+          this.fonts.family,
           c.align || "left",
         );
         if (kind === "combobox") this.text("▾", x + width - 24, top + h / 2, 16, colors.muted);
@@ -979,6 +1004,7 @@ export class CanvasRenderer {
     this.focusKey = null;
     this.dragKey = null;
     this.scene = null;
+    this.fonts = null;
     this.returnFocus.clear();
   }
   dispose() {

@@ -64,11 +64,13 @@ bun run docs:check
   - **PLAN 訂正（turn 5 / T2 実測）**: 親コンテキスト「panel内」は**DOM上に存在しない**。ホストはpanel/fieldsetの子をステージ（レイヤー）直下に絶対配置し、Sceneに `parentKey` を付けないため、panelの子のCSS親はステージになる。根拠: `src/dom-renderer.js:262`（`parentKey` が無い widget は `layers.get(widget.layer)` 直下）と、`parentKey` を設定するのが grid / kanban / tab / tree / menu だけであること（`engine/src/grid.rs`・`kanban.rs`・`navigation.rs:396,430,451,518`）。実測した必須コンテキストは `root` / `window` / `popup` / `canvas-stage` / `grid-row` / `grid-head` / `tabbar` の7つに置き換え、panel自身のboxは1役割（12px/600）として検査した。後続タスクで「panel内」を要求しない。
   - **PLAN 訂正（turn 5 / T2 実測）**: 既存テスト `tests/font-parity-runner.test.js` の「未実装suiteは非0」検査は `roles` を名指ししていたため、未実装の suite を `SUITES` から動的に選ぶよう変更した（`roles` はT2から実装済みになる）。
 
-- [ ] T3: Canvasの基本・追加部品の描画と計測を役割へ接続する
+- [x] T3: Canvasの基本・追加部品の描画と計測を役割へ接続する
   - 完了基準: text窓口だけでなく全直接ctx.font/measureTextを棚卸しして同じ解決済みサイズを使う。label/empty/metric、button、panel/fieldset/window、旧row/Grid、tab/tree/menu、calendar/paging、toast/dialog-message、kanbanタイトル/件数/説明/ID/drag ghostの全roleがDOM実効pxと一致する。通常field値/labelも接続しT4の編集を準備する。selected/disabledでサイズは変わらない。左/中央/右寄せ、空、日本語、長い英数字、幅境界直前/直後、複数行でmeasureTextと描画fontが一致し、既存省略/折返し/clipを超える新たな欠けがない。roles suiteの当該roleを実WASM fixtureと元処理を通すCanvas観測で検証する。Kanban ghostのID非表示は既存差として台帳に残す。
   - 対象: `src/canvas-renderer.js`、必要なら `src/font-metrics.js`、`tests/browser/font-parity.mjs`、`tests/browser/font-parity-harness.js`、`docs/renderer-font-parity.md`。
   - 依存: T2
   - 並列サブ作業: なし（同じrendererと観測suiteを更新する）。
+  - **PLAN 訂正（turn 6 / T3 実測）**: 対象ファイルに2件追加した。(1) 新設 `tests/browser/font-parity-text.json` ＋ `font-parity-text.rhai`（実WASMの補助fixture）。既存のアプリ画面には「左/中央/右寄せ・空・日本語・長い英数字・幅境界の両側・等幅の複数行」が揃って出ないため、条件を実際に描かせないと「measureTextと描画fontが一致」を主張できない。実測で確認: 寄せはCanvas側では `textAlign` ではなくxの事前計算で行われる箇所が多く、既存画面の描画は全件 `textAlign: "left"` だった。(2) `tests/fields.test.js` の既存テスト1件（`text()` のシグネチャ変更に追従）。
+  - **PLAN 訂正（turn 6 / T3 実測）**: 完了基準の「全roleがDOM実効pxと一致」のうち **media（image/video/iframe）の空/エラー案内は T5 の担当**とする。Canvas 13px 対 DOM 12px（`src/runtime.css:539-548`）で、PLANのT5完了基準が既に「mediaの空/エラー案内はDOM12pxへ合わせ」と明記しているため。T3では kind と理由を `roles.json` の除外に記録した。`fieldset` も T7 送り（`uivolve-forms` の fieldset は collapsible でタイトルが panel-toggle に移り、本体の描画が空文字のため内容で対応付けられない。canvas-renderer では panel と同一分岐）。
 
 - [ ] T4: 通常値と編集オーバーレイ、Grid編集を揃える
   - 完了基準: 通常fieldは13px、Grid cellの表示/DOM編集/Canvas編集は12px。gridEditorを局所識別して通常fieldを変更しない。labelHeight=0/有り、textfield/number/date/textarea/combobox/listbox、placeholder/option/monospace、dialog promptを両面で確認。Hello World・フォーム・orders/grid-labでfocus→編集開始→入力→Enter確定→再編集→Escape取消、GridのRhai拒否と下書き保持を実操作しstate/value/revisionを照合する。composing中のtheme/resize/renderでも同じinput、activeElement、selection、未確定値を保持する。合成composition試験と実IME確認の有無を分ける。フォーム関連・Grid・dialogの既存状態テストも成功。
