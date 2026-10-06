@@ -1,0 +1,20 @@
+# BLOCKED — T1 実ブラウザ検証の入口と修正前台帳
+
+- turn: 3（impl）
+- 状況: 作業ツリーは開始時にclean。先頭の未完了タスクT1の必須条件である実Chromiumの起動・接続を確立できず、実WASM・日本語字体・computed font-size・Canvas観測・比較画像は未取得。T1のチェックボックスは未完了のまま。製品コードと検証runnerは変更していない。
+- 停止根拠: PLAN.mdの「無人環境で両方利用不能ならT1を未完了のままBLOCKEDをコミットする」とT1完了基準の「実ブラウザ利用不能時はBLOCKED、T1を完了にしない」。
+
+## 確認・試行と結果
+
+1. `gsd-lite-loop.sh --where` はmode=repo、milestone_dir=.gsd-lite、target=.、slug=renderer-font-size-parityを返した。最初の誤った相対パスは存在せず、PATH入口へ修正した。
+2. Playwrightのbundled Chromium実行ファイル `/home/parallels/.cache/ms-playwright/chromium-1243/chrome-linux-arm64/chrome` は存在しない。`chromium.launch({ headless: true, timeout: 10000 })` はheadless shell実行ファイル不存在で非0終了した。
+3. `/usr/bin/chromium-browser` と `/snap/bin/chromium` は既存のsnap経路。turn 1でcapability制約による起動失敗を記録済みのため再試行しなかった。`/opt/google/chrome`、`/usr/lib/chromium`、`/usr/bin/google-chrome-stable`、`/usr/bin/chromium` も存在しない。
+4. 別のローカル実行ファイル `/opt/vivaldi/vivaldi-bin` を発見し、Playwrightの `executablePath` として1回試行した。プロセスは `crashpad/util/linux/socket.cc:45 setsockopt: Operation not permitted (1)` を出しSIGTRAPで終了。Playwrightのcleanup完了を確認した。実ページには到達していない。
+5. `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`、`RETROSPECTIVE_BROWSER_PATH`、`BROWSER_ENDPOINT`、`PLAYWRIGHT_BROWSER_ENDPOINT`、`CDP_ENDPOINT` の設定有無を確認し、すべて未設定。`ss -ltnp` に明示的なブラウザ/CDP listenerは見つからず、接続先は確定できない。既存サーバー・他者プロセスには接続・終了操作を行っていない。
+
+## 再開に必要な情報・選択肢
+
+- 質問: この無人環境から利用できるChromiumの実行ファイル、またはPlaywright/CDPの外部ブラウザ接続先をどれにするか。
+- 推奨: sandbox外で起動したChromiumの到達可能な接続先を用意し、T1の `--browser-endpoint` 経路を実装・検証する。外部ブラウザ本体は終了せず、所有したcontextだけを閉じる契約を守る。
+- 代案: Chromiumの実行ファイルを用意し、この環境のsocket/capability制約を解消した上で `--browser-path` 経路を実装・検証する。bundled browserの導入だけでは今回のsocket制約が解消するとは判断できない。
+- 再開後: T1だけを続け、実測JSONと比較デモ・独立UiRuntimeの画像、日本語字体の証拠、runnerのプロセス試験を取得してから完了を判定する。CSS解析値や以前の画像を今回の実測証跡へ流用しない。
