@@ -221,7 +221,7 @@ bun run docs:check
     同じセッションに変え、通知はブラウザ自身の再描画を先に待ってから来ないときだけ合成する形に
     した。どちらで動いたかは倍率ごとに台帳へ残す。
 
-- [ ] F1: Canvas と DOM を役割単位で突き合わせ、DOM 側の役割一覧を閉じる（verify round 1）
+- [x] F1: Canvas と DOM を役割単位で突き合わせ、DOM 側の役割一覧を閉じる（verify round 1）
   - 背景: 現在の suite は DOM を `ROLE_CONTRACT` の selector 表と、Canvas を「kind ごとに許される役割の集合」（`CANVAS_KIND_CONTRACT` と `allowed.includes(role)`）と、それぞれ別々に `SIZE_CONTRACT` の数値へ照合している。同じ部品・同じ役割の DOM 実効 px と Canvas 描画 px を直接比べるのは distribution の Hello World だけ（baseline の `compare()` は記録のみ）。verify が変異 1 と 5 を同時に入れた木で `roles`（28 ケース）と `matrix`（168 ケース）を実行し、**両方とも passed** になることを実測した（受け入れ基準 1「役割ごとに一致」を検査が担保していない）。製品コードの現状値は目視とコード読みで正しい。直すのは検査。
   - 完了基準: 下表のとおり。変異は 1 つずつ一時的に入れて該当 suite が非0になることを確かめ、確認後に戻して `git status --short` が空であることを確認する（変異そのものはコミットしない）。対応付けは部品の key と役割で行い、文字列や「同じフレームのどこかで使われた font」では行わない。DOM 側は selector の手書き表だけに頼らず、文字を描く全 kind の実際の文字ノード（子要素・疑似要素を含む）の実効サイズを測る（`observeDom` の文字ノード走査と baseline / distribution の `compare()` が再利用できる）。計測と描画の一致も部品単位で判定する。件数が変わるので台帳（`docs/renderer-font-parity.md`）の該当数値を更新する。
 

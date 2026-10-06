@@ -82,14 +82,26 @@ export function contextOf(element, stage) {
   return "root";
 }
 
-function metrics(element, stage, part, text) {
-  const style = getComputedStyle(element);
+// Generated content is text a component shows without an element of its own (the Kanban
+// card id, the media notice), so the per-widget comparison has to measure it beside the
+// real text nodes. Only a literal string counts: url() and counter() contents are not
+// something a Canvas draw can be equal to.
+function pseudoText(style) {
+  const content = style.content;
+  if (!content || content === "none" || content === "normal") return "";
+  if (!/^"(?:[^"\\]|\\.)*"$/.test(content)) return "";
+  return content.slice(1, -1).replace(/\\(.)/g, "$1").trim();
+}
+
+function metrics(element, stage, part, text, pseudo = null) {
+  const style = getComputedStyle(element, pseudo ?? undefined);
   const rect = element.getBoundingClientRect();
   const origin = stage.getBoundingClientRect();
   const widget = widgetOf(element);
   return {
     surface: "dom",
-    selector: cssPath(element, stage),
+    pseudo,
+    selector: pseudo ? `${cssPath(element, stage)}${pseudo}` : cssPath(element, stage),
     tag: element.tagName.toLowerCase(),
     classes: [...element.classList],
     key: widget.key,
@@ -100,6 +112,11 @@ function metrics(element, stage, part, text) {
     part: part ?? "text",
     text,
     visible: style.display !== "none" && style.visibility !== "hidden" && rect.width > 0,
+    // Whether this string is the one the component is *showing*. A control keeps a value
+    // and a placeholder at the same time, a tick has a value that is never text, and a
+    // closed dropdown shows one of its options; counting all of them as shown text would
+    // invent slots no renderer paints. Overridden by the caller where it is not plain text.
+    displayed: true,
     fontSize: Number.parseFloat(style.fontSize),
     fontWeight: style.fontWeight,
     fontFamily: style.fontFamily,
@@ -111,31 +128,53 @@ function metrics(element, stage, part, text) {
   };
 }
 
-// Every DOM node that shows characters, including native control values, placeholders
-// and select options. Duplicate strings stay distinguishable through selector/key/role.
+// Controls whose `value` is never characters on screen: a tick, a dot, a thumb, a swatch,
+// a file picker. Their value is still recorded, with `displayed: false`.
+const VALUELESS_INPUT_TYPES = new Set(["checkbox", "radio", "range", "color", "file"]);
+
+// Every DOM node that shows characters, including native control values, placeholders,
+// select options and generated content. Duplicate strings stay distinguishable through
+// selector/key/role.
+//
+// The walk is recursive rather than a flat querySelectorAll sweep so the records come back
+// in the order the characters appear: `::before`, the element's own text, its descendants,
+// then `::after`. That order is what lets a Canvas draw be paired with the DOM node of the
+// same slot — the Kanban card id is an `::after` *below* the card's title and detail, and a
+// parent-before-children sweep would put it first.
 export function observeDom(stage, label) {
   const records = [];
-  for (const element of [stage, ...stage.querySelectorAll("*")]) {
+  const push = (element, part, text, pseudo = null, extra = null) =>
+    records.push({ stage: label, ...metrics(element, stage, part, text, pseudo), ...extra });
+  const visit = (element) => {
+    const before = pseudoText(getComputedStyle(element, "::before"));
+    if (before) push(element, "::before", before, "::before");
     const text = directText(element);
-    if (text) records.push({ stage: label, ...metrics(element, stage, "text", text) });
+    if (text) push(element, "text", text);
     const tag = element.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA") {
-      if (element.value)
-        records.push({ stage: label, ...metrics(element, stage, "value", element.value) });
+      const showsValue = !VALUELESS_INPUT_TYPES.has(element.type);
+      if (element.value) push(element, "value", element.value, null, { displayed: showsValue });
       if (element.placeholder)
-        records.push({
-          stage: label,
-          ...metrics(element, stage, "placeholder", element.placeholder),
+        push(element, "placeholder", element.placeholder, null, {
+          displayed: showsValue && element.value === "",
         });
     }
-    if (tag === "SELECT")
+    // An expanded list box lays every option out as its own element, which the recursion
+    // below measures; a closed dropdown shows only the chosen option's text, and it shows
+    // it in the select's own box, which is why the option is measured on the select.
+    if (tag === "SELECT") {
+      const expanded = element.multiple || element.size > 1;
       for (const option of element.options)
-        records.push({
-          stage: label,
-          ...metrics(element, stage, `option[${option.index}]`, option.textContent ?? ""),
+        push(element, `option[${option.index}]`, option.textContent ?? "", null, {
           selected: option.selected,
+          displayed: !expanded && option.selected,
         });
-  }
+    }
+    for (const child of element.children) visit(child);
+    const after = pseudoText(getComputedStyle(element, "::after"));
+    if (after) push(element, "::after", after, "::after");
+  };
+  visit(stage);
   return records;
 }
 

@@ -58,10 +58,16 @@ function canvasRecorder() {
   };
   proto.measureText = function (text) {
     const result = originalMeasureText.apply(this, arguments);
-    bucket(this.canvas).measurements.push({
+    const entry = bucket(this.canvas);
+    entry.measurements.push({
       text: String(text),
       font: this.font,
       width: result.width,
+      // How many draws this frame had already recorded. A renderer measures a string just
+      // before it paints it, so this index names the draw the measurement belongs to, and
+      // the two can be required to use the same font per component instead of only
+      // somewhere in the frame.
+      drawIndex: entry.draws.length,
     });
     return result;
   };
@@ -182,13 +188,32 @@ function attribute(draw, widgets) {
     (left, right) =>
       left.width * left.height - right.width * right.height || right.layer - left.layer,
   );
-  return candidates[0] ?? null;
+  // How the attribution was reached travels with it, because the per-widget comparison can
+  // only pair a draw whose slot is known:
+  //   string     — a widget inside the point declares what was painted. The normal case.
+  //   truncated  — the whole string was eaten by the ellipsis (the toast close button in a
+  //                narrow toast paints just "…"), so no string is left to match on and the
+  //                smallest containing widget is the only honest answer. The slot still
+  //                exists and still carries a size, so it stays pairable.
+  //   decoration — a glyph the renderer paints itself; the DOM has no text node for it.
+  //   position   — the widget under the point does not declare what was painted there. The
+  //                Kanban drag ghost is the one painter that legitimately does this.
+  return {
+    widget: candidates[0] ?? null,
+    matchedBy: named.length
+      ? "string"
+      : decoration
+        ? "decoration"
+        : needle === "" && draw.text !== ""
+          ? "truncated"
+          : "position",
+  };
 }
 
 function canvasRecords(surface, widgets, label) {
   return surface.draws.map((draw, index) => {
     const geometry = toCss(draw);
-    const widget = attribute(draw, widgets);
+    const { widget, matchedBy } = attribute(draw, widgets);
     return {
       surface: "canvas",
       stage: label,
@@ -198,6 +223,7 @@ function canvasRecords(surface, widgets, label) {
       target: widget?.target ?? null,
       kind: widget?.kind ?? null,
       role: `${widget?.kind ?? "unattributed"}:canvas-text:w${weightOf(draw.font)}`,
+      matchedBy: widget ? matchedBy : "none",
       gridEditor: widget?.gridEditor ?? null,
       font: draw.font,
       fontWeight: weightOf(draw.font),
@@ -224,7 +250,10 @@ function canvasRecords(surface, widgets, label) {
 function compare(dom, canvas) {
   const rows = [];
   for (const draw of canvas) {
-    const matches = dom.filter((record) => record.key && record.key === draw.key && record.visible);
+    const matches = dom.filter(
+      (record) =>
+        record.key && record.key === draw.key && record.visible && record.displayed !== false,
+    );
     const exact = matches.find((record) => record.text === draw.text);
     const peer = exact ?? matches[0] ?? null;
     rows.push({
@@ -1692,11 +1721,11 @@ function assertCanvasRoles(capture, problems) {
   const note = (message) => problems.push(`${where}: canvas ${message}`);
   if (!capture.scene) {
     note("Scene が取得できなかった");
-    return { asserted: [], deferred: [], textFree: [] };
+    return { records: [], asserted: [], deferred: [], textFree: [] };
   }
   if (!capture.canvasSurface?.draws.length) {
     note("描画が記録されなかった");
-    return { asserted: [], deferred: [], textFree: [] };
+    return { records: [], asserted: [], deferred: [], textFree: [] };
   }
   const records = canvasRecords(capture.canvasSurface, capture.scene.widgets, capture.fixture);
   const family = capture.resolved.canvas.ok ? capture.resolved.canvas.family : null;
@@ -1748,13 +1777,8 @@ function assertCanvasRoles(capture, problems) {
     if (family && !record.font.endsWith(family) && !record.font.endsWith("monospace"))
       note(`${record.kind} の font "${record.font}" がステージの字体 "${family}" ではない`);
   }
-  // measureText and fillText must agree: an ellipsis or centring decision taken at one
-  // size and painted at another is exactly the defect this milestone is about.
-  const painted = new Set(records.map((record) => record.font));
-  for (const measurement of capture.canvasSurface.measurements)
-    if (!painted.has(measurement.font))
-      note(`計測 font "${measurement.font}" ("${measurement.text.slice(0, 18)}") で描画していない`);
-  return { asserted, deferred, textFree, shapes: textShapes(records) };
+  assertMeasureParity(capture.canvasSurface.measurements, records, note);
+  return { records, asserted, deferred, textFree, shapes: textShapes(records) };
 }
 
 // The text shapes the measure/draw agreement has to be shown for. Counted over the real
@@ -1783,6 +1807,253 @@ function textShapes(records) {
 }
 
 // Flatten the per-surface role measurements into one list of asserted samples.
+// --- the two surfaces against each other, per component ----------------------------
+// Until verify round 1 the DOM and the Canvas were only checked separately against
+// SIZE_CONTRACT — the DOM through a hand-written selector table, the Canvas through the set
+// of sizes each kind is allowed to paint — and a tree with the metric roles swapped and
+// `.ui-empty`'s declaration deleted passed both halves. Nothing compared "this component's
+// caption in the DOM" with "this component's caption on the Canvas".
+//
+// This does. For one widget key:
+//   * the DOM side is the full text-node sweep (`observeDom`), in the order the characters
+//     appear, generated content included. No selector is written down, so a node nobody
+//     named — `.ui-empty`, a `span` inside `.ui-row` — is measured like any other.
+//   * the Canvas side is the recorded draws in paint order, each attributed to a widget by
+//     the Scene's own strings and the draw position (`attribute`).
+// Both renderers emit a widget's texts in the same visual order, so slot N of one surface is
+// slot N of the other and the slot counts have to agree. The painted strings of the two
+// surfaces are never compared with each other: the pairing is the key and the slot.
+
+// Kinds where one DOM text node becomes several Canvas draws, because the Canvas renderer
+// breaks the lines itself (textarea) or the engine hands it the lines while the DOM keeps
+// them in a single node separated by newlines (toast, dialog-message). Only the last slot
+// may absorb the extra draws; every other kind must produce the same count on both sides.
+const CANVAS_WRAPS_LAST_SLOT = new Set(["textarea", "toast", "dialog-message"]);
+
+// Weight gaps the two surfaces have always had. This milestone is about sizes, so a weight
+// gap is recorded rather than failed — but it has to be *listed* here: an unlisted one is a
+// problem, and a listed one that nothing produces any more has to be deleted.
+const WEIGHT_DIFFERENCES = [
+  {
+    kind: "extra-button",
+    slot: 0,
+    dom: "400",
+    canvas: "500",
+    why: "DOM の .ui-extra-button は太さを宣言せず 400、Canvas は button と同じ 500 で描く",
+  },
+  {
+    kind: "grid-column",
+    slot: 0,
+    dom: "500",
+    canvas: "400",
+    why: "DOM の .ui-grid-column は見出しとして 500、Canvas は本文と同じ 400 で描く",
+  },
+  {
+    kind: "tree-node",
+    slot: 0,
+    dom: "600",
+    canvas: "400",
+    why: ".ui-tree-node は .ui-tree-shell の 600 を継承し、Canvas は 400 で描く",
+  },
+  {
+    kind: "tree-toggle",
+    slot: 0,
+    dom: "600",
+    canvas: "400",
+    why: ".ui-tree-toggle も同じ継承。印（▾/▸）の太さだけの差",
+  },
+  {
+    kind: "kanban-lane",
+    slot: 0,
+    dom: "700",
+    canvas: "600",
+    why: "レーン題は DOM が <strong>（既定 700）、Canvas は 600",
+  },
+  {
+    kind: "kanban-card",
+    slot: 0,
+    dom: "700",
+    canvas: "600",
+    why: "カード題も DOM が <strong>（既定 700）、Canvas は 600",
+  },
+];
+
+const weightDifference = (kind, slot) =>
+  WEIGHT_DIFFERENCES.find((entry) => entry.kind === kind && entry.slot === slot) ?? null;
+
+// The DOM text nodes of each widget that are actually showing characters, keyed by widget.
+// `displayed` is what drops a control's hidden placeholder, a tick's "on" value and the
+// duplicate option records of an expanded list box.
+function domSlots(records) {
+  const groups = new Map();
+  for (const record of records) {
+    if (!record.key || !record.visible || record.displayed === false || !record.text) continue;
+    if (!groups.has(record.key)) groups.set(record.key, []);
+    groups.get(record.key).push(record);
+  }
+  return groups;
+}
+
+// The Canvas draws of each widget that have a DOM text node to be compared with, in paint
+// order, plus the ones that deliberately have none.
+function canvasSlots(records, scene, note) {
+  const groups = new Map();
+  const canvasOnly = [];
+  // The drag ghost repaints the dragged card's own strings at the pointer, so its draws land
+  // in whichever widget is under the cursor and are attributed by position alone. The DOM
+  // builds the ghost outside every widget (.kanban-drag-ghost), so there is no same-key node
+  // to pair them with; ROLE_CONTRACT's ghost-title / ghost-detail rows hold their sizes.
+  const cardStrings = new Set(
+    (scene?.widgets ?? [])
+      .filter((widget) => widget.kind === "kanban-card")
+      .flatMap((widget) => widget.strings ?? []),
+  );
+  for (const record of records) {
+    // An empty draw claims no size; the text-free kinds are asserted empty elsewhere.
+    if (record.text === "" || !record.key) continue;
+    const reason = CANVAS_DEFERRED_KINDS[record.kind]
+      ? CANVAS_DEFERRED_KINDS[record.kind]
+      : record.matchedBy === "decoration"
+        ? `renderer が自分で描く印。DOM は ${record.kind} の既定の表示を使い文字ノードを持たない`
+        : record.matchedBy === "position"
+          ? cardStrings.has(record.text.replace(/…+$/u, "").trim())
+            ? "kanban の drag ghost。DOM は .kanban-drag-ghost を部品の外に作る"
+            : null
+          : null;
+    if (reason) {
+      canvasOnly.push({ ...record, reason });
+      continue;
+    }
+    if (record.matchedBy !== "string" && record.matchedBy !== "truncated") {
+      note(
+        `"${record.text.slice(0, 18)}" (${record.kind}) を ${record.matchedBy} でしか` +
+          `部品に結び付けられないため DOM と突き合わせられない`,
+      );
+      continue;
+    }
+    if (!groups.has(record.key)) groups.set(record.key, []);
+    groups.get(record.key).push(record);
+  }
+  return { groups, canvasOnly };
+}
+
+// One row per paired slot. A size gap here is the defect this milestone closes; a count gap
+// means one surface stopped showing a string the other still shows.
+function assertParity(capture, records, problems) {
+  const where = `${capture.fixture}/${capture.mode}/host ${capture.hostFontSize}`;
+  const note = (message) => problems.push(`${where}: parity ${message}`);
+  if (!capture.domText?.dom) {
+    note("DOM の文字ノードが取得できなかった");
+    return { rows: [], canvasOnly: [], domOnly: [], weightGaps: [] };
+  }
+  const dom = domSlots(capture.domText.dom);
+  const { groups: canvas, canvasOnly } = canvasSlots(records, capture.scene, note);
+  const rows = [];
+  const weightGaps = [];
+  for (const [key, draws] of canvas) {
+    const nodes = dom.get(key) ?? [];
+    const kind = draws[0].kind;
+    const wraps = CANVAS_WRAPS_LAST_SLOT.has(kind);
+    if (!nodes.length) {
+      note(
+        `${kind} ${key} は Canvas が ${draws.length} 件描いているのに DOM に文字ノードが無い` +
+          `（Canvas: ${draws.map((draw) => `"${draw.text.slice(0, 12)}"`).join(", ")}）`,
+      );
+      continue;
+    }
+    if (wraps ? draws.length < nodes.length : draws.length !== nodes.length)
+      note(
+        `${kind} ${key} の文字スロットが DOM ${nodes.length} 件 / Canvas ${draws.length} 件で` +
+          `一致しない（DOM: ${nodes.map((node) => `${node.part}"${node.text.slice(0, 12)}"`).join(", ")}` +
+          ` / Canvas: ${draws.map((draw) => `"${draw.text.slice(0, 12)}"`).join(", ")}）`,
+      );
+    for (let slot = 0; slot < nodes.length; slot++) {
+      const node = nodes[slot];
+      // The last slot of a wrapping kind owns every remaining draw: one DOM node, several
+      // painted lines, all of which must still carry that node's size.
+      const paired =
+        wraps && slot === nodes.length - 1 ? draws.slice(slot) : [draws[slot]].filter(Boolean);
+      if (!paired.length) continue;
+      const allowance = weightDifference(kind, slot);
+      for (const draw of paired) {
+        rows.push({
+          key,
+          kind,
+          slot,
+          domSelector: node.selector,
+          domPart: node.part,
+          domContext: node.context,
+          domText: node.text.slice(0, 24),
+          domFontSize: node.fontSize,
+          domFontWeight: node.fontWeight,
+          canvasText: draw.text.slice(0, 24),
+          canvasFontSize: draw.declaredFontSize,
+          canvasFontWeight: draw.fontWeight,
+          sizeRole: sizeRoleOf(draw.declaredFontSize),
+          delta: draw.declaredFontSize === null ? null : draw.declaredFontSize - node.fontSize,
+        });
+        if (draw.declaredFontSize !== node.fontSize)
+          note(
+            `${kind} ${key} スロット ${slot}（${node.part}）が DOM ${node.fontSize}px 対 ` +
+              `Canvas ${draw.declaredFontSize}px（DOM "${node.text.slice(0, 14)}" / ` +
+              `Canvas "${draw.text.slice(0, 14)}" / ${node.selector}）`,
+          );
+        if (draw.fontWeight === node.fontWeight) continue;
+        if (
+          allowance &&
+          allowance.dom === node.fontWeight &&
+          allowance.canvas === draw.fontWeight
+        ) {
+          weightGaps.push({ kind, slot, ...allowance, key });
+          continue;
+        }
+        note(
+          `${kind} ${key} スロット ${slot}（${node.part}）の太さが DOM ${node.fontWeight} 対 ` +
+            `Canvas ${draw.fontWeight}。既存の表現差として記録されていない`,
+        );
+      }
+    }
+  }
+  // The other direction: a widget showing characters in the DOM that the Canvas never
+  // painted. The shared surfaces and the media notices are the surfaces suite's, with the
+  // reason recorded; anything else is a hole.
+  const domOnly = [];
+  for (const [key, nodes] of dom) {
+    if (canvas.has(key)) continue;
+    const kind = nodes[0].kind;
+    const reason = CANVAS_DEFERRED_KINDS[kind] ?? null;
+    if (reason) {
+      domOnly.push({ key, kind, reason, nodes: nodes.map((node) => node.selector) });
+      continue;
+    }
+    note(
+      `${kind ?? "stage"} ${key} は DOM が ${nodes.length} 件の文字を出しているのに ` +
+        `Canvas が 1 件も描いていない（${nodes.map((node) => `${node.part}"${node.text.slice(0, 12)}"`).join(", ")}）`,
+    );
+  }
+  return { rows, canvasOnly, domOnly, weightGaps };
+}
+
+// measureText and fillText have to agree per component. The recorder stamps every
+// measurement with the number of draws the frame had already recorded, and a renderer
+// measures a string just before painting it, so that index names the draw the measurement
+// belongs to. Comparing the two fonts catches a width decided at one size and painted at
+// another — which the old frame-wide "this font was painted somewhere" check could not.
+function assertMeasureParity(measurements, records, note) {
+  for (const measurement of measurements) {
+    const record = records[measurement.drawIndex] ?? records[measurement.drawIndex - 1] ?? null;
+    if (!record) {
+      note(`計測 "${measurement.text.slice(0, 18)}" (${measurement.font}) に対応する描画が無い`);
+      continue;
+    }
+    if (measurement.font === record.font) continue;
+    note(
+      `${record.kind ?? "不明"} "${record.text.slice(0, 14)}" は ${record.font} で描いたのに ` +
+        `"${measurement.text.slice(0, 14)}" を ${measurement.font} で計測している`,
+    );
+  }
+}
+
 function roleSamples(capture) {
   const samples = [];
   for (const [surface, measured] of [
@@ -1889,6 +2160,24 @@ async function runRoles({ context, origin, evidenceDir, viewport, log }) {
   const canvas = captures.map((capture) => assertCanvasRoles(capture, problems));
   const canvasAsserted = canvas.flatMap((entry) => entry.asserted);
   const canvasDeferred = canvas.flatMap((entry) => entry.deferred);
+  // The two halves against each other. The checks above say each surface is internally
+  // consistent with the contract; this is the one that says they agree with each other.
+  const parity = captures.map((capture, index) =>
+    assertParity(capture, canvas[index].records, problems),
+  );
+  const parityRows = parity.flatMap((entry) => entry.rows);
+  const parityWeightGaps = parity.flatMap((entry) => entry.weightGaps);
+  // Parity must not be able to cover nothing: every kind that paints text owes at least one
+  // paired slot, and a recorded weight difference nothing produces any more has to be
+  // deleted rather than left standing as an unused exemption.
+  for (const kind of REQUIRED_CANVAS_KINDS)
+    if (!parityRows.some((row) => row.kind === kind))
+      problems.push(`parity: kind ${kind} は DOM と突き合わせたスロットを 1 つも持たない`);
+  for (const entry of WEIGHT_DIFFERENCES)
+    if (!parityWeightGaps.some((gap) => gap.kind === entry.kind && gap.slot === entry.slot))
+      problems.push(
+        `parity: 既存の表現差 ${entry.kind}/スロット ${entry.slot} は観測されなかった（一覧から外す）`,
+      );
   // Nothing may drop out silently: every contracted role and every required parent
   // context has to carry at least one real measurement.
   for (const entry of ROLE_CONTRACT)
@@ -1973,12 +2262,40 @@ async function runRoles({ context, origin, evidenceDir, viewport, log }) {
       2,
     )}\n`,
   );
+  await writeFile(
+    resolve(evidenceDir, "roles-parity.json"),
+    `${JSON.stringify(
+      {
+        wrapsLastSlot: [...CANVAS_WRAPS_LAST_SLOT],
+        weightDifferences: WEIGHT_DIFFERENCES,
+        cases: captures.map((capture, index) => ({
+          fixture: capture.fixture,
+          mode: capture.mode,
+          hostFontSize: capture.hostFontSize,
+          rows: parity[index].rows,
+          canvasOnly: parity[index].canvasOnly.map((record) => ({
+            kind: record.kind,
+            key: record.key,
+            text: record.text.slice(0, 24),
+            fontSize: record.declaredFontSize,
+            reason: record.reason,
+          })),
+          domOnly: parity[index].domOnly,
+        })),
+      },
+      null,
+      2,
+    )}\n`,
+  );
   log(
     `${captures.length} cases, ${asserted.length} DOM role samples, ` +
       `${canvasAsserted.length} Canvas draws over ` +
       `${new Set(canvasAsserted.map((record) => record.kind)).size} kinds ` +
       `(${canvasDeferred.length} deferred to the surfaces suite, ` +
       `${canvasTextFree.length} empty draws from text-free kinds), ` +
+      `${parityRows.length} paired slots over ` +
+      `${new Set(parityRows.map((row) => row.kind)).size} kinds ` +
+      `(${parityWeightGaps.length} recorded weight gaps), ` +
       `shapes ${Object.entries(shapes)
         .map(([name, count]) => `${name}=${count}`)
         .join(" ")}, ` +
@@ -2525,6 +2842,16 @@ async function runEditing({ context, origin, evidenceDir, viewport, log }) {
   const asserted = captures.flatMap((capture) => assertEditCase(capture, problems));
   const canvas = captures.map((capture) => assertCanvasRoles(capture, problems));
   const canvasAsserted = canvas.flatMap((entry) => entry.asserted);
+  // The same per-component comparison the roles suite runs, over the editing fixtures: a
+  // field's label and value have to carry the same size on both surfaces while an editor is
+  // open, not merely a size the contract allows somewhere.
+  const parity = captures.map((capture, index) =>
+    assertParity(capture, canvas[index].records, problems),
+  );
+  const parityRows = parity.flatMap((entry) => entry.rows);
+  for (const kind of ["textfield", "numberfield", "combobox", "textarea", "grid-cell"])
+    if (!parityRows.some((row) => row.kind === kind))
+      problems.push(`parity: kind ${kind} は DOM と突き合わせたスロットを 1 つも持たない`);
   // Every role in the edit contract has to be measured somewhere, and the Canvas side has
   // to have painted a Grid editor at the cell size: a check nothing reached is not a pass.
   for (const entry of EDIT_ROLE_CONTRACT)
@@ -2558,9 +2885,23 @@ async function runEditing({ context, origin, evidenceDir, viewport, log }) {
   );
   for (const kind of ["textfield", "numberfield", "datefield", "combobox", "checkbox"])
     if (!kinds.has(kind)) problems.push(`Grid 編集の ${kind} を実測していない`);
+  await writeFile(
+    resolve(evidenceDir, "editing-parity.json"),
+    `${JSON.stringify(
+      captures.map((capture, index) => ({
+        fixture: capture.fixture,
+        rows: parity[index].rows,
+        domOnly: parity[index].domOnly,
+      })),
+      null,
+      2,
+    )}\n`,
+  );
   log(
     `${captures.length} cases, ${asserted.length} DOM samples, ` +
       `${canvasAsserted.length} Canvas draws (${gridDraws.length} grid editor), ` +
+      `${parityRows.length} paired slots over ` +
+      `${new Set(parityRows.map((row) => row.kind)).size} kinds, ` +
       `grid editor kinds ${[...kinds].sort().join("/")}, ` +
       `labelHeight ${[...strips].sort((a, b) => a - b).join("/")}, ` +
       `${operations.length} operation scripts, ${compositions.length} composition probes ` +
@@ -4337,6 +4678,11 @@ async function runMatrixStandalone({
           if (capture.environment.domStage.themeMode !== theme.mode)
             problems.push(`${capture.label}: テーマが ${capture.environment.domStage.themeMode}`);
           const canvas = assertCanvasRoles(capture, problems);
+          // The per-component comparison over the whole grid: the standalone surface is the
+          // one that publishes its Scene, so it is where a Canvas draw can be paired with
+          // the DOM node of the same slot. (The comparison demo keeps no Scene — see the
+          // ledger's note on the demo surface.)
+          const slots = assertParity(capture, canvas.records, problems);
           let image = null;
           if (matrixShoots(screen, condition)) {
             image = matrixImage(evidenceDir, "standalone", screen, condition, theme.mode);
@@ -4356,6 +4702,9 @@ async function runMatrixStandalone({
                 declaredSizes: declaredSizes([...canvas.asserted, ...canvas.deferred]),
                 truncated: canvas.asserted.filter((record) => record.text.endsWith("…")).length,
                 overflow: matrixOverflow(canvas.asserted, capture.scene),
+                paired: slots.rows.length,
+                pairedKinds: [...new Set(slots.rows.map((row) => row.kind))].sort(),
+                sizeGaps: slots.rows.filter((row) => row.delta !== 0).length,
               },
               image,
               problems,
@@ -4627,11 +4976,20 @@ async function runMatrix({ context, origin, evidenceDir, viewport, log }) {
   if (journeys.length !== MATRIX_JOURNEYS.length)
     problems.push(`編集中の条件変更が ${journeys.length} 本（${MATRIX_JOURNEYS.length} 本を期待）`);
   if (!images.length) problems.push("代表画像を 1 枚も撮っていない");
+  // Every standalone case owes paired slots: a condition whose comparison covered nothing
+  // would otherwise read as a pass.
+  const standaloneRows = rows.filter((row) => row.surface === "standalone");
+  for (const row of standaloneRows)
+    if (!row.paired)
+      problems.push(`${row.screen}/${row.condition}/${row.theme}: 突き合わせたスロットが 0 件`);
+  const paired = standaloneRows.reduce((total, row) => total + row.paired, 0);
   log(
     `${rows.length} cases (${MATRIX_SCREENS.length} screens × ${conditions.length} conditions × ` +
       `${ROLE_THEMES.length} themes × 2 surfaces), ` +
       `${rows.reduce((total, row) => total + row.domSamples, 0)} DOM role samples, ` +
       `${rows.reduce((total, row) => total + row.canvasDraws, 0)} Canvas draws, ` +
+      `${paired} paired slots over ` +
+      `${new Set(standaloneRows.flatMap((row) => row.pairedKinds)).size} kinds, ` +
       `${roleUnion.size} roles, viewports ${[...widths].sort((a, b) => a - b).join("/")}, ` +
       `bitmap widths ${bitmaps.size}, ${journeys.length} edit journeys, ${images.length} images, ` +
       `zoom ${MATRIX_ZOOM.method} (real browser zoom: ${MATRIX_ZOOM.realBrowserZoom})`,

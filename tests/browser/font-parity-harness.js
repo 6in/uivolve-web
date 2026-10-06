@@ -510,6 +510,10 @@ export async function createFontParityHarness({
     matrix(probe) {
       return {
         ...this.lifecycle(probe),
+        // The text-node sweep travels with every matrix case too: a width, a ratio or a
+        // theme must not move a size on one surface without moving it on the other, and
+        // that is a per-component comparison, not a per-surface one.
+        domText: { dom: observeDom(domStage, "dom") },
         domScene: sceneRecord(runtime.scenes[0]),
         controls: [...controlBoxes(domStage, "dom"), ...controlBoxes(canvasStage, "canvas")],
         hostFrame: hostFrame(host),
@@ -550,20 +554,28 @@ export async function createFontParityHarness({
       // The Canvas frame currently on screen, recorded by the init script through the
       // original fillText/measureText, paired with the Scene those calls were painted from.
       // Asked for by element: earlier harnesses left behind buckets under the same id.
+      //
+      // `domText` is the full text-node sweep of both stages — children and generated
+      // content included — which is what the per-widget comparison pairs the Canvas draws
+      // against. The hand-written selector table (`specs`) is kept beside it: it names the
+      // roles that must exist, while the sweep is what notices a node nobody named.
+      const domText = {
+        dom: observeDom(domStage, "dom"),
+        canvasStage: observeDom(canvasStage, "canvas-stage"),
+      };
       return {
         dom: measureRoles(domStage, specs),
         canvasStage: measureRoles(canvasStage, specs),
-        textFreeViolations: [domStage, canvasStage].flatMap((stage) =>
-          observeDom(stage, "roles")
-            .filter((record) => noText.includes(record.kind))
-            .map(({ selector, kind, text, part, stage: where }) => ({
-              stage: where,
-              selector,
-              kind,
-              part,
-              text,
-            })),
-        ),
+        domText,
+        textFreeViolations: [...domText.dom, ...domText.canvasStage]
+          .filter((record) => noText.includes(record.kind))
+          .map(({ selector, kind, text, part, stage: where }) => ({
+            stage: where,
+            selector,
+            kind,
+            part,
+            text,
+          })),
         canvasSurface: window.__fontParity?.forCanvas(canvas) ?? null,
         scene: sceneRecord(runtime.scenes[1]),
         resolved: { dom: resolvedMetrics(domStage), canvas: resolvedMetrics(canvasStage) },
