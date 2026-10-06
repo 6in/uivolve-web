@@ -26,10 +26,12 @@ bun run docs:check
 ```
 
 - 上記の font-parity スクリプトと suite は **T1で新設する計画名**。baseline は差を採取し、他 suite は担当タスクで検査を追加する。distribution はT9の生成配布物検査。未実装の suite を成功として扱わず非0終了する。
+- **PLAN 訂正（turn 4 / T1 実測）**: 上の suite 一覧は「全ターンで green にする一覧」ではない。未実装 suite は担当タスクが実装するまで**非0で終了するのが期待どおり**なので、各実装ターンで green を確認するのは**その時点で実装済みの suite だけ**（T1終了時点では baseline のみ）。全 suite が green になるのはT9の `bun scripts/verify-font-parity.mjs` 一本。根拠: 同じ行の「未実装の suite を成功として扱わず非0終了する」という決定と、T1で実装した `--list` / 非0終了の実測。
 - 環境の初期化（毎回）: `bun run build:wasm`。DB初期化は不要。ブラウザ runner は新しい context/runtime を作り、対象 suite のみを実行し、終了時にページ・context・ブラウザ・所有サーバーを閉じる。起動するサーバーのポートは自動割当とし、既存プロセスを終了しない。
 - スクリプト実行前は `node --check <対象.mjs>`、撮影前は対象差分の整形→build。実行中の整形でページを再読込させない。
 - 最終判定1本（T1で新設）: `bun scripts/verify-font-parity.mjs`。順番は build:wasm → 全Vitest → test:rust → check → docs:check → build → build:runtime → build:minimal → 全font-parity suite（baseline除く）→生成物からの独立runtime/minimal確認。失敗・中断を非0で返す。手動目視の記録はこのコマンドの成功に加えて必要。
 - サーバー・Chromiumの実行経路と日本語フォントはT1で固定して `docs/renderer-font-parity.md` に記録する。新規の依存追加なし。runner は `--browser-path` と `--browser-endpoint` のどちらかを選べるようにし、外部ブラウザ接続時は所有したcontextのみ閉じる。無人環境で両方利用不能ならT1を未完了のままBLOCKEDをコミットする。researchで失敗したsnap Chromiumを無条件に再試行しない。
+- **T1 実測で確定（turn 4）**: ブラウザは `/usr/bin/chromium-browser`（Chromium 152.0.7977.64、headless）、サーバーは `bunx vp dev` を空きポートで所有起動。環境変数は `FONT_PARITY_BROWSER_PATH` / `FONT_PARITY_BROWSER_ENDPOINT`。日本語は実在の字体で描画されることをインク幅で確認済み（`document.fonts.check` は未割当コードポイントにも true を返すため字体の証拠にしない）。**turn 3 のBLOCKEDは解消**。
 - OSの実IMEと実ブラウザズームを実行できない場合は要件どおり限界・代用方式を明記する。ブラウザ数値比較・代表画像自体を省略して合格にしない。
 
 ## 追従先チェックリスト
@@ -48,7 +50,7 @@ bun run docs:check
 
 ## Tasks
 
-- [ ] T1: 実ブラウザ検証の入口と修正前台帳を作る
+- [x] T1: 実ブラウザ検証の入口と修正前台帳を作る
   - 完了基準: サーバー起動・終了、実Chromium接続、実WASM load、document.fonts.ready待機、日本語表示を確認する。比較デモと独立UiRuntime双方でHello Worldの修正前値と画像を取得し、DOM selector/key/kind/role、computed font-size、実fillText font/transform、CSS幅/bitmap幅、viewport/DPR/theme/font状態をJSONに保存する。描画観測は元のfillText/measureTextを呼び、画像を変えない。フォント名指定と使用可能字体の証拠を分ける。重複文字の照合は位置・key・roleを使い、文字列だけで対応付けない。baselineは差があっても報告できるが未知suite・起動失敗・未取得データは非0。最終runnerの順序・失敗伝播・cleanupを小さなプロセス試験で検証し、今後の未実装suiteをskipしない。実ブラウザ利用不能時はBLOCKED、T1を完了にしない。
   - 対象: 新設 `scripts/test-font-parity-browser.mjs`、`scripts/verify-font-parity.mjs`、`tests/browser/font-parity.html`、`tests/browser/font-parity-harness.js`、`tests/browser/font-parity.mjs`、`tests/font-parity-runner.test.js`、`docs/renderer-font-parity.md`。証跡は `.gsd-lite/logs/renderer-font-size-parity/`。
   - 依存: なし

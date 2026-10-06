@@ -1,5 +1,11 @@
 # BLOCKED — T1 実ブラウザ検証の入口と修正前台帳
 
+> **解消済み（turn 4 / 2026-10-06）**: 停止原因は実行ファイルの不在ではなく実行サンドボックスだった。
+> Claudeのサンドボックス外実行で `/usr/bin/chromium-browser`（Chromium 152.0.7977.64、headless）が
+> 起動し、実WASM・日本語描画・比較デモ/独立runtime双方の実測と画像を取得してT1を完了した。
+> 以降ブラウザを使うコマンドはサンドボックス外で実行する。記録は `docs/renderer-font-parity.md` と
+> PROGRESS の turn 4。以下は停止時点の記録。
+
 - turn: 3（impl）
 - 状況: 作業ツリーは開始時にclean。先頭の未完了タスクT1の必須条件である実Chromiumの起動・接続を確立できず、実WASM・日本語字体・computed font-size・Canvas観測・比較画像は未取得。T1のチェックボックスは未完了のまま。製品コードと検証runnerは変更していない。
 - 停止根拠: PLAN.mdの「無人環境で両方利用不能ならT1を未完了のままBLOCKEDをコミットする」とT1完了基準の「実ブラウザ利用不能時はBLOCKED、T1を完了にしない」。
