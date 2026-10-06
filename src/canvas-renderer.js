@@ -469,17 +469,7 @@ export class CanvasRenderer {
         disposeMedia(record);
         this.media.delete(key);
       }
-    const scale = window.devicePixelRatio || 1;
-    const width = Math.round(scene.width * scale);
-    const height = Math.round(scene.height * scale);
-    if (this.canvas.width !== width || this.canvas.height !== height) {
-      this.canvas.width = width;
-      this.canvas.height = height;
-    }
-    this.stage.style.height = `${scene.height}px`;
-    this.canvas.style.width = `${scene.width}px`;
-    this.canvas.style.height = `${scene.height}px`;
-    this.context.setTransform(scale, 0, 0, scale, 0, 0);
+    this.syncSurface();
     if (this.editor) {
       const widget = scene.widgets.find((w) => w.key === this.editor.key);
       if (
@@ -520,6 +510,26 @@ export class CanvasRenderer {
         this.returnFocus.delete(key);
     }
     this.paint();
+  }
+
+  // The bitmap follows the scene size and the device pixel ratio. `setTransform`, not
+  // `scale`, so a ratio that moves 1 -> 2 -> 1 cannot accumulate. Called from paint() as
+  // well as render(): an image, a font or a drag repaints without a new Scene, and that
+  // frame still has to land on a bitmap built for the ratio in effect now.
+  syncSurface() {
+    const scene = this.scene;
+    if (!scene) return;
+    const scale = window.devicePixelRatio || 1;
+    const width = Math.round(scene.width * scale);
+    const height = Math.round(scene.height * scale);
+    if (this.canvas.width !== width || this.canvas.height !== height) {
+      this.canvas.width = width;
+      this.canvas.height = height;
+    }
+    this.stage.style.height = `${scene.height}px`;
+    this.canvas.style.width = `${scene.width}px`;
+    this.canvas.style.height = `${scene.height}px`;
+    this.context.setTransform(scale, 0, 0, scale, 0, 0);
   }
 
   box(x, y, width, height, fill, border, radius = 7) {
@@ -563,6 +573,7 @@ export class CanvasRenderer {
 
   paint() {
     if (!this.scene) return;
+    this.syncSurface();
     // One resolution per frame, from the stage's computed style: every size below is a
     // role name, so the DOM declarations stay the only place the pixels are written.
     this.fonts = resolveFontMetrics(this.stage);

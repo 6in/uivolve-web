@@ -109,11 +109,28 @@ beforeAll(async () => {
 afterEach(() => {
   for (const runtime of runtimes.splice(0)) runtime.dispose();
 });
-function stage(width = 400) {
+// The host subscribes to the document's font set and to a resolution media query. The stub
+// records every query it hands out so a test can fire the change the browser would.
+function testDocument() {
+  const view = {
+    devicePixelRatio: 1,
+    queries: [],
+    matchMedia(media) {
+      const query = Object.assign(new EventTarget(), { media });
+      view.queries.push(query);
+      return query;
+    },
+  };
+  return Object.assign(new EventTarget(), {
+    defaultView: view,
+    fonts: Object.assign(new EventTarget(), { status: "loading", ready: Promise.resolve() }),
+  });
+}
+function stage(width = 400, ownerDocument = testDocument()) {
   const element = {
     clientWidth: width,
     className: "host",
-    ownerDocument: new EventTarget(),
+    ownerDocument,
     contains: () => false,
     style: { setProperty: vi.fn() },
     dataset: {},
@@ -212,6 +229,42 @@ it("uses the same host and state for one or both rendering adapters without demo
   const detached = runtime.snapshot();
   detached.state.name = "変更";
   expect(runtime.snapshot().state.name).toBe("太郎");
+});
+
+it("repaints when fonts settle or fail and when only the device pixel ratio changes, and both stop at dispose", async () => {
+  const ownerDocument = testDocument();
+  const runtime = await host({
+    surfaces: [{ element: stage(400, ownerDocument), renderer: "dom" }],
+  });
+  await runtime.load("pages/home.yaml");
+  const repaint = vi.spyOn(runtime, "scheduleRender");
+  // Flush the initial fonts.ready subscription so the counts below only reflect new signals.
+  await new Promise((done) => setTimeout(done, 0));
+  expect(repaint).not.toHaveBeenCalled();
+  ownerDocument.fonts.dispatchEvent(new Event("loadingdone"));
+  ownerDocument.fonts.dispatchEvent(new Event("loadingerror"));
+  expect(repaint).toHaveBeenCalledTimes(2);
+  // A ratio change can leave every CSS size untouched, so only the resolution query reports
+  // it, and the watcher has to re-arm at the new ratio to still see the next one.
+  const armed = () => ownerDocument.defaultView.queries.at(-1);
+  expect(armed().media).toBe("(resolution: 1dppx)");
+  for (const ratio of [2, 1]) {
+    const previous = armed();
+    ownerDocument.defaultView.devicePixelRatio = ratio;
+    previous.dispatchEvent(new Event("change"));
+    expect(armed().media).toBe(`(resolution: ${ratio}dppx)`);
+  }
+  expect(repaint).toHaveBeenCalledTimes(4);
+  const ratioQuery = armed();
+  // A second runtime on the same document must not take this one's subscriptions with it.
+  const other = await host({ surfaces: [{ element: stage(500, ownerDocument), renderer: "dom" }] });
+  other.dispose();
+  ownerDocument.fonts.dispatchEvent(new Event("loadingdone"));
+  expect(repaint).toHaveBeenCalledTimes(5);
+  runtime.dispose();
+  ownerDocument.fonts.dispatchEvent(new Event("loadingdone"));
+  ratioQuery.dispatchEvent(new Event("change"));
+  expect(repaint).toHaveBeenCalledTimes(5);
 });
 
 it("keeps the page, edited state and token when downloads, init or configured IDs fail", async () => {

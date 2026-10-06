@@ -321,6 +321,50 @@ export function dialogIconSurfaces(stage) {
   });
 }
 
+// Advance widths measured with the font the Canvas renderer resolves for this stage, so a
+// font that finished loading shows up as a different number instead of only a different
+// name. The probe strings identify the face rather than its size: a monospaced font gives
+// "iiiii" and "WWWWW" the same advance, a proportional one cannot.
+export function advanceWidths(stage, samples) {
+  const resolved = resolveFontMetrics(stage);
+  const ctx = document.createElement("canvas").getContext("2d");
+  return samples.map((sample) => {
+    const role = sample.role ?? "body";
+    ctx.font = resolved.font(role);
+    return { text: sample.text, role, font: ctx.font, width: ctx.measureText(sample.text).width };
+  });
+}
+
+// The laid-out width of DOM text, measured with a Range so it is the text's own advance
+// rather than the box the layout handed it: this is the DOM half of "the font changed and
+// both surfaces were measured again".
+export function textInk(stage, selectors) {
+  return selectors.map((selector) => {
+    const element = stage.querySelector(selector);
+    if (!element)
+      return { selector, found: false, text: null, width: null, scrollWidth: null, lineCount: 0 };
+    const range = stage.ownerDocument.createRange();
+    range.selectNodeContents(element);
+    const rect = range.getBoundingClientRect();
+    // Three numbers, because one is not enough to notice every reflow: a wrapping text
+    // saturates at its container's width and shows the change in its line count instead,
+    // and a clipped one shows it in the scroll width.
+    const lineCount = range.getClientRects().length;
+    range.detach?.();
+    const style = getComputedStyle(element);
+    return {
+      selector,
+      found: true,
+      text: (element.textContent ?? "").slice(0, 24),
+      width: rect.width,
+      scrollWidth: element.scrollWidth,
+      lineCount,
+      fontSize: Number.parseFloat(style.fontSize),
+      fontFamily: style.fontFamily,
+    };
+  });
+}
+
 // What the Canvas side will resolve from the same stage. Reported as data — including
 // the failure message — so the suite decides, instead of a fallback hiding missing CSS.
 export function resolvedMetrics(stage) {
@@ -617,6 +661,9 @@ export async function createFontParityHarness({
   canvas.setAttribute("aria-label", "UI Canvas");
   canvasStage.append(canvas);
   host.append(domStage, canvasStage);
+  // The stylesheet's own family, kept so a probe font can be put in front of it without
+  // the fallback list growing every time useFontFamily() is called.
+  let stageFamily = null;
   const errors = [];
   const runtime = await createRuntime({
     baseUrl: new URL("/", location.origin),
@@ -811,6 +858,54 @@ export async function createFontParityHarness({
       runtime.render();
       await this.afterFrame();
       return activeControl(host);
+    },
+    // Point both stages at a font the fixture delivers on demand. The inline declaration
+    // beats the runtime stylesheet's own family (specificity 0,1,0), so the probe face is
+    // what the DOM text inherits and what the Canvas resolves, with the runtime's list left
+    // behind it as the fallback the browser uses until the bytes arrive.
+    async useFontFamily(family, probe = {}) {
+      stageFamily ??= getComputedStyle(domStage).fontFamily;
+      for (const element of [domStage, canvasStage])
+        element.style.fontFamily = family ? `"${family}", ${stageFamily}` : stageFamily;
+      // Repaint once with the font merely requested: the frame recorded now is the "before"
+      // reference, and the automatic repaint after the load is what has to replace it.
+      runtime.render();
+      await this.afterFrame();
+      return this.lifecycle(probe);
+    },
+    // Everything a font completion or a device pixel ratio change has to leave correct: the
+    // font set's own status, the advances both stages measure, the frame the Canvas actually
+    // painted (with its transform and bitmap), and the control an open edit is sitting in.
+    lifecycle({ samples = [], specs = [], selectors = [] } = {}) {
+      return {
+        fonts: {
+          status: document.fonts.status,
+          faces: [...document.fonts].map((face) => ({
+            family: face.family,
+            status: face.status,
+          })),
+        },
+        advances: {
+          dom: advanceWidths(domStage, samples),
+          canvas: advanceWidths(canvasStage, samples),
+        },
+        ink: textInk(domStage, selectors),
+        roles: {
+          dom: measureRoles(domStage, specs),
+          canvasStage: measureRoles(canvasStage, specs),
+        },
+        canvasSurface: window.__fontParity?.forCanvas(canvas) ?? null,
+        scene: sceneRecord(runtime.scenes[1]),
+        resolved: { dom: resolvedMetrics(domStage), canvas: resolvedMetrics(canvasStage) },
+        environment: {
+          domStage: environment(domStage, null),
+          canvasStage: environment(canvasStage, canvas),
+        },
+        active: activeControl(host),
+        pixelRatio: window.devicePixelRatio,
+        disposed: runtime.disposed,
+        errors: [...errors],
+      };
     },
     // Page coordinates for the centre of a Scene widget. Dragging needs pointer capture,
     // which only real browser input grants, so the caller drives the mouse from outside

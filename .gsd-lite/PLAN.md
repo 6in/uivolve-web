@@ -117,11 +117,30 @@ bun run docs:check
     のは「30pxの maxWidth による意図しない縮小を防ぐ」ことなので、サイズと非縮小だけを揃え、
     送り幅の一致は DOM が 1 行に収まる場合だけ検査する。
 
-- [ ] T6: フォント完了とDPR変更時の再描画・解放を保証する
+- [x] T6: フォント完了とDPR変更時の再描画・解放を保証する
   - 完了基準: 初期fonts.readyと以後の使用字体load完了で必要な再描画/再計測を行い、失敗時もfallbackで動作する。テストサーバーで読取可能なテスト字体を遅延配信し、読込前後の実計測と描画更新を確認する（T1で字体経路を固定、依存追加なし）。font完了とtheme/renderの競合、load失敗、dispose後の完了では例外・復活描画・購読漏れなし。DPRだけが変わってCSS幅が同じ場合もbitmap/transformを更新し、DPR1→2→1で倍率が累積しない。複数runtimeのdisposeは他方へ影響しない。編集ノード・selection・draftを失わず、runtime状態回帰とlifecycle suiteが成功。
   - 対象: `src/runtime.js`、`src/canvas-renderer.js`、必要なら `src/font-metrics.js`、`tests/runtime.test.js`、`tests/browser/font-parity.mjs`、`tests/browser/font-parity-harness.js`、`scripts/test-font-parity-browser.mjs`、`docs/renderer-font-parity.md`。
   - 依存: T5
   - 並列サブ作業: なし（購読・再描画・disposeの実装と試験は依存）。
+  - **PLAN 訂正（turn 9 / T6 実測）**: 「テストサーバーで読取可能なテスト字体を遅延配信」は、
+    **実行環境の実フォントファイル**（既定 `/usr/share/fonts/truetype/freefont/FreeMono.ttf`、
+    `FONT_PARITY_TEST_FONT` で変更可）を読み、fixtureサーバーのoriginのURL
+    （`/tests/browser/font-parity-probe-<id>.ttf`）で配信する形にした。**バイト列を保留して
+    遅らせるのは runner の route** で、`bunx vp dev` にテスト専用の経路は足していない
+    （サーバーは共有の開発サーバーで、遅延配信の口を足すと製品側の配布物に検査専用の経路が
+    混ざる）。字体をリポジトリへ同梱しない（再配布しない）ためでもある。依存追加なし。
+  - **PLAN 訂正（turn 9 / T6 実測）**: 「DPRだけが変わってCSS幅が同じ場合」の通知は
+    `matchMedia("(resolution: Ndppx)")` の `change` で受ける（ResizeObserver は CSS 寸法が
+    動かない変更を報告しないため）。ただし **CDP の `Emulation.setDeviceMetricsOverride` は
+    `devicePixelRatio` と `MediaQueryList.matches` を更新するが `change` を配信しない**ことを
+    実測した。そのため lifecycle suite は、購読済みの**実 `MediaQueryList` 上でイベントだけを
+    発火**する（倍率・bitmap・変形・計測値はすべてブラウザ自身の値）。購読と張り直しは
+    `tests/runtime.test.js` の単体試験でも確認し、台帳の限界表に代用であることを明記した。
+  - **PLAN 訂正（turn 9 / T6 実測）**: 字体の読込前後を比べるケースだけ、画面を
+    `screens/hello-world.json` ではなく T3 の `tests/browser/font-parity-text.json` にした。
+    probe 字体（等幅）に CJK 字体が無く、**日本語だけの画面では送り幅が 1 件も動かない**ため
+    （実測: 日本語テキスト 84.00px → 84.00px、ラテン `iiiii` 17.87px → 39.00px）。
+    他の 4 ケースは hello-world のまま。
 
 - [ ] T7: 全共通部品の状態別coverageを閉じる
   - 完了基準: DomRendererのcreate/render、CanvasRendererのpaint/paintField、extrasのnormalize/arrange、実生成Sceneからkindとxtypeの二層で全役割を照合し、対応無しを黙ってskipしない。文字なし・対象外・既存の表現差は理由付きで台帳に残す。gallery全タブ、popup/menu、toast、dialog標準/画像/絵文字、media error、drag、selected/disabled、calendar月移動/長い月名/月端、label無しfieldを網羅する。代表画面だけにないroleは実WASM補助fixtureで検証する。台帳の全対象roleが実測結果を持ち、不一致0件。既存描画差を理由にサイズ不一致を免除しない。不足修正は既に確定したサイズ/倍率方針内に限定する。

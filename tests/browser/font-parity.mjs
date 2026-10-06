@@ -1,4 +1,6 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 
 // Browser-side Canvas observation. Installed through addInitScript so it is in place
@@ -222,10 +224,11 @@ function japaneseRendered(font) {
   return japanese.pixels > 0 && japanese.inkWidth !== unmapped.inkWidth;
 }
 
-async function instrument(context, url, viewport) {
+async function instrument(context, url, viewport, inits = []) {
   const page = await context.newPage();
   page.setDefaultTimeout(30000);
   await page.addInitScript(canvasRecorder);
+  for (const init of inits) await page.addInitScript(init);
   if (viewport) await page.setViewportSize(viewport);
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -2157,6 +2160,688 @@ async function runSurfaces({ context, origin, evidenceDir, viewport, log }) {
   return { cases: captures.length, sprites: sprites.length, file };
 }
 
+// --- lifecycle ----------------------------------------------------------------------
+// What has to stay correct when the font the frame was measured with arrives late, fails,
+// or when the device pixel ratio moves underneath a painted frame. The DOM reflows itself
+// for all three; the Canvas bitmap does none of it, so this suite is about the host's two
+// subscriptions and about the bitmap the ratio scales.
+//
+// The probe font is a real font file on this machine (its path, size and digest are written
+// to the ledger), declared from the page and delivered over the fixture server's origin by
+// the runner's own route, which is what holds the bytes back until the suite lets them
+// through. Nothing is added to the product for it: the stage's family is overridden from the
+// page, exactly where the host lets an embedding application override it.
+
+const TEST_FONT_CANDIDATES = [
+  "/usr/share/fonts/truetype/freefont/FreeMono.ttf",
+  "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+  "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+];
+
+// A monospaced face on purpose: equal advances for "iiiii" and "WWWWW" are what tells the
+// probe font apart from the proportional fallback, with no hard-coded width anywhere.
+function testFontPath() {
+  const named = process.env.FONT_PARITY_TEST_FONT;
+  if (named) {
+    if (!existsSync(named)) throw new Error(`FONT_PARITY_TEST_FONT=${named} は存在しません`);
+    return named;
+  }
+  const found = TEST_FONT_CANDIDATES.find((path) => existsSync(path));
+  if (!found)
+    throw new Error(
+      "遅延配信するテスト字体が見つかりません。等幅の実フォントファイルを " +
+        `FONT_PARITY_TEST_FONT で指定してください（既定の候補: ${TEST_FONT_CANDIDATES.join(", ")}）`,
+    );
+  return found;
+}
+
+// Installed before the first script on the page: it records every media query the host
+// arms, so the suite can reach the real MediaQueryList the runtime subscribed to.
+function mediaRecorder() {
+  const original = window.matchMedia.bind(window);
+  const queries = [];
+  window.matchMedia = (media) => {
+    const query = original(media);
+    queries.push({ media, query });
+    return query;
+  };
+  window.__fontParityMedia = {
+    list: () => queries.map((entry) => entry.media),
+    // Chromium updates window.devicePixelRatio (and MediaQueryList.matches) under a CDP
+    // metrics override but delivers no `change` event for it, so the event is fired here on
+    // the query the host is actually listening to. Only the delivery is synthetic: the
+    // ratio, the bitmap, the transform and every number measured afterwards are the
+    // browser's own.
+    fire(media) {
+      const entry = [...queries].reverse().find((candidate) => candidate.media === media);
+      if (!entry) throw new Error(`matchMedia(${media}) は一度も問い合わされていません`);
+      entry.query.dispatchEvent(new Event("change"));
+      return { media, matches: entry.query.matches };
+    },
+  };
+}
+
+const LIFECYCLE_SCREEN = "screens/hello-world.json";
+// The arrival case needs Latin text on screen: the probe font has no CJK glyphs, so a
+// Japanese-only screen keeps the per-codepoint fallback and nothing it paints would move.
+// T3's text fixture carries both, plus an editable field for the draft.
+const ARRIVAL_SCREEN = "/tests/browser/font-parity-text.json";
+// `moves` says whether the probe font covers these codepoints. Both answers are checked: a
+// covered sample has to change, an uncovered one has to stay exactly where it was.
+const FONT_SAMPLES = [
+  { text: "iiiii", moves: true },
+  { text: "WWWWW", moves: true },
+  { text: "ABCDEFGHIJ", moves: true },
+  { text: "日本語テキスト", role: "caption", moves: false },
+];
+const LIFECYCLE_SELECTORS = [
+  { selector: ".ui-displayfield > div", moves: true },
+  { selector: ".ui-label", moves: false },
+];
+const LIFECYCLE_ROLES = ROLE_CONTRACT.filter((entry) =>
+  [
+    "label",
+    "button",
+    "field-input",
+    "field-label",
+    "canvas-editor",
+    "displayfield-label",
+    "displayfield-value",
+  ].includes(entry.role),
+);
+const LIFECYCLE_PROBE = {
+  samples: FONT_SAMPLES,
+  specs: LIFECYCLE_ROLES,
+  selectors: LIFECYCLE_SELECTORS.map((entry) => entry.selector),
+};
+// An advance width is a float: anything above this is a change, anything below is the same
+// number measured twice.
+const SAME_WIDTH = 0.01;
+const PIXEL_RATIOS = [2, 1, 2.5, 1];
+const DRAFT = "下書き";
+
+const observeLifecycle = (page) =>
+  page.evaluate((input) => window.__fontParityHarness.lifecycle(input), LIFECYCLE_PROBE);
+
+// Always the canvas the current harness owns: a disposed harness leaves its own bucket
+// behind under the same element id.
+const recordedDraws = (page) =>
+  page.evaluate(
+    () => window.__fontParity.forCanvas(window.__fontParityHarness.canvas)?.draws ?? [],
+  );
+
+// A frame recorded after the bytes were released: every draw in it saw a settled font set.
+const loadedFrame = (page) =>
+  page.waitForFunction(
+    () => {
+      const draws = window.__fontParity.forCanvas(window.__fontParityHarness.canvas)?.draws ?? [];
+      return draws.length > 0 && draws.every((draw) => draw.fontsStatus === "loaded");
+    },
+    undefined,
+    { timeout: 15000 },
+  );
+
+const ratioFrame = (page, ratio) =>
+  page.waitForFunction(
+    (expected) => {
+      const draws = window.__fontParity.forCanvas(window.__fontParityHarness.canvas)?.draws ?? [];
+      return draws.length > 0 && draws.every((draw) => draw.devicePixelRatio === expected);
+    },
+    ratio,
+    { timeout: 15000 },
+  );
+
+// Equal advances for the narrow and the wide sample: true only while the monospaced probe
+// font is the one being measured.
+function uniformAdvance(advances) {
+  const narrow = advances.find((entry) => entry.text === "iiiii");
+  const wide = advances.find((entry) => entry.text === "WWWWW");
+  if (!narrow || !wide) return null;
+  return Math.abs(narrow.width - wide.width) < 0.01;
+}
+
+// Every role that is on screen still carries its declared size. A font or a ratio may
+// change what a glyph measures; it may never change which size was declared.
+function assertSizesHeld(label, capture, note) {
+  let measured = 0;
+  for (const [surface, groups] of Object.entries(capture.roles))
+    for (const group of groups) {
+      const spec = LIFECYCLE_ROLES.find((entry) => entry.selector === group.selector);
+      for (const sample of group.samples.filter((entry) => entry.visible)) {
+        measured++;
+        if (sample.fontSize !== spec.px)
+          note(`${label}/${surface} ${group.role} が ${sample.fontSize}px（宣言は ${spec.px}px）`);
+      }
+    }
+  const sizes = new Set(Object.values(SIZE_CONTRACT));
+  for (const draw of capture.canvasSurface?.draws ?? []) {
+    const declared = fontSizeOf(draw.font);
+    if (!sizes.has(declared))
+      note(`${label} のCanvas描画 "${draw.text.slice(0, 12)}" が役割外の ${declared}px`);
+  }
+  return measured;
+}
+
+// `locator.screenshot()` waits for the web fonts to settle, which is precisely the state
+// these cases hold on purpose, so a frame with bytes still in flight is grabbed through CDP.
+async function captureHeldFrame(page, context, path) {
+  const box = await page.locator("#font-parity-host").boundingBox();
+  const cdp = await context.newCDPSession(page);
+  try {
+    const shot = await cdp.send("Page.captureScreenshot", {
+      format: "png",
+      clip: { x: box.x, y: box.y, width: box.width, height: box.height, scale: 1 },
+      captureBeyondViewport: true,
+    });
+    await writeFile(path, Buffer.from(shot.data, "base64"));
+  } finally {
+    await cdp.detach().catch(() => {});
+  }
+  return path;
+}
+
+async function declareProbeFont(page, { id, family }) {
+  await page.addStyleTag({
+    content:
+      `@font-face { font-family: "${family}"; ` +
+      `src: url("/tests/browser/font-parity-probe-${id}.ttf") format("truetype"); ` +
+      // `swap` keeps the fallback visible while the bytes are held back, so the "before"
+      // frame is a real frame instead of Chromium's invisible block period.
+      "font-display: swap; }",
+  });
+}
+
+// One route for every probe font, with the bytes held until the case opens its gate.
+async function serveProbeFonts(page, bytes) {
+  const gates = new Map();
+  const requests = [];
+  await page.route("**/font-parity-probe-*.ttf", async (route) => {
+    const url = route.request().url();
+    const id = /font-parity-probe-([a-z0-9-]+)\.ttf/.exec(url)?.[1];
+    const gate = gates.get(id);
+    requests.push({ id: id ?? null, url, mode: gate?.mode ?? "unknown" });
+    if (!gate)
+      return route.fulfill({ status: 404, contentType: "text/plain", body: "unknown probe" });
+    await gate.opened;
+    if (gate.mode === "broken")
+      return route.fulfill({
+        status: 200,
+        contentType: "font/ttf",
+        body: "これはフォントのバイト列ではありません",
+      });
+    return route.fulfill({ status: 200, contentType: "font/ttf", body: bytes });
+  });
+  return {
+    requests,
+    gate(id, mode = "good") {
+      let open;
+      const opened = new Promise((done) => {
+        open = done;
+      });
+      gates.set(id, { mode, opened });
+      return { id, family: `FontParityProbe-${id}`, mode, open };
+    },
+  };
+}
+
+// Open an edit and type a draft into it, so a repaint can be checked for keeping the very
+// node, selection and uncommitted text the user is working in.
+async function openDraft(page, note, target = "nameInput") {
+  await page.evaluate(
+    (input) => window.__fontParityHarness.focusField({ surface: "canvas", target: input }),
+    target,
+  );
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.type(DRAFT, { delay: 10 });
+  await page.evaluate(() => window.__fontParityHarness.afterFrame());
+  const marked = await page.evaluate(() => window.__fontParityHarness.markActive());
+  if (!marked.present) note("編集を開始できなかった");
+  if (marked.value !== DRAFT) note(`下書きが "${marked.value}" になった`);
+  return marked;
+}
+
+function assertDraftHeld(label, marked, capture, note) {
+  const active = capture.active;
+  if (!active.present) return note(`${label}: 再描画後に焦点が失われた`);
+  if (!active.same) return note(`${label}: 再描画で編集中の入力欄が作り直された`);
+  if (active.value !== marked.value)
+    note(`${label}: 下書きが "${marked.value}" から "${active.value}" になった`);
+  if (
+    active.selectionStart !== marked.selectionStart ||
+    active.selectionEnd !== marked.selectionEnd
+  )
+    note(`${label}: 選択位置が ${marked.selectionStart}-${marked.selectionEnd} から動いた`);
+}
+
+// Case 1: the font arrives after the frame was painted. Nothing in the page resizes,
+// clicks or re-renders after the bytes are released, so any frame recorded from that
+// point on was scheduled by the host's own font subscription.
+async function runFontArrival(page, context, { gate, evidenceDir, problems }) {
+  const note = (message) => problems.push(`fonts-arrival: ${message}`);
+  await openHarness(page, ARRIVAL_SCREEN);
+  await declareProbeFont(page, gate);
+  const marked = await openDraft(page, note, "longAscii");
+  const before = await page.evaluate(
+    (input) => window.__fontParityHarness.useFontFamily(input.family, input.probe),
+    { family: gate.family, probe: LIFECYCLE_PROBE },
+  );
+  const beforeImage = await captureHeldFrame(
+    page,
+    context,
+    resolve(evidenceDir, "lifecycle-font-before.png"),
+  );
+  if (before.fonts.status !== "loading")
+    note(`字体を要求した直後の font set が ${before.fonts.status}（loading を期待）`);
+  if (uniformAdvance(before.advances.canvas) !== false)
+    note("読込前から等幅で測れている（fallback を測れていない）");
+  const beforeDraws = before.canvasSurface?.draws ?? [];
+  if (!beforeDraws.length) note("読込前のCanvasフレームが記録されていない");
+  if (!beforeDraws.some((draw) => draw.font.includes(gate.family)))
+    note("読込前のCanvas描画が probe 字体を指していない");
+  // The monospace roles keep their own family on purpose (that is the one override the
+  // renderer makes), so they are the only draws allowed not to name the stage's family.
+  const strayFamily = beforeDraws.filter(
+    (draw) => !draw.font.includes(gate.family) && !draw.font.includes("monospace"),
+  );
+  if (strayFamily.length)
+    note(
+      `読込前のCanvas描画 ${strayFamily.length} 件が probe 字体も monospace も指していない` +
+        `（例: ${strayFamily[0].font}）`,
+    );
+  assertSizesHeld("読込前", before, note);
+  await page.evaluate(() => window.__fontParity.reset());
+  gate.open();
+  let repainted = true;
+  await loadedFrame(page).catch((error) => {
+    repainted = false;
+    note(`字体の読込完了でCanvasが再描画されなかった: ${error.message}`);
+  });
+  const after = await observeLifecycle(page);
+  const afterImage = await captureHeldFrame(
+    page,
+    context,
+    resolve(evidenceDir, "lifecycle-font-after.png"),
+  );
+  const face = after.fonts.faces.find((entry) => entry.family === gate.family);
+  if (face?.status !== "loaded") note(`probe 字体の状態が ${face?.status ?? "未登録"}`);
+  for (const surface of ["canvas", "dom"]) {
+    if (uniformAdvance(after.advances[surface]) !== true)
+      note(`${surface} 側が読込後も等幅で測れていない（字体が効いていない）`);
+    for (const [index, sample] of after.advances[surface].entries()) {
+      const was = before.advances[surface][index];
+      const moved = Math.abs(sample.width - was.width) >= SAME_WIDTH;
+      const spec = FONT_SAMPLES[index];
+      if (spec.moves && !moved)
+        note(`${surface} の "${sample.text}" の送り幅が変わらない（${was.width}）`);
+      // A codepoint the probe font does not cover keeps the browser's own fallback, so its
+      // advance must be the same number before and after.
+      if (!spec.moves && moved)
+        note(`${surface} の "${sample.text}" が動いた（${was.width} → ${sample.width}）`);
+    }
+  }
+  const inkShape = (record) => `${record.width}/${record.scrollWidth}/${record.lineCount}`;
+  for (const [index, entry] of after.ink.entries()) {
+    const spec = LIFECYCLE_SELECTORS[index];
+    const was = before.ink[index];
+    if (!entry.found || !was.found) {
+      note(`DOM の ${spec.selector} が見つからない`);
+      continue;
+    }
+    const moved = inkShape(entry) !== inkShape(was);
+    if (spec.moves && !moved)
+      note(`DOM の ${spec.selector} が再レイアウトされていない（${inkShape(was)}）`);
+    if (!spec.moves && moved)
+      note(`DOM の ${spec.selector} が動いた（${inkShape(was)} → ${inkShape(entry)}）`);
+  }
+  // The frame was measured again, not only declared again: the same text's recorded
+  // measureText width has to have moved with the font.
+  const afterDraws = after.canvasSurface?.draws ?? [];
+  let remeasured = 0;
+  for (const draw of afterDraws) {
+    const was = beforeDraws.find((entry) => entry.text === draw.text);
+    if (was && Math.abs(was.measuredWidth - draw.measuredWidth) >= SAME_WIDTH) remeasured++;
+  }
+  if (!remeasured) note("再描画後のCanvas計測値が1件も変わっていない");
+  if (afterDraws.some((draw) => draw.fontsStatus !== "loaded"))
+    note("読込後のフレームに読込中の描画が混ざっている");
+  const measured = assertSizesHeld("読込後", after, note);
+  if (!measured) note("役割のサイズを1件も実測できていない");
+  assertDraftHeld("fonts-arrival", marked, after, note);
+  if (after.errors.length) note(`runtime エラー: ${after.errors.join("; ")}`);
+  return {
+    name: "fonts-arrival",
+    family: gate.family,
+    repainted,
+    remeasured,
+    images: [beforeImage, afterImage],
+    before,
+    after,
+  };
+}
+
+// Case 2: the bytes never parse. The face fails, the host still repaints, and the frame
+// that lands is the fallback one — not an exception and not a half-updated frame.
+async function runFontFailure(page, { gate, problems }) {
+  const note = (message) => problems.push(`fonts-error: ${message}`);
+  await page.evaluate(() => window.__fontParityHarness.dispose());
+  await openHarness(page, LIFECYCLE_SCREEN);
+  await declareProbeFont(page, gate);
+  const before = await page.evaluate(
+    (input) => window.__fontParityHarness.useFontFamily(input.family, input.probe),
+    { family: gate.family, probe: LIFECYCLE_PROBE },
+  );
+  await page.evaluate(() => window.__fontParity.reset());
+  gate.open();
+  let repainted = true;
+  await loadedFrame(page).catch((error) => {
+    repainted = false;
+    note(`読込失敗で再描画されなかった: ${error.message}`);
+  });
+  const after = await observeLifecycle(page);
+  const face = after.fonts.faces.find((entry) => entry.family === gate.family);
+  if (face?.status !== "error")
+    note(`壊れた字体の状態が ${face?.status ?? "未登録"}（error を期待）`);
+  if (uniformAdvance(after.advances.canvas) !== false)
+    note("読込失敗後に等幅で測れている（壊れた字体が使われた）");
+  for (const [index, sample] of after.advances.canvas.entries())
+    if (Math.abs(sample.width - before.advances.canvas[index].width) >= SAME_WIDTH)
+      note(`失敗後に "${sample.text}" の送り幅が変わった（fallback が維持されていない）`);
+  const draws = after.canvasSurface?.draws ?? [];
+  if (!draws.length) note("失敗後のフレームが記録されていない");
+  if (!draws.some((draw) => draw.text.trim())) note("失敗後のフレームに文字が描かれていない");
+  assertSizesHeld("読込失敗", after, note);
+  if (after.errors.length) note(`runtime エラー: ${after.errors.join("; ")}`);
+  return { name: "fonts-error", family: gate.family, repainted, before, after };
+}
+
+// Case 3: a theme change and a width change race the font. The frame that finally lands has
+// to carry all three, and the open edit has to come through unharmed.
+async function runFontRace(page, { gate, problems }) {
+  const note = (message) => problems.push(`fonts-race: ${message}`);
+  await page.evaluate(() => window.__fontParityHarness.dispose());
+  await openHarness(page, LIFECYCLE_SCREEN);
+  await declareProbeFont(page, gate);
+  const marked = await openDraft(page, note);
+  const before = await page.evaluate(
+    (input) => window.__fontParityHarness.useFontFamily(input.family, input.probe),
+    { family: gate.family, probe: LIFECYCLE_PROBE },
+  );
+  await page.evaluate(() => window.__fontParityHarness.applyThemeUrl("/themes/dark.json"));
+  await page.evaluate(() => window.__fontParityHarness.resizeHostTo("760px"));
+  await page.evaluate(() => window.__fontParity.reset());
+  gate.open();
+  let repainted = true;
+  await loadedFrame(page).catch((error) => {
+    repainted = false;
+    note(`テーマ・幅の変更と競合したときに再描画されなかった: ${error.message}`);
+  });
+  const after = await observeLifecycle(page);
+  if (after.scene?.theme.mode !== "dark")
+    note(`テーマが ${after.scene?.theme.mode}（dark を期待）`);
+  if (uniformAdvance(after.advances.canvas) !== true) note("競合後に字体が効いていない");
+  if (
+    after.environment.canvasStage.canvas.cssWidth === before.environment.canvasStage.canvas.cssWidth
+  )
+    note("幅の変更がCanvasに届いていない");
+  const scales = new Set((after.canvasSurface?.draws ?? []).map((draw) => draw.devicePixelRatio));
+  if (scales.size !== 1) note(`1フレームに複数の倍率が混ざった: ${[...scales].join(", ")}`);
+  assertSizesHeld("競合後", after, note);
+  assertDraftHeld("fonts-race", marked, after, note);
+  if (after.errors.length) note(`runtime エラー: ${after.errors.join("; ")}`);
+  return { name: "fonts-race", family: gate.family, repainted, before, after };
+}
+
+// Case 4: the runtime is disposed while the font is still in flight. The completion must
+// not revive the surface, and it must not take the next runtime's subscription with it.
+async function runDisposeDuringLoad(page, { gate, next, problems }) {
+  const note = (message) => problems.push(`fonts-dispose: ${message}`);
+  await page.evaluate(() => window.__fontParityHarness.dispose());
+  await openHarness(page, LIFECYCLE_SCREEN);
+  await declareProbeFont(page, gate);
+  const before = await page.evaluate(
+    (input) => window.__fontParityHarness.useFontFamily(input.family, input.probe),
+    { family: gate.family, probe: LIFECYCLE_PROBE },
+  );
+  await page.evaluate(() => window.__fontParityHarness.dispose());
+  await page.evaluate(() => window.__fontParity.reset());
+  gate.open();
+  await page
+    .waitForFunction(() => document.fonts.status === "loaded", undefined, { timeout: 15000 })
+    .catch((error) => note(`字体の読込が終わらなかった: ${error.message}`));
+  // Give a stray repaint time to land before deciding that none did.
+  await page.waitForTimeout(500);
+  const afterDispose = await recordedDraws(page);
+  if (afterDispose.length) note(`dispose 後に ${afterDispose.length} 件の描画が起きた`);
+  // The next runtime on the same document still has to repaint on its own font load.
+  await openHarness(page, LIFECYCLE_SCREEN);
+  await declareProbeFont(page, next);
+  const fresh = await page.evaluate(
+    (input) => window.__fontParityHarness.useFontFamily(input.family, input.probe),
+    { family: next.family, probe: LIFECYCLE_PROBE },
+  );
+  await page.evaluate(() => window.__fontParity.reset());
+  next.open();
+  let repainted = true;
+  await loadedFrame(page).catch((error) => {
+    repainted = false;
+    note(`dispose の後に作った runtime が再描画されなかった: ${error.message}`);
+  });
+  const after = await observeLifecycle(page);
+  if (uniformAdvance(fresh.advances.canvas) !== false)
+    note("次の runtime が読込前から等幅で測れている");
+  if (uniformAdvance(after.advances.canvas) !== true) note("次の runtime で字体が効いていない");
+  assertSizesHeld("dispose 後の runtime", after, note);
+  if (after.errors.length) note(`runtime エラー: ${after.errors.join("; ")}`);
+  return {
+    name: "fonts-dispose",
+    families: [gate.family, next.family],
+    drawsAfterDispose: afterDispose.length,
+    repainted,
+    before,
+    after,
+  };
+}
+
+// Case 5: the device pixel ratio changes while every CSS size stays exactly as it was. The
+// bitmap and the transform have to follow, a round trip must not accumulate, and the font
+// sizes must not be touched by the ratio at all.
+async function runPixelRatio(page, context, { evidenceDir, problems }) {
+  const note = (message) => problems.push(`pixel-ratio: ${message}`);
+  await page.evaluate(() => window.__fontParityHarness.dispose());
+  await openHarness(page, LIFECYCLE_SCREEN);
+  const marked = await openDraft(page, note);
+  const cdp = await context.newCDPSession(page);
+  const phases = [];
+  const images = [];
+  const capture = async (ratio) => {
+    const observed = await observeLifecycle(page);
+    const image = resolve(evidenceDir, `lifecycle-dpr-${String(ratio).replace(".", "_")}.png`);
+    await page.locator("#font-parity-host").screenshot({ path: image });
+    images.push(image);
+    phases.push({ ratio, image, observed });
+    return observed;
+  };
+  let armed = 1;
+  try {
+    if ((await page.evaluate(() => window.devicePixelRatio)) !== 1)
+      note("開始時の devicePixelRatio が 1 ではない");
+    await capture(1);
+    for (const ratio of PIXEL_RATIOS) {
+      // A real ratio change: width/height 0 leaves the viewport override alone, so no CSS
+      // size moves and the resize observation has nothing to report.
+      await cdp.send("Emulation.setDeviceMetricsOverride", {
+        width: 0,
+        height: 0,
+        deviceScaleFactor: ratio,
+        mobile: false,
+      });
+      const live = await page.evaluate(() => window.devicePixelRatio);
+      if (live !== ratio) note(`devicePixelRatio が ${live}（${ratio} を要求）`);
+      await page.evaluate(() => window.__fontParity.reset());
+      const fired = await page.evaluate(
+        (media) => window.__fontParityMedia.fire(media),
+        `(resolution: ${armed}dppx)`,
+      );
+      if (fired.matches)
+        note(`(resolution: ${armed}dppx) がまだ一致している（倍率が変わっていない）`);
+      await ratioFrame(page, ratio).catch((error) =>
+        note(`倍率 ${ratio} で再描画されなかった: ${error.message}`),
+      );
+      const queries = await page.evaluate(() => window.__fontParityMedia.list());
+      if (!queries.includes(`(resolution: ${ratio}dppx)`))
+        note(
+          `倍率 ${ratio} で解像度クエリが張り直されていない（${queries.slice(-3).join(" / ")}）`,
+        );
+      armed = ratio;
+      await capture(ratio);
+    }
+  } finally {
+    await cdp
+      .send("Emulation.setDeviceMetricsOverride", {
+        width: 0,
+        height: 0,
+        deviceScaleFactor: 1,
+        mobile: false,
+      })
+      .catch(() => {});
+    await cdp.detach().catch(() => {});
+  }
+  const base = phases[0];
+  const baseCanvas = base.observed.environment.canvasStage.canvas;
+  for (const phase of phases) {
+    const label = `倍率 ${phase.ratio}`;
+    const { observed } = phase;
+    const canvas = observed.environment.canvasStage.canvas;
+    if (observed.pixelRatio !== phase.ratio) note(`${label}: 観測値が ${observed.pixelRatio}`);
+    if (canvas.cssWidth !== baseCanvas.cssWidth || canvas.cssHeight !== baseCanvas.cssHeight)
+      note(
+        `${label}: CSS寸法が ${canvas.cssWidth}x${canvas.cssHeight} に変わった（倍率だけを変えている）`,
+      );
+    if (canvas.bitmapWidth !== Math.round(canvas.cssWidth * phase.ratio))
+      note(
+        `${label}: bitmap 幅が ${canvas.bitmapWidth}（${Math.round(canvas.cssWidth * phase.ratio)} を期待）`,
+      );
+    if (canvas.bitmapHeight !== Math.round(canvas.cssHeight * phase.ratio))
+      note(`${label}: bitmap 高さが ${canvas.bitmapHeight}`);
+    const draws = observed.canvasSurface?.draws ?? [];
+    if (!draws.length) note(`${label}: フレームが記録されていない`);
+    const plain = draws.filter((draw) => Math.abs(toCss(draw).localScale - 1) < 0.001);
+    if (!plain.length) note(`${label}: 倍率1の描画が1件もない`);
+    for (const draw of plain) {
+      const { a, b, c, d } = draw.transform;
+      if (
+        Math.abs(a - phase.ratio) > 1e-6 ||
+        Math.abs(d - phase.ratio) > 1e-6 ||
+        b !== 0 ||
+        c !== 0
+      )
+        note(`${label}: 変形が a=${a} b=${b} c=${c} d=${d}（${phase.ratio} 倍の等倍を期待）`);
+      if (draw.devicePixelRatio !== phase.ratio)
+        note(`${label}: 描画時の倍率が ${draw.devicePixelRatio}`);
+    }
+    // The ratio scales the bitmap, never the type: the same text keeps the same CSS size.
+    for (const draw of plain) {
+      const was = (base.observed.canvasSurface?.draws ?? []).find(
+        (entry) => entry.text === draw.text,
+      );
+      if (!was) continue;
+      const now = toCss(draw).effectiveFontSize;
+      const then = toCss(was).effectiveFontSize;
+      if (Math.abs(now - then) > 1e-6)
+        note(`${label}: "${draw.text.slice(0, 12)}" の実効サイズが ${then} から ${now} へ動いた`);
+    }
+    if (
+      JSON.stringify(observed.resolved.canvas.sizes) !==
+      JSON.stringify(base.observed.resolved.canvas.sizes)
+    )
+      note(`${label}: 解決したサイズ表が変わった`);
+    assertSizesHeld(label, observed, note);
+    assertDraftHeld(`pixel-ratio ${phase.ratio}`, marked, observed, note);
+    if (observed.errors.length) note(`${label}: runtime エラー: ${observed.errors.join("; ")}`);
+  }
+  // 1 -> 2 -> 1 must come back to exactly the first frame, not to a frame that kept a
+  // leftover factor: `setTransform` is what makes the round trip exact.
+  const returned = phases.filter((phase) => phase.ratio === 1).at(-1);
+  const shape = (phase) =>
+    (phase.observed.canvasSurface?.draws ?? []).map((draw) => ({
+      text: draw.text,
+      font: draw.font,
+      a: draw.transform.a,
+      d: draw.transform.d,
+      bitmap: draw.bitmapWidth,
+    }));
+  if (JSON.stringify(shape(returned)) !== JSON.stringify(shape(base)))
+    note("倍率を戻したフレームが最初のフレームと一致しない（倍率が累積している）");
+  const bitmaps = new Set(
+    phases.map((phase) => phase.observed.environment.canvasStage.canvas.bitmapWidth),
+  );
+  if (bitmaps.size < 3) note(`bitmap 幅が ${bitmaps.size} 種類しかない（倍率が効いていない）`);
+  return { name: "pixel-ratio", phases, images, ratios: PIXEL_RATIOS };
+}
+
+async function runLifecycle({ context, origin, evidenceDir, viewport, log }) {
+  const fontPath = testFontPath();
+  const bytes = await readFile(fontPath);
+  const font = {
+    path: fontPath,
+    bytes: bytes.length,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    delivery:
+      "fixtureサーバーのoriginのURLで、runnerのrouteがバイト列を保留してから配信する" +
+      "（遅延はrunner側。サーバーにテスト専用の経路は足していない）",
+    realBrowserZoom: false,
+    note:
+      "CDPのdeviceScaleFactor上書きは devicePixelRatio と MediaQueryList.matches を更新するが " +
+      "change イベントを配信しないため、購読済みの実MediaQueryList上でイベントだけを発火している",
+  };
+  const { page, pageErrors } = await instrument(
+    context,
+    `${origin}/tests/browser/font-parity.html`,
+    viewport,
+    [mediaRecorder],
+  );
+  const fonts = await serveProbeFonts(page, bytes);
+  const cases = [];
+  const problems = [];
+  try {
+    cases.push(
+      await runFontArrival(page, context, { gate: fonts.gate("arrival"), evidenceDir, problems }),
+    );
+    cases.push(await runFontFailure(page, { gate: fonts.gate("broken", "broken"), problems }));
+    cases.push(await runFontRace(page, { gate: fonts.gate("race"), problems }));
+    cases.push(
+      await runDisposeDuringLoad(page, {
+        gate: fonts.gate("disposed"),
+        next: fonts.gate("successor"),
+        problems,
+      }),
+    );
+    cases.push(await runPixelRatio(page, context, { evidenceDir, problems }));
+  } finally {
+    const file = resolve(evidenceDir, "lifecycle.json");
+    await writeFile(
+      file,
+      `${JSON.stringify({ font, requests: fonts.requests, cases, pageErrors }, null, 2)}\n`,
+    );
+    log(`Lifecycle ledger: ${file}`);
+    await page.close();
+  }
+  if (pageErrors.length) problems.push(`page errors: ${pageErrors.join("; ")}`);
+  for (const name of ["fonts-arrival", "fonts-error", "fonts-race", "fonts-dispose", "pixel-ratio"])
+    if (!cases.some((entry) => entry.name === name)) problems.push(`case ${name} を実行していない`);
+  if (!fonts.requests.length) problems.push("テスト字体が一度も要求されていない");
+  for (const request of fonts.requests)
+    if (request.mode === "unknown") problems.push(`未宣言の字体が要求された: ${request.url}`);
+  log(
+    `${cases.length} cases, test font ${fontPath} (${bytes.length} bytes), ` +
+      `${fonts.requests.length} font requests, ` +
+      `ratios ${PIXEL_RATIOS.join("/")}, real browser zoom: ${font.realBrowserZoom}`,
+  );
+  if (problems.length)
+    throw new Error(`lifecycle: ${problems.length} problems\n- ${problems.join("\n- ")}`);
+  return { cases: cases.length, file: resolve(evidenceDir, "lifecycle.json") };
+}
+
 // Every suite named by the plan is registered. Suites a later task owns have no runner
 // and must fail loudly: an unimplemented check is never reported as a pass.
 export const SUITES = [
@@ -2166,7 +2851,7 @@ export const SUITES = [
   { name: "roles", owner: "T2/T3", run: runRoles },
   { name: "editing", owner: "T4", run: runEditing },
   { name: "surfaces", owner: "T5", run: runSurfaces },
-  { name: "lifecycle", owner: "T6", run: null },
+  { name: "lifecycle", owner: "T6", run: runLifecycle },
   { name: "matrix", owner: "T8", run: null },
   { name: "distribution", owner: "T9", run: null },
 ];

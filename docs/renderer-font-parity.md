@@ -24,6 +24,7 @@ bun scripts/test-font-parity-browser.mjs --suite baseline
 bun scripts/test-font-parity-browser.mjs --suite roles
 bun scripts/test-font-parity-browser.mjs --suite editing
 bun scripts/test-font-parity-browser.mjs --suite surfaces
+bun scripts/test-font-parity-browser.mjs --suite lifecycle
 ```
 
 - `--suite <name>` は繰り返し指定できます。`--list` で登録済み suite と実装状態を表示します。
@@ -47,7 +48,7 @@ bun scripts/test-font-parity-browser.mjs --suite surfaces
 | `roles`        | T2/T3 | 役割別サイズと reset（T2 済）、Canvas 描画・計測の照合（T3 済） |
 | `editing`      | T4    | 通常値・編集オーバーレイ・Grid 編集（T4 済）                    |
 | `surfaces`     | T5    | document / figure / dialog / media の実効倍率（T5 済）          |
-| `lifecycle`    | T6    | フォント完了・DPR 変更時の再描画と解放                          |
+| `lifecycle`    | T6    | フォント完了・DPR 変更時の再描画と解放（T6 済）                 |
 | `matrix`       | T8    | 幅・拡大・配色の行列と代表画像                                  |
 | `distribution` | T9    | 生成した配布物からの独立 runtime / minimal 確認                 |
 
@@ -67,9 +68,11 @@ Canvas の描画／計測との突き合わせを足しました（実行時の�
 - 同じ文字列が複数回出るため、Canvas の描画は**位置（CSS px）・widget の key・kind**で
   役割に対応付けます。文字列だけでは対応付けません。独立 runtime では実 Scene の widget 矩形、
   比較デモでは `#dom-stage` 内の `.ui-widget` の矩形（両面で同じ Scene 幾何）を使います。
-- 現状のホストは**Web フォントの読み込み完了で再描画しません**（T6 の対象）。そのため baseline は
-  `document.fonts.ready` の後にステージ幅を実際に変えて再描画を起こし、基準 viewport に戻した
-  フレームを採取します。再描画を起こせなかった場合は古いフレームを採らずに失敗します。
+- ホストは **T6 で Web フォントの完了・失敗と DPR の変更を購読する**ようになったので、画面に出て
+  いるフレームは字体が決まった後のものです。baseline は T1 当時の手順（`document.fonts.ready` の
+  後にステージ幅を実際に変えて再描画を起こし、基準 viewport に戻す）のまま残しています。修正前の
+  基準値を同じ条件で取り直せること、「フレームが 1 枚も描かれていない」ことを検出できることの
+  2 つが理由で、**再描画のために必要だからではありません**（[下記](#baseline-の強制再描画について)）。
 - データが欠けたとき（DOM 文字 0 件、Canvas 描画 0 件、`document.fonts` 未完了、日本語字体の
   証拠なし、bitmap 幅なし、解釈できない Canvas font 文字列、ページ/ランタイムのエラー）は
   非 0 で終了します。採れた分の JSON は失敗時も書き出します。
@@ -550,6 +553,115 @@ Canvas 描画 665 件（うち Grid 編集中 11 件）**と、**7 本の操作�
 アプリ画面側は `screens/uivolve-gallery.json` の 5 タブ（編集・チャート・グラフ・会話・
 メディア）と `screens/dialogs.yaml`（標準 SVG アイコン）で、実データの文書・図表・
 正常な media を測っています。
+
+## フォント完了と DPR 変更の再描画・解放（T6）
+
+### 決めたこと — 2 つの購読と、毎フレームの bitmap 同期
+
+DOM はフォントが届けば自分で組み直し、DPR が変われば自分で描き直します。**Canvas は
+どちらもしません**。そこで `UiRuntime` が 2 つだけ購読を足し、どちらも
+`scheduleRender()` へ流します（`src/runtime.js` の `watchFonts` / `watchPixelRatio`）。
+
+| 購読                                       | 届く合図                                         | 解除                                       |
+| ------------------------------------------ | ------------------------------------------------ | ------------------------------------------ |
+| `document.fonts` の `loadingdone`          | 使っている字体の読み込みが終わった               | `lifecycle` の `AbortSignal`（dispose 時） |
+| `document.fonts` の `loadingerror`         | 読み込みに失敗した（fallback のまま描き直す）    | 同上                                       |
+| `document.fonts.ready`                     | 購読を張る前から流れていた分の初回完了           | `scheduleRender()` が破棄後は何もしない    |
+| `matchMedia("(resolution: Ndppx)")` の変化 | CSS 寸法は変わらずに devicePixelRatio だけ動いた | 同上＋変化のたびに新しい倍率で張り直す     |
+
+- 解像度クエリは**ちょうど 1 つの倍率にしか一致しない**ので、変化のたびに新しい倍率で
+  張り直します（張り直す前の購読は毎回外します）。ResizeObserver は CSS 寸法が動かない
+  DPR 変更を報告しないため、この経路が必要です。
+- `CanvasRenderer.syncSurface()` を新設し、bitmap 寸法・CSS 寸法・`setTransform` を
+  `render()` だけでなく **`paint()` の先頭でも**実行します。画像や字体の完了、ドラッグ中の
+  描き直しのように Scene を作り直さない一時的な paint でも、そのときの倍率の bitmap へ
+  落ちます。倍率は `scale()` ではなく `setTransform()` なので、1 → 2 → 1 で累積しません。
+- フォントサイズに DPR は掛けません（決定 6）。倍率が動かすのは bitmap だけです。
+
+### `lifecycle` suite が確認していること
+
+テスト字体は**この環境の実フォントファイル**（既定 `/usr/share/fonts/truetype/freefont/FreeMono.ttf`、
+1126964 バイト、sha256 `9691040d4d89266d…`、`FONT_PARITY_TEST_FONT` で変更可）を読み、
+fixture サーバーの origin の URL（`/tests/browser/font-parity-probe-<id>.ttf`）で配信します。
+**バイト列を保留して遅らせるのは runner の route** で、サーバーにテスト専用の経路は足して
+いません。`@font-face` は fixture ページ側で宣言し、ステージの `font-family` を上書きします
+（製品コードには検査専用の口を足していません）。等幅の字体を選ぶのは、`iiiii` と `WWWWW` の
+送り幅が等しいかどうかで**字体が効いたことを数値だけで判定**するためです。
+
+| ケース          | 何を確かめるか                                                                                                     |
+| --------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `fonts-arrival` | 保留した字体を解放した後、**こちらから何もせずに** Canvas が描き直し、再計測していること                           |
+| `fonts-error`   | 壊れたバイト列で face が `error` になっても描き直し、fallback の送り幅と役割サイズが動かないこと                   |
+| `fonts-race`    | 字体の到着とテーマ切替・幅変更が競合しても、最後の 1 フレームに全部が載り、編集が生きていること                    |
+| `fonts-dispose` | 読み込み中に `dispose()` しても完了で描画が復活せず、**その後に作った runtime は自分の字体完了で描き直す**こと     |
+| `pixel-ratio`   | CSS 寸法を 1px も変えずに倍率を 1 → 2 → 1 → 2.5 → 1 と動かし、bitmap・変形・実効サイズ・編集中の節点を確かめること |
+
+役割サイズは全ケースで `ROLE_CONTRACT` の宣言値と照合し、Canvas の描画サイズも
+`SIZE_CONTRACT` の 7 役割以外が出たら失敗にします。字体も倍率も**サイズを動かしてよい理由に
+はなりません**。
+
+### 実測値（2026-10-06・Chromium 152.0.7977.64）
+
+送り幅（13px、`body`）。DOM ステージと Canvas ステージで同じ値です。
+
+| サンプル         | 読み込み前 | 読み込み後 | 期待                                      |
+| ---------------- | ---------- | ---------- | ----------------------------------------- |
+| `iiiii`          | 17.87px    | 39.00px    | 動く（probe 字体が覆う）                  |
+| `WWWWW`          | 57.07px    | 39.00px    | 動く・`iiiii` と一致（等幅になった証拠）  |
+| `ABCDEFGHIJ`     | 77.56px    | 78.00px    | 動く                                      |
+| `日本語テキスト` | 84.00px    | 84.00px    | **動かない**（probe 字体に CJK 字体なし） |
+
+- DOM の再レイアウト: `.ui-displayfield > div` のインク幅 63.6px → 70.2px。CJK の `.ui-label`
+  は 120.7px のまま（コードポイント単位の fallback が維持されている証拠）。
+- Canvas の再計測: 同じ文字列の `measureText` が **5 件**変化。フレーム内の全描画が
+  `fonts.status === "loaded"` の状態で描かれています。
+- 編集中の節点: 再描画後も `same: true`（同一 DOM ノード）、下書き `下書き`、選択位置 3-3、
+  サイズ 13px を保持。`fonts-race`（dark 切替＋幅 760px）でも同じです。
+- `dispose()` 後の字体完了で記録された描画は **0 件**。続けて作った runtime は自分の字体完了で
+  描き直しました。
+- 倍率（CSS 696x180 のまま）:
+
+| devicePixelRatio | bitmap     | Canvas 変形  | 実効フォントサイズ   |
+| ---------------- | ---------- | ------------ | -------------------- |
+| 1                | 696 x 180  | a=1, d=1     | 変化なし             |
+| 2                | 1392 x 360 | a=2, d=2     | 変化なし             |
+| 1（戻り）        | 696 x 180  | a=1, d=1     | 最初のフレームと一致 |
+| 2.5              | 1740 x 450 | a=2.5, d=2.5 | 変化なし             |
+| 1（戻り）        | 696 x 180  | a=1, d=1     | 最初のフレームと一致 |
+
+代表画像: `lifecycle-font-before.png` / `lifecycle-font-after.png`（字体の前後）、
+`lifecycle-dpr-1.png` / `-2.png` / `-2_5.png`。目視で、両面が同時に probe 字体へ切り替わり、
+日本語と `monospace` 指定の部分は変わらず、新たな欠け・重なり・ずれがないことを確認しました。
+
+### 限界・代用（実ブラウザズームと CDP のイベント配信）
+
+| 項目                           | 状態                                                                                                                                                                     |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 実ブラウザの 100 / 200% ズーム | **未実施**。`lifecycle` は CDP の `Emulation.setDeviceMetricsOverride` で倍率だけを変える。拡大そのものは T8                                                             |
+| 解像度クエリの `change` 配信   | CDP の倍率上書きは `devicePixelRatio` と `MediaQueryList.matches` を更新するが **`change` を配信しない**。そこで購読済みの実 `MediaQueryList` 上でイベントだけを発火する |
+| 上の代用で何が実物か           | 倍率・bitmap・変形・計測値はすべてブラウザ自身の値。合成しているのは**通知の配達だけ**。購読と張り直しは `tests/runtime.test.js` の単体試験でも確認                      |
+| 実 IME                         | 未実施（T4 と同じ）。合成 composition と分けて記録                                                                                                                       |
+| 字体の配信元                   | 実フォントファイルを読むため、この環境以外では `FONT_PARITY_TEST_FONT` の指定が要る。見つからない場合は候補を並べて非 0 で終了する                                       |
+
+### baseline の強制再描画について
+
+T1 の `repaintAfterFonts()`（幅を実際に変えて再描画を起こす）は、**T6 以降は再描画のためには
+不要**です。`fonts-arrival` が「解放しただけで描き直す」ことを実測したのが、その根拠です。
+それでも残しているのは、(1) `baseline.json` は修正前の基準値で、同じ手順で取り直せる必要が
+あること、(2) この手順が「フレームが 1 枚も描かれていない」ことを検出する役割も兼ねていること
+の 2 つの理由からです。
+
+### 検査に歯があることの確認
+
+`watchFonts` / `watchPixelRatio` の呼び出しを外して `lifecycle` を実行しました。
+
+| 外したもの   | 出た失敗                                                                                     |
+| ------------ | -------------------------------------------------------------------------------------------- |
+| 2 つの購読   | `fonts-arrival` / `fonts-error` / `fonts-race` / `fonts-dispose` がすべて `repainted: false` |
+| 同上         | `pixel-ratio` は `matchMedia((resolution: 1dppx)) は一度も問い合わされていません` で停止     |
+| 同上（単体） | `tests/runtime.test.js` が `expected "scheduleRender" to be called 2 times, but got 0 times` |
+
+確認後はすべて元へ戻しています。
 
 ## 実行環境（T1 で確定）
 
