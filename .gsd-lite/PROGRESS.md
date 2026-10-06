@@ -320,3 +320,29 @@
   ログは `grep -E ... <path>` を Bash で（`.gsd-lite` を引数に含めても `grep` 自体は
   通る）、JSON は `bun -e` を使う。`.gsd-lite/PLAN.md` を編集したら
   `bunx vp check --fix` をかける（整形対象）。
+
+## turn 21 — verify — round 3 合格 / 指摘 0 / main へローカルマージ成功（75d76ce）
+
+- やったこと: round 3 の範囲（F6 の各項目の照合・最終 gate・木のクリーン確認）だけを行った。
+  クリーンな木から `bun scripts/verify-font-parity.mjs` を実行し 14 手順とも green（vitest 631 /
+  docs:check 470 / roles 28 / editing 16 / surfaces 18 / lifecycle 11 / matrix 168 / distribution 8。
+  件数は turn 19・20 と同じ、実行後も木はクリーン）。F6 の差分（`src/` はコメント 6 行、`tests/` は
+  `evidence` 文字列 2 つ、台帳 216 行）を親が読み、コードの参照先（`render()` → `syncSurface()` →
+  `paint()` の順、`src/runtime.css:705-712`）・章立て順・旧文言の残存 0 件を確認。証跡 JSON との照合は
+  読み取り専用のサブエージェント 1 本に任せ、(A) 4 件・(B) 9 件・(C) 全項目が証跡と一致。
+  今回の gate が生成した代表画像 2 枚を目視。`.gsd-lite/VERIFICATION.md` を新設してブランチにコミットし、
+  `origin` が無いので `main` へ `--no-ff` でマージ（衝突なし）。phase を `reflect` にした。
+- 想定外: (1) サブエージェントが F6 の外で**新しい誤りを 3 件**見つけた（台帳の「コメント修正でも
+  `index.js` の sha256 が変わった」は誤り — バンドルはコメントを落とすので値は F6 前と同じ `ba581f54…`。
+  PLAN F6 (A)1 の前提自体が誤りだった／台帳の `paintKanban` という関数名は `src/` に存在せず、行参照も
+  F6 自身のコメント修正で 2 行ずれた／章立て順の列挙から末尾の「実行環境」節が抜けている）。いずれも
+  字句・誤参照で検査範囲の誤伝達ではないため、PLAN の round 3 の方針どおり差し戻さず VERIFICATION.md の
+  「字句の残留」に残した。(2) `main` は `github/main` を追跡しているがリモート名が `origin` ではないため、
+  スキルの判定どおり (a) ローカルマージにし push はしていない。(3) `vp check` は `.gsd-lite/VERIFICATION.md`
+  も整形対象で、新規作成した表が 1 回非 0 になった（`--fix` で解消）。(4) gate の所要は約 5 分。
+- やり直し: 0 回（gate 1 回で green、マージ 1 回で成功）。`vp check --fix` 1 回（新規 md の表の整形）。
+- 次への注意: 次は `/gsd-lite-reflect`（`main` 上。ブランチは残してある）。振り返りの材料は PROGRESS の
+  turn 1〜21、PLAN の「verify round 1 / 2 の記録」、VERIFICATION.md。目立つ論点: (a) 実測値を文書に写すと
+  F2〜F4 のたびに古くなり F5・F6 の 2 ラウンドを文書だけで消費した（F6 で「証跡を指す」方針に変えた）、
+  (b) verify round 1 の格子を一括で立てたことで round 2 以降は回帰確認だけで済んだ、(c) 無人ターンの
+  gate 所要の記録が 70 秒〜20 分で食い違い続けた。`github` リモートへの push は人間の判断。

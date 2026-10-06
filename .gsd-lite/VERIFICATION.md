@@ -122,4 +122,10 @@ round 1・2 から変化なし。F6 の差分は文書・コメント・証跡�
 ## マージ結果
 
 対象リポジトリに `origin` は無い（ローカルのみ）ため、`main` へ `git merge --no-ff gsd-lite/renderer-font-size-parity` で
-マージする。`git log HEAD..main` は空（`main` に取り込み漏れのコミットなし）。結果はこの節の末尾に追記する。
+マージする。`git log HEAD..main` は空（`main` に取り込み漏れのコミットなし）。
+
+- 結果: **マージ成功**（衝突なし）。マージコミット `75d76ce`（親 `76bde91` = 本ファイルのコミット）。
+  ブランチ `gsd-lite/renderer-font-size-parity` は削除せず残す。
+- 補足: `main` は `github/main` を追跡している（リモート名が `github` で `origin` ではない）。スキルの判定基準は `origin` の
+  有無なので (a) ローカルマージを採り、**push は行っていない**。GitHub へ反映するなら人間が `main` を push する。
+- 次のフェーズ: `reflect`（state の `reflect: true`）。
