@@ -7,12 +7,16 @@ import { KanbanDrag, keyboardMove } from "./kanban-interaction.js";
 import { resolveFontMetrics } from "./font-metrics.js";
 
 export class CanvasRenderer {
-  constructor(stage, canvas, dispatch) {
+  constructor(stage, canvas, dispatch, { onError = () => {} } = {}) {
     this.stage = stage;
     this.canvas = canvas;
     this.context = canvas.getContext("2d");
     if (!this.context) throw new Error("Canvas 2Dを利用できません");
     this.dispatch = dispatch;
+    // How a frame that cannot be painted reaches the host. A paint is reached from events the
+    // host never sees (focus, an image, a font, a ratio change) as well as from render(), so
+    // the report cannot be left to whoever called in.
+    this.onError = onError;
     this.scene = null;
     // Resolved once per frame in paint(); the roles, not the numbers, live in the call sites.
     this.fonts = null;
@@ -571,12 +575,37 @@ export class CanvasRenderer {
     ctx.fillText(value, align === "right" ? x + width : align === "center" ? x + width / 2 : x, y);
   }
 
+  // The stage's computed style is where a frame's sizes come from (src/font-metrics.js), so a
+  // surface that cannot read it has nothing to paint with. Which of the two situations it is
+  // gets decided by the stage, never by the message a resolver threw:
+  //   not in the document — there is no computed style at all. A host that mounts its stage
+  //     after loading, or detaches it while a screen is live, is doing something allowed, so
+  //     the frame is skipped in silence and the redraw that follows the mount paints the
+  //     current scene.
+  //   in the document, sizes unusable — the runtime stylesheet is missing, or a role is
+  //     declared as something other than a px length. That is a broken embedding: it is
+  //     reported and still not painted, because characters at a size nobody declared are
+  //     the very bug this milestone closed.
+  resolveFonts() {
+    if (!this.stage.isConnected) return null;
+    try {
+      return resolveFontMetrics(this.stage);
+    } catch (error) {
+      this.onError(error);
+      return null;
+    }
+  }
+
   paint() {
     if (!this.scene) return;
-    this.syncSurface();
     // One resolution per frame, from the stage's computed style: every size below is a
     // role name, so the DOM declarations stay the only place the pixels are written.
-    this.fonts = resolveFontMetrics(this.stage);
+    // Resolved before the bitmap is touched, so a frame that is not painted also does not
+    // clear the frame that is currently on screen.
+    const fonts = this.resolveFonts();
+    if (!fonts) return;
+    this.fonts = fonts;
+    this.syncSurface();
     const ctx = this.context;
     const colors = this.scene.theme.colors;
     ctx.clearRect(0, 0, this.scene.width, this.scene.height);

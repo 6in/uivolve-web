@@ -120,7 +120,9 @@ export class UiRuntime {
             surface.ownsCanvas = true;
           }
           surface.element.classList.add("canvas-stage");
-          surface.adapter = new CanvasRenderer(surface.element, surface.canvas, dispatch);
+          surface.adapter = new CanvasRenderer(surface.element, surface.canvas, dispatch, {
+            onError: (error) => this.reportError(error),
+          });
         } else surface.adapter = new DomRenderer(surface.element, dispatch);
       }
       this.resize = new ResizeObserver(() => this.scheduleRender());
@@ -238,7 +240,14 @@ export class UiRuntime {
       const scene = this.engine.layout(Math.min(4096, Math.max(240, surface.element.clientWidth)));
       scene.assetBase = this.packageUrl.href;
       const start = performance.now();
-      surface.adapter.render(scene);
+      // Drawing is bounded per surface. The state is already committed by the time a frame is
+      // asked for, so one surface that cannot draw must not cost the others their frame, nor
+      // the dispatch its effects: the failure is reported and the next surface is drawn.
+      try {
+        surface.adapter.render(scene);
+      } catch (error) {
+        this.reportError(error);
+      }
       durations.push(performance.now() - start);
       return scene;
     });

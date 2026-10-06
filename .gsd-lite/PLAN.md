@@ -273,7 +273,7 @@ bun run docs:check
     実測では 7 画面すべてが入力欄を持ち、合計 288 件を照合した。0 件の画面は無かったが、
     0 件になった場合の理由は `matrix.json` の `controlCoverage` に出す形にした。
 
-- [ ] F3: Canvas の描画失敗で操作・effects・他の面を止めない（verify round 1）
+- [x] F3: Canvas の描画失敗で操作・effects・他の面を止めない（verify round 1）
   - 背景: `CanvasRenderer.paint()` が毎フレーム `resolveFontMetrics(this.stage)` を呼び、解決できないと例外を投げる。`UiRuntime.render()` はそれを `dispatch()` / `compile()` の途中（state 更新の後、`runEffects` の前）で受けるため、verify のプローブ（`.gsd-lite/logs/renderer-font-size-parity/scratch/turn-013-probe.mjs`）で次を実測した。main の Canvas は computed style に依存せず、どれも起きない。
     - Canvas ステージを文書へ入れる前に `load()` すると `ステージの font-family を解決できません` で reject し、`onLoad` と初期 effects が実行されない（画面と state は確定済み。DOM renderer は同条件で成功）。
     - 表示中に Canvas ステージを文書から外して DOM 面のボタンを押すと、revision は 0→2 と進むのに `runEffects` が 0 回（正常時は 2 回）。面の順序が Canvas → DOM だと DOM 面の表示も古いまま。
@@ -291,6 +291,19 @@ bun run docs:check
 
   - 対象: `src/canvas-renderer.js`、`src/runtime.js`、必要なら `src/font-metrics.js`、`tests/runtime.test.js`、`tests/browser/font-parity.mjs`、`tests/browser/font-parity-harness.js`、`docs/renderer-font-parity.md`、`docs/runtime-distribution.md`。
   - 依存: F2
+  - **PLAN 訂正（turn 16 / F3 実測）**: 行 5 の `focus` / `blur` は、**未接続および
+    `display: none` のステージにはブラウザがイベントを配らない**（要素が焦点を持てない）。
+    行 1・2 のその 2 経路は「paint が呼ばれて描かなかった」ではなく「呼ばれなかった」ことの
+    確認になる。接続済みで役割サイズが解決できない行 3 では 4 経路すべてが paint に届き、
+    4 件とも通知されることを実測した。台帳の限界表に代用と実測の区別を明記した。
+  - **PLAN 訂正（turn 16 / F3 実測）**: 行 5 の「画像の load」は、新しい fixture を作らず
+    **T5 の `font-parity-surface.json` の読み込めない `src`** の `error` ハンドラで実測した
+    （`src/surfaces.js` が load / error を張るのは `image` だけなので、`video` / `iframe` は
+    この経路を持たない）。行 3 の「役割サイズが px で解決できない」は、ステージ自身へ
+    `--ui-font-size-body: 1.1em` を宣言する形で作った（stylesheet を外す経路とは別ケース）。
+  - **PLAN 訂正（turn 16 / F3 実測）**: `src/font-metrics.js` は変更不要だった（解決器は
+    そのままで、呼び出し側の `CanvasRenderer.resolveFonts()` が状態を `stage.isConnected` で
+    分ける）。行 6 の「通常の表示」は既存の全 suite がそのまま green で確認した。
 
 - [ ] F4: ホストのタグセレクタ規則からフォーム部品の font を守る（verify round 1）
   - 背景: reset を `:where(.uivolve-runtime) :where(button, input, select, textarea)`（詳細度 0,0,0）へ下げたため、ホストページの `button, input, select, textarea { font: italic 700 17px/2 serif }` のようなタグだけの規則（0,0,1）が reset に勝つようになった。verify のプローブ（同上）の実測: サイズは部品側の宣言で 12 / 13px のまま保たれるが、DOM 面の全フォーム部品が `italic` / `serif` になり、入力欄・選択欄は太さ 700 になる（Canvas は runtime の字体・normal・400 のまま）。main の reset（0,1,1）は同じ規則に勝ち、字体・斜体・太さはランタイムのものだった。サイズの修正と引き換えに、main が防いでいた範囲を失っている。「決めた事項 1」の機構はこの副作用を見落としていたので、このタスクで訂正する。

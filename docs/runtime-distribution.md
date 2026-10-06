@@ -94,6 +94,10 @@ await ui.load("pages/home.yaml");
 
 CSSとテーマ変数は表示領域の`.uivolve-runtime`へ適用する。外側のbodyや見出し、余白は利用側が決める。表示領域はランタイム専用の空要素にする。最小幅は240pxなので、それ以下の領域ではクリップされる。Canvasのフォーカス、入力、ResizeObserver、外側クリック、進行中の取得は`dispose()`で解除する。
 
+Canvasの表示領域は**文書に接続してから描かれる**。ランタイムのCSSから役割別の文字サイズを解決するのは表示領域のcomputed styleなので、まだ文書に入っていない要素・文書から外した要素には解決できるサイズが無い。そのフレームは描かずに飛ばし、`load / dispatch`は成功し、`onLoad`・effects・他の表示領域はそのまま実行する。通知もしない（接続前に組み立ててから差し込む構成を許すため）。接続したあとは既存のResizeObserverが再描画を起こし、そのときの状態が描かれる。`display: none`の表示領域はこれに当たらず、従来どおり描画する。
+
+表示領域が文書に入っているのにランタイムのCSSが無い場合（stylesheetを読み込んでいない、役割のcustom propertyがpx以外で上書きされている）は別扱いで、**役割名とproperty名を含むエラーを`onError`へ通知し、そのフレームは描かない**。宣言されていないサイズで文字を描くことはしない。CSSを戻せば次の描画で復帰する。
+
 生成した`runtime-dist/`と`app-dist/`は実ブラウザへ読み込み、DOMとCanvasの実効文字サイズを突き合わせる検査の対象にしている。基準はDOM側の役割別の宣言値で、部品の文字サイズはホストの`font-size`を継承しない（`.uivolve-runtime`自体は継承するが、ボタン・ラベル・入力欄などの文字サイズはランタイムのCSSが宣言している）。実測では外側を16pxにしても20pxにしても表示領域内の文字サイズは変わらない。検査方法と限界は[レンダラー間のフォントサイズ台帳](renderer-font-parity.md)を参照。
 
 認証は既存の`ResourceClient`を共有する。`createApplication`の`authentication`、または起動後の`app.runtime.resources.setAuthentication(...)`で[JWT・リフレッシュ設定](authentication.md)を渡せる。トークンは公開する`app.json`やDSLに埋め込まない。認証付き配信では配信キャッシュを有効にしない。

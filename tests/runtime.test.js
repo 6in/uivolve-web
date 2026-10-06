@@ -231,6 +231,44 @@ it("uses the same host and state for one or both rendering adapters without demo
   expect(runtime.snapshot().state.name).toBe("太郎");
 });
 
+// Drawing is the last step of a dispatch, after the state is already committed. A surface
+// that cannot draw its frame — a Canvas stage outside the document, a missing stylesheet —
+// therefore must not take the effects or the other surface's frame down with it.
+it("runs effects and the other surface's frame when one surface cannot draw", async () => {
+  const onError = vi.fn();
+  const onLoad = vi.fn();
+  const runtime = await host({ onError, onLoad });
+  const effects = vi.spyOn(runtime, "runEffects");
+  const reported = () => onError.mock.calls.filter(([error]) => error).map(([error]) => error);
+  // The first surface in the list, so the failure happens before the other one is asked for.
+  const broken = runtime.surfaces[0].adapter;
+  const intact = runtime.surfaces[1].adapter;
+  broken.render = vi.fn(() => {
+    throw new Error("描画できません");
+  });
+  await runtime.load("pages/home.yaml");
+  expect(onLoad).toHaveBeenCalledTimes(1);
+  expect(effects).toHaveBeenCalledTimes(1);
+  expect(intact.render).toHaveBeenCalledTimes(1);
+  expect(reported().map((error) => error.message)).toEqual(["描画できません"]);
+  runtime.dispatch("nameInput", { value: "太郎" });
+  runtime.dispatch("helloButton");
+  expect(runtime.revision).toBe(2);
+  expect(runtime.state.greeting).toBe("Hello 太郎");
+  expect(effects).toHaveBeenCalledTimes(3);
+  // The intact surface was handed every frame, including the one after the failing surface
+  // had already thrown, and the scene it got is the committed state.
+  expect(intact.render).toHaveBeenCalledTimes(3);
+  expect(
+    intact.render.mock.calls.at(-1)[0].widgets.find((widget) => widget.key === "greetingLabel")
+      .text,
+  ).toBe("Hello 太郎");
+  expect(broken.render).toHaveBeenCalledTimes(3);
+  expect(reported()).toHaveLength(3);
+  // Still reported, never swallowed: a frame nobody can draw is a problem the host has to see.
+  expect(new Set(reported().map((error) => error.message))).toEqual(new Set(["描画できません"]));
+});
+
 it("repaints when fonts settle or fail and when only the device pixel ratio changes, and both stop at dispose", async () => {
   const ownerDocument = testDocument();
   const runtime = await host({

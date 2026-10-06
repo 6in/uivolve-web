@@ -4,6 +4,9 @@ import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { packageFormat, parsePackage } from "../../src/package-format.js";
+// The role names themselves, so the message an unresolvable size is reported with is checked
+// against the resolver's own list instead of a copy of it.
+import { FONT_ROLES } from "../../src/font-metrics.js";
 import { createStaticHandler } from "../../scripts/serve-minimal.mjs";
 
 // Browser-side Canvas observation. Installed through addInitScript so it is in place
@@ -4277,6 +4280,235 @@ async function runPixelRatio(page, context, { evidenceDir, problems }) {
   return { name: "pixel-ratio", phases, images, ratios: PIXEL_RATIOS, deliveries };
 }
 
+// --- stage states --------------------------------------------------------------------
+// A frame needs the stage's computed style to get its sizes from. Which means a host can put
+// a surface in a state where there is no frame to draw: a stage built before it is mounted,
+// a stage taken out of the document while the screen is live, a page that lost the runtime
+// stylesheet. None of those may cost the runtime its load, its effects or the other
+// surface's frame — and a stage that merely has `display: none` is not one of them.
+
+const STAGE_BUTTON = '.ui-button[data-target="helloButton"]';
+// What that button's handler puts in the state. It has to appear on the DOM surface while
+// the Canvas cannot draw, and in the Canvas frame once it can again.
+const STAGE_GREETING = "Hello World";
+// The role and property names an unresolvable size has to name when it is reported.
+const SIZE_ERROR = new RegExp(`(${FONT_ROLES.join("|")}) \\((--ui-font-size-[a-z-]+)\\)`);
+
+async function openStageHarness(page, options = {}) {
+  await page.evaluate(async (input) => {
+    // Both fixtures own the same host element; the earlier one has to let go of it first.
+    window.__fontParityHarness?.dispose();
+    window.__fontParityStage?.dispose();
+    const module = await import("/tests/browser/font-parity-harness.js");
+    try {
+      window.__fontParityStage = await module.createStageStateHarness(input);
+    } catch (error) {
+      document.getElementById("font-parity-error").textContent = error.stack ?? String(error);
+      throw error;
+    }
+  }, options);
+}
+
+const stageProbe = (page) => page.evaluate(() => window.__fontParityStage.probe());
+const stageLoad = (page, screen) =>
+  page.evaluate((input) => window.__fontParityStage.loadScreen(input), screen);
+const stageAct = (page, name, ...args) =>
+  page.evaluate((input) => window.__fontParityStage[input.name](...input.args), { name, args });
+
+// Row 5: the repaints that carry no Scene. Each one lands in CanvasRenderer.paint() from an
+// event handler rather than from UiRuntime.render(), so in a state where the frame cannot be
+// drawn they have to leave the bitmap alone and keep the failure inside the renderer. Whether
+// anything is reported depends on which state it is: a stage outside the document is allowed,
+// unresolvable sizes are not. Page errors are collected by the caller — this suite fails on
+// any of them — which is what covers "the exception never leaves the handler".
+async function runSceneFreeRepaints(page, { label, expectReport, problems }) {
+  const note = (message) => problems.push(`${label}: ${message}`);
+  const steps = [];
+  for (const step of ["focus", "blur", "fonts", "ratio"]) {
+    const before = (await stageProbe(page)).errors.length;
+    const record = await page.evaluate(async (name) => {
+      const stage = window.__fontParityStage;
+      stage.resetFrames();
+      const fired = name === "ratio" ? await stage.fireRatioChange() : null;
+      if (name === "focus") await stage.focusCanvas();
+      if (name === "blur") await stage.blurCanvas();
+      if (name === "fonts") await stage.fireFontsDone();
+      const probe = stage.probe();
+      return { step: name, fired, draws: probe.canvasDraws, errors: probe.errors };
+    }, step);
+    const reported = record.errors.length - before;
+    steps.push({ step, draws: record.draws, reported, fired: record.fired });
+    if (record.draws) note(`${step} の再描画でCanvasが ${record.draws} 件描いた`);
+    if (expectReport && !reported) note(`${step} の再描画で解決できないサイズが通知されなかった`);
+    if (!expectReport && reported)
+      note(`${step} の再描画で ${reported} 件通知された（${record.errors.slice(-1)}）`);
+    if (expectReport && reported && !SIZE_ERROR.test(record.errors.at(-1)))
+      note(`${step} の通知が役割名と property 名を含まない（${record.errors.at(-1)}）`);
+  }
+  return steps;
+}
+
+// Case 6 (row 1): the Canvas stage is still outside the document when the screen loads — the
+// shape of a host that builds its surfaces and mounts them afterwards. Nothing about that is
+// an error, so the load settles, onLoad and the effects run, the DOM surface is drawn, and the
+// Canvas frame is skipped in silence until the stage is mounted. The media screen at the end
+// is the image path: its load/error handler repaints with no Scene of its own.
+async function runStageDetachedAtLoad(page, { problems }) {
+  const label = "stage-detached-load";
+  const note = (message) => problems.push(`${label}: ${message}`);
+  await openStageHarness(page, { attached: false });
+  const load = await stageLoad(page, LIFECYCLE_SCREEN);
+  if (load.settled !== "resolved") note(`load() が ${load.settled}（${load.error}）`);
+  const detached = await stageProbe(page);
+  if (detached.canvasConnected) note("ステージが接続されている（未接続のまま load する条件）");
+  if (detached.counts.load !== 1) note(`onLoad が ${detached.counts.load} 回`);
+  if (detached.counts.effects !== 1) note(`effects が ${detached.counts.effects} 回（1 回を期待）`);
+  if (!detached.domChildren) note("DOM面が1つも部品を作っていない");
+  if (detached.canvasDraws) note(`未接続のCanvasが ${detached.canvasDraws} 件描いた`);
+  if (detached.errors.length) note(`未接続で通知された: ${detached.errors.join("; ")}`);
+  const repaints = await runSceneFreeRepaints(page, { label, expectReport: false, problems });
+  // The state moves while the stage is still outside the document, so the frame that follows
+  // the mount has to show the state as it is then — not the state the stage last saw.
+  await stageAct(page, "clickDom", STAGE_BUTTON);
+  const moved = await stageProbe(page);
+  if (moved.revision !== 1) note(`操作後の revision が ${moved.revision}（1 を期待）`);
+  if (moved.counts.effects !== 2) note(`操作後の effects が ${moved.counts.effects} 回`);
+  if (!moved.domText.includes(STAGE_GREETING))
+    note(`DOM面が最新stateを表示していない（"${moved.domText}"）`);
+  if (moved.canvasDraws) note(`未接続のCanvasが操作後に ${moved.canvasDraws} 件描いた`);
+  await stageAct(page, "resetFrames");
+  await stageAct(page, "attachCanvasStage");
+  const mounted = await stageProbe(page);
+  if (!mounted.canvasDraws) note("接続後もCanvasが描かれていない");
+  if (!mounted.canvasTexts.includes(STAGE_GREETING))
+    note(`接続後のフレームが最新stateでない（${mounted.canvasTexts.join(" / ")}）`);
+  if (mounted.errors.length) note(`接続後に通知された: ${mounted.errors.join("; ")}`);
+  // The image path, with the stage detached again: the missing asset's error handler calls
+  // paint() directly, and the screen that owns it is the surface fixture.
+  await stageAct(page, "detachCanvasStage");
+  await stageAct(page, "resetFrames");
+  const mediaLoad = await stageLoad(page, SURFACE_FIXTURE_SCREEN);
+  if (mediaLoad.settled !== "resolved")
+    note(`メディア画面の load() が ${mediaLoad.settled}（${mediaLoad.error}）`);
+  const media = await stageProbe(page);
+  if (media.canvasDraws) note(`未接続で画像の読込後に ${media.canvasDraws} 件描いた`);
+  if (!media.mediaNotices.dom.length) note("DOM面にメディアの枠がない（画像経路を通っていない）");
+  if (media.errors.length) note(`画像の読込で通知された: ${media.errors.join("; ")}`);
+  await stageAct(page, "resetFrames");
+  await stageAct(page, "attachCanvasStage");
+  const mediaMounted = await stageProbe(page);
+  if (!mediaMounted.canvasDraws) note("メディア画面の接続後もCanvasが描かれていない");
+  return { name: label, load, detached, repaints, moved, mounted, media, mediaMounted };
+}
+
+// Case 7 (row 2): the stage is taken out of the document while the screen is live and the user
+// presses a button on the other surface. Both surface orders, because a Canvas surface listed
+// first is what used to leave the DOM surface showing the previous state.
+async function runStageDetachedLive(page, order, { problems }) {
+  const label = `stage-detached-live-${order}`;
+  const note = (message) => problems.push(`${label}: ${message}`);
+  await openStageHarness(page, { order });
+  const load = await stageLoad(page, LIFECYCLE_SCREEN);
+  if (load.settled !== "resolved") note(`load() が ${load.settled}（${load.error}）`);
+  const before = await stageProbe(page);
+  if (!before.canvasDraws) note("通常の表示でCanvasが描かれていない");
+  await stageAct(page, "detachCanvasStage");
+  await stageAct(page, "resetFrames");
+  await stageAct(page, "clickDom", STAGE_BUTTON);
+  const after = await stageProbe(page);
+  if (after.revision !== 1) note(`revision が ${after.revision}（1 を期待）`);
+  if (after.counts.effects !== 2) note(`effects が ${after.counts.effects} 回（2 回を期待）`);
+  if (!after.domText.includes(STAGE_GREETING))
+    note(`DOM面が最新stateに更新されていない（"${after.domText}"）`);
+  if (after.canvasDraws) note(`外したCanvasが ${after.canvasDraws} 件描いた`);
+  if (after.errors.length) note(`通知された: ${after.errors.join("; ")}`);
+  const repaints = await runSceneFreeRepaints(page, { label, expectReport: false, problems });
+  await stageAct(page, "resetFrames");
+  await stageAct(page, "attachCanvasStage");
+  const mounted = await stageProbe(page);
+  if (!mounted.canvasDraws) note("戻した後もCanvasが描かれていない");
+  if (!mounted.canvasTexts.includes(STAGE_GREETING))
+    note(`戻した後のフレームが最新stateでない（${mounted.canvasTexts.join(" / ")}）`);
+  if (mounted.errors.length) note(`戻した後に通知された: ${mounted.errors.join("; ")}`);
+  return { name: label, order, before, after, repaints, mounted };
+}
+
+// Case 8 (row 3): the stage is mounted, but its role sizes cannot be resolved — the runtime
+// stylesheet is gone from the page, or a role is declared as something that is not a px
+// length. Everything else still runs; this frame is both skipped and reported, because
+// painting characters at a size nobody declared is the bug the milestone closed.
+async function runStageWithoutSizes(page, mode, { problems }) {
+  const label = `stage-no-sizes-${mode}`;
+  const note = (message) => problems.push(`${label}: ${message}`);
+  await openStageHarness(page);
+  const load = await stageLoad(page, LIFECYCLE_SCREEN);
+  if (load.settled !== "resolved") note(`load() が ${load.settled}（${load.error}）`);
+  const before = await stageProbe(page);
+  if (!before.canvasDraws) note("通常の表示でCanvasが描かれていない");
+  const broke =
+    mode === "stylesheet"
+      ? { sheets: await stageAct(page, "removeSizeStylesheets") }
+      : await stageAct(page, "declareRole", "body", "1.1em");
+  if (mode === "stylesheet" && !broke.sheets) note("サイズを宣言した stylesheet が見つからない");
+  await stageAct(page, "resetFrames");
+  await stageAct(page, "clickDom", STAGE_BUTTON);
+  const after = await stageProbe(page);
+  if (after.revision !== 1) note(`revision が ${after.revision}（1 を期待）`);
+  if (after.counts.effects !== 2) note(`effects が ${after.counts.effects} 回（2 回を期待）`);
+  if (!after.domText.includes(STAGE_GREETING))
+    note(`DOM面が最新stateに更新されていない（"${after.domText}"）`);
+  if (after.canvasDraws)
+    note(`解決できないサイズで ${after.canvasDraws} 件描いた（${after.canvasTexts.join(" / ")}）`);
+  if (!after.errors.length) note("解決できないサイズが通知されなかった");
+  else if (!SIZE_ERROR.test(after.errors.at(-1)))
+    note(`通知が役割名と property 名を含まない（${after.errors.at(-1)}）`);
+  if (after.resolved.canvas.ok)
+    note("ステージからサイズが解決できてしまっている（条件が成立していない）");
+  const repaints = await runSceneFreeRepaints(page, { label, expectReport: true, problems });
+  // Put the sizes back and operate again: the surface has to come back on its own, with the
+  // state it is in now, and without any further report.
+  if (mode === "stylesheet") await stageAct(page, "restoreSizeStylesheets");
+  else await stageAct(page, "clearRole", "body");
+  const healedErrors = (await stageProbe(page)).errors.length;
+  await stageAct(page, "resetFrames");
+  await stageAct(page, "clickDom", STAGE_BUTTON);
+  const healed = await stageProbe(page);
+  if (!healed.canvasDraws) note("サイズを戻してもCanvasが描かれていない");
+  if (!healed.canvasTexts.includes(STAGE_GREETING))
+    note(`戻した後のフレームが最新stateでない（${healed.canvasTexts.join(" / ")}）`);
+  if (healed.errors.length > healedErrors)
+    note(`戻した後に通知された: ${healed.errors.slice(healedErrors).join("; ")}`);
+  if (!healed.resolved.canvas.ok)
+    note(`戻した後もサイズが解決できない（${healed.resolved.canvas.error}）`);
+  return { name: label, mode, broke, before, after, repaints, healed };
+}
+
+// Case 9 (row 4): `display: none` is not a broken stage. The computed style is still there, so
+// the frame is painted exactly as before — this case exists to keep the fix from swallowing it.
+async function runStageHidden(page, { problems }) {
+  const label = "stage-hidden";
+  const note = (message) => problems.push(`${label}: ${message}`);
+  await openStageHarness(page);
+  const load = await stageLoad(page, LIFECYCLE_SCREEN);
+  if (load.settled !== "resolved") note(`load() が ${load.settled}（${load.error}）`);
+  await stageAct(page, "setCanvasStageDisplay", "none");
+  await stageAct(page, "resetFrames");
+  await stageAct(page, "clickDom", STAGE_BUTTON);
+  const hidden = await stageProbe(page);
+  if (hidden.canvasDisplay !== "none") note(`display が ${hidden.canvasDisplay}`);
+  if (hidden.revision !== 1) note(`revision が ${hidden.revision}（1 を期待）`);
+  if (hidden.counts.effects !== 2) note(`effects が ${hidden.counts.effects} 回（2 回を期待）`);
+  if (!hidden.canvasDraws) note("display: none のステージが描かれていない");
+  if (!hidden.canvasTexts.includes(STAGE_GREETING))
+    note(`描いたフレームが最新stateでない（${hidden.canvasTexts.join(" / ")}）`);
+  if (hidden.errors.length) note(`通知された: ${hidden.errors.join("; ")}`);
+  await stageAct(page, "resetFrames");
+  await stageAct(page, "setCanvasStageDisplay", "");
+  const shown = await stageProbe(page);
+  if (shown.errors.length) note(`表示を戻した後に通知された: ${shown.errors.join("; ")}`);
+  return { name: label, hidden, shown };
+}
+
 async function runLifecycle({ context, origin, evidenceDir, viewport, log }) {
   const fontPath = testFontPath();
   const bytes = await readFile(fontPath);
@@ -4315,6 +4547,14 @@ async function runLifecycle({ context, origin, evidenceDir, viewport, log }) {
       }),
     );
     cases.push(await runPixelRatio(page, context, { evidenceDir, problems }));
+    // The stage states. They come last because the stylesheet case takes the runtime's own
+    // sheet out of the page for a moment; it is put back before the ledger is written.
+    cases.push(await runStageDetachedAtLoad(page, { problems }));
+    for (const order of ["dom-first", "canvas-first"])
+      cases.push(await runStageDetachedLive(page, order, { problems }));
+    for (const mode of ["stylesheet", "role"])
+      cases.push(await runStageWithoutSizes(page, mode, { problems }));
+    cases.push(await runStageHidden(page, { problems }));
   } finally {
     const file = resolve(evidenceDir, "lifecycle.json");
     await writeFile(
@@ -4325,7 +4565,19 @@ async function runLifecycle({ context, origin, evidenceDir, viewport, log }) {
     await page.close();
   }
   if (pageErrors.length) problems.push(`page errors: ${pageErrors.join("; ")}`);
-  for (const name of ["fonts-arrival", "fonts-error", "fonts-race", "fonts-dispose", "pixel-ratio"])
+  for (const name of [
+    "fonts-arrival",
+    "fonts-error",
+    "fonts-race",
+    "fonts-dispose",
+    "pixel-ratio",
+    "stage-detached-load",
+    "stage-detached-live-dom-first",
+    "stage-detached-live-canvas-first",
+    "stage-no-sizes-stylesheet",
+    "stage-no-sizes-role",
+    "stage-hidden",
+  ])
     if (!cases.some((entry) => entry.name === name)) problems.push(`case ${name} を実行していない`);
   if (!fonts.requests.length) problems.push("テスト字体が一度も要求されていない");
   for (const request of fonts.requests)

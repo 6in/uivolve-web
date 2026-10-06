@@ -4,7 +4,7 @@
 // instead of `src/`. They are re-exported here under the same names, so every suite that
 // measures this repository's own sources calls them exactly as before.
 import { createRuntime } from "../../src/runtime.js";
-import { resolveFontMetrics, FONT_ROLES } from "../../src/font-metrics.js";
+import { resolveFontMetrics, FONT_ROLES, FONT_SIZE_PROPERTIES } from "../../src/font-metrics.js";
 import {
   controlBoxes,
   dialogIconSurfaces,
@@ -104,6 +104,192 @@ export function resolverRejections() {
       return { element };
     }),
   ];
+}
+
+// The stage states a host can put a surface in, as a fixture. A Canvas stage that is not in
+// the document, or one whose runtime stylesheet is gone, has no computed style to take its
+// sizes from — so what this exists to show is that the rest of the runtime keeps going: the
+// load settles, the effects run, the other surface gets the committed state, and the frame
+// that cannot be drawn is skipped (and, when the sizes are merely broken, reported).
+//
+// Everything below drives the host's own code. The single instrument is the effect counter:
+// whether the effect pass ran at all is exactly what a throwing paint used to take away, and
+// no screen state can report its own absence.
+export async function createStageStateHarness({
+  order = "dom-first",
+  attached = true,
+  hostFontSize = "16px",
+  host = document.getElementById("font-parity-host"),
+} = {}) {
+  host.textContent = "";
+  host.style.fontSize = hostFontSize;
+  const domStage = document.createElement("div");
+  const canvasStage = document.createElement("div");
+  const canvas = document.createElement("canvas");
+  canvas.id = "font-parity-canvas";
+  canvas.tabIndex = 0;
+  canvas.setAttribute("aria-label", "UI Canvas");
+  canvasStage.append(canvas);
+  host.append(domStage);
+  // The one difference from createFontParityHarness(): a host is allowed to build its stage
+  // before mounting it, so the Canvas stage can start outside the document.
+  if (attached) host.append(canvasStage);
+  const errors = [];
+  const counts = { effects: 0, load: 0 };
+  const domSurface = { element: domStage, renderer: "dom" };
+  const canvasSurface = { element: canvasStage, canvas, renderer: "canvas" };
+  const runtime = await createRuntime({
+    baseUrl: new URL("/", location.origin),
+    wasmUrl: new URL("/engine.wasm", location.origin),
+    surfaces: order === "dom-first" ? [domSurface, canvasSurface] : [canvasSurface, domSurface],
+    onError: (error) => {
+      if (error) errors.push(error.message);
+    },
+    onLoad: () => counts.load++,
+  });
+  const runEffects = runtime.runEffects.bind(runtime);
+  runtime.runEffects = (effects) => {
+    counts.effects++;
+    return runEffects(effects);
+  };
+  let detachedSheets = [];
+  const api = {
+    runtime,
+    errors,
+    counts,
+    host,
+    domStage,
+    canvasStage,
+    canvas,
+    async afterFrame() {
+      await runtime.whenIdle();
+      await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+    },
+    // Reported rather than thrown: whether the load settled is the first thing each case asks.
+    async loadScreen(screen) {
+      try {
+        await runtime.load(screen);
+        await runtime.whenIdle();
+        await this.afterFrame();
+        return { settled: "resolved", error: null };
+      } catch (error) {
+        return { settled: "rejected", error: error.message };
+      }
+    },
+    async attachCanvasStage() {
+      host.append(canvasStage);
+      await this.afterFrame();
+    },
+    async detachCanvasStage() {
+      canvasStage.remove();
+      await this.afterFrame();
+    },
+    async setCanvasStageDisplay(value) {
+      canvasStage.style.display = value;
+      await this.afterFrame();
+    },
+    // Remove the runtime's own stylesheet from the document the way a broken embedding would
+    // (the nodes are kept so the next case starts from a working page again).
+    async removeSizeStylesheets() {
+      const property = FONT_SIZE_PROPERTIES.body;
+      detachedSheets = [];
+      // A snapshot on purpose: removing an owner node takes its sheet out of the live list.
+      const sheets = [...document.styleSheets];
+      for (const sheet of sheets) {
+        let declares = false;
+        try {
+          declares = [...sheet.cssRules].some((rule) => rule.cssText.includes(property));
+        } catch {
+          // A stylesheet whose rules cannot be read is not one of ours.
+          continue;
+        }
+        const node = sheet.ownerNode;
+        if (!declares || !node) continue;
+        detachedSheets.push({ node, parent: node.parentNode, next: node.nextSibling });
+        node.remove();
+      }
+      await this.afterFrame();
+      return detachedSheets.length;
+    },
+    async restoreSizeStylesheets() {
+      for (const entry of detachedSheets.reverse())
+        entry.parent.insertBefore(entry.node, entry.next);
+      detachedSheets = [];
+      await this.afterFrame();
+    },
+    // The other half of row 3: the stylesheet is there, but one role is declared as something
+    // that is not a px length. Set on the stage itself, so only this surface loses its sizes.
+    async declareRole(role, value) {
+      canvasStage.style.setProperty(FONT_SIZE_PROPERTIES[role], value);
+      await this.afterFrame();
+      return { role, property: FONT_SIZE_PROPERTIES[role], value };
+    },
+    async clearRole(role) {
+      canvasStage.style.removeProperty(FONT_SIZE_PROPERTIES[role]);
+      await this.afterFrame();
+    },
+    async clickDom(selector) {
+      const node = domStage.querySelector(selector);
+      if (!node) throw new Error(`DOM側に ${selector} に一致する部品がありません`);
+      node.click();
+      await this.afterFrame();
+    },
+    // --- repaints that carry no Scene ------------------------------------------------
+    // Each one lands in CanvasRenderer.paint() without going through UiRuntime.render(), so
+    // an exception here would escape into an event handler instead of into a caller.
+    async focusCanvas() {
+      canvas.focus();
+      await this.afterFrame();
+    },
+    async blurCanvas() {
+      canvas.blur();
+      await this.afterFrame();
+    },
+    // The real font set, with the completion delivered by hand: the browser only fires it when
+    // a face actually settles, and these cases are about the state the stage is in, not about
+    // the font. Same substitution as the ratio change below (see the ledger's limits).
+    async fireFontsDone() {
+      document.fonts.dispatchEvent(new Event("loadingdone"));
+      await this.afterFrame();
+    },
+    async fireRatioChange() {
+      const media = `(resolution: ${window.devicePixelRatio || 1}dppx)`;
+      const fired = window.__fontParityMedia?.fire(media) ?? null;
+      await this.afterFrame();
+      return fired;
+    },
+    resetFrames() {
+      window.__fontParity?.reset();
+    },
+    // What the Canvas actually put on its bitmap since the last resetFrames(), plus the state
+    // the other surface is showing and the numbers a frame would have been painted from.
+    probe() {
+      const frame = window.__fontParity?.forCanvas(canvas) ?? null;
+      return {
+        revision: runtime.revision,
+        errors: [...errors],
+        counts: { ...counts },
+        screen: runtime.screen?.id ?? null,
+        domText: domStage.innerText.replace(/\s+/g, " ").trim(),
+        domChildren: domStage.childElementCount,
+        canvasConnected: canvasStage.isConnected,
+        canvasDisplay: canvasStage.isConnected ? getComputedStyle(canvasStage).display : null,
+        canvasDraws: frame?.draws.length ?? 0,
+        canvasTexts: (frame?.draws ?? []).map((draw) => draw.text),
+        bitmap: { width: canvas.width, height: canvas.height },
+        scenes: runtime.scenes.map((scene) => ({ width: scene.width, height: scene.height })),
+        resolved: { dom: resolvedMetrics(domStage), canvas: resolvedMetrics(canvasStage) },
+        mediaNotices: { dom: mediaNotices(domStage), canvas: mediaNotices(canvasStage) },
+      };
+    },
+    dispose() {
+      runtime.dispose();
+      host.textContent = "";
+      host.style.removeProperty("font-size");
+      host.style.removeProperty("width");
+    },
+  };
+  return api;
 }
 
 function sceneRecord(scene) {
