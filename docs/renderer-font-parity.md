@@ -20,6 +20,10 @@ DOM 版と Canvas 版が同じ役割の文字を同じ実効サイズで表示�
   [`tests/browser/font-parity-states.json`](../tests/browser/font-parity-states.json)（状態と xtype の穴埋め）
 - runner 自体の検査: [`tests/font-parity-runner.test.js`](../tests/font-parity-runner.test.js)
 
+以下は T1〜T9・F1〜F5 の順に並んだ**経過の記録**で、各タスクの節には「その時点で未実施」の
+表が残っています。**いま何が対象外で、何が既存の表現差で、どこに限界があるか**は
+[現在の対象外・表現差・限界（まとめ）](#現在の対象外表現差限界まとめ)だけを読めば分かります。
+
 ## 実行方法
 
 ```bash
@@ -35,7 +39,11 @@ bun run build:minimal
 bun scripts/test-font-parity-browser.mjs --suite distribution
 ```
 
-最終判定は上をまとめた 1 本です（`baseline` は修正前の台帳なので含みません）。
+最終判定は 1 本ですが、**上の suite をまとめただけではありません**。font-parity の 6 suite
+（`baseline` は修正前の台帳なので含みません）の前に、`build:wasm` → `vitest` → `test:rust` →
+`check` → `docs:check` → `build` → `build:runtime` → `build:minimal` を実行します
+（`--print-plan` が出す 14 手順そのもの）。font-parity の suite は配布物を測る
+`distribution` が最後です。
 
 ```bash
 bun scripts/verify-font-parity.mjs            # 14 手順を順に実行し、失敗・中断で非 0
@@ -81,12 +89,13 @@ suite です。T2 が DOM の宣言値・親コンテキスト・サイズ解決
 Canvas の描画／計測との突き合わせを足し、T7 が kind と xtype の二層 coverage と状態の一覧を
 足しました（実行時のログに検査件数を出します）。
 
-**suite は 1 つずつ別プロセスで実行します。** `--suite` を重ねて 1 プロセスで続けて走らせると
-`lifecycle` の倍率ケースが落ちます（先行 suite の後だと CDP の倍率上書き後に再描画を待つ
-`waitForFunction` が 15 秒で切れる）。これは T7 以前からの既存の挙動で、T7 の変更を
-`git stash` した状態でも同じ失敗（むしろ 7 件）が出ることを確認しました。`verify-font-parity.mjs`
-は元から suite ごとに `bun scripts/test-font-parity-browser.mjs --suite <名前>` を 1 回ずつ
-起動するので、確定している実行経路には影響しません。
+`verify-font-parity.mjs` は suite ごとに `bun scripts/test-font-parity-browser.mjs --suite <名前>`
+を 1 回ずつ起動します。T6〜T8 の間は `--suite` を重ねて 1 プロセスで続けて走らせると
+`lifecycle` の倍率ケースが落ちていました。**T9 で原因を特定して直してあります**: 新しい CDP
+セッションを張ると別セッションの倍率上書きが外れるため、先行 suite の撮影のあとは倍率が 1 に
+戻っていて、再描画を待つ `waitForFunction` が切れていました（[下記](#限界代用実ブラウザズームと-cdp-のイベント配信)）。
+2026-10-07 に `--suite surfaces --suite lifecycle` を 1 プロセスで実行し、両方 passed
+（exit 0）になることを確認しています。
 
 ## 観測の方法と限界
 
@@ -120,14 +129,14 @@ Canvas の描画／計測との突き合わせを足し、T7 が kind と xtype 
 
 2026-10-06 の実測（Chromium 152.0.7977.64 / Linux 6.8.0-142-generic）:
 
-| 項目                                   | 値                                                                    |
-| -------------------------------------- | --------------------------------------------------------------------- |
-| 宣言された font-family                 | `Inter, "Noto Sans JP", system-ui, sans-serif`（`src/runtime.css:3`） |
-| `document.fonts` の読み込み済み face   | 0 件（Web フォントは同梱していない）                                  |
-| `document.fonts.check` の返り値        | 全ファミリ・全サンプルで `true`                                       |
-| 実描画 `Abc123` (13px)                 | 塗りピクセル 239、インク幅 44px、`measureText` 44.21px                |
-| 実描画 `日本語テキスト` (13px)         | 塗りピクセル 480、インク幅 87px、`measureText` 91.00px                |
-| 実描画 `U+E000 U+E001`（未割当）(13px) | 塗りピクセル 206、インク幅 24px、`measureText` 26.00px                |
+| 項目                                   | 値                                                                     |
+| -------------------------------------- | ---------------------------------------------------------------------- |
+| 宣言された font-family                 | `Inter, "Noto Sans JP", system-ui, sans-serif`（`src/runtime.css:18`） |
+| `document.fonts` の読み込み済み face   | 0 件（Web フォントは同梱していない）                                   |
+| `document.fonts.check` の返り値        | 全ファミリ・全サンプルで `true`                                        |
+| 実描画 `Abc123` (13px)                 | 塗りピクセル 239、インク幅 44px、`measureText` 44.21px                 |
+| 実描画 `日本語テキスト` (13px)         | 塗りピクセル 480、インク幅 87px、`measureText` 91.00px                 |
+| 実描画 `U+E000 U+E001`（未割当）(13px) | 塗りピクセル 206、インク幅 24px、`measureText` 26.00px                 |
 
 - `document.fonts.check` は未割当の私用領域コードポイントにも `true` を返すため、**字体が
   存在する証拠にはなりません**。実際に使える字体かどうかは `rendered` のインク幅で判定します。
@@ -157,12 +166,14 @@ Canvas の描画／計測との突き合わせを足し、T7 が kind と xtype 
 | label 本文（greeting）    | `greetingLabel` | 11px / weight 400     | 11px / weight 400     | なし    |
 
 - **button だけが不一致**です。`.uivolve-runtime :is(button, input, select, textarea)` の
-  `font: inherit`（`src/runtime.css:11-12`、詳細度 0,1,1）がボタンの `font-size: 12px` /
-  `font-weight: 500`（`src/runtime.css:431,436-437`、詳細度 0,1,0）に勝ち、DOM 側だけがホストの
-  16px / 400 を継承しています。入力欄は
-  `:where(.uivolve-runtime) .ui-field > :is(input, select, textarea)`
-  （`src/runtime.css:352,357`）が同じ詳細度 0,1,1 で後から宣言されるため 13px を保っています。
+  `font: inherit`（詳細度 0,1,1）がボタンの `font-size: 12px` / `font-weight: 500`
+  （詳細度 0,1,0）に勝ち、DOM 側だけがホストの 16px / 400 を継承しています。入力欄は
+  `:where(.uivolve-runtime) .ui-field > :is(input, select, textarea)` が同じ詳細度 0,1,1 で
+  後から宣言されるため 13px を保っています。
   つまり壊れているのは「宣言の値」ではなく「reset の詳細度」です。
+  行番号はこの段落だけ**修正前（`main`）の `src/runtime.css`** を指します:
+  reset が 11-12、`.ui-button` が 431 / 436-437、`.ui-field > :is(…)` が 352 / 357。
+  現在の木での位置は 37-38 / 466・471-472 / 378・383 です。
 - この 1 件は DECISIONS の「DOM の部品別宣言値を基準とし、偶発的な reset 継承を修正する」に
   そのまま対応します。**T2 で修正済み**（下記「役割別サイズの単一源と reset の修正」）。
   修正後に同じ条件で `baseline` を採り直すと、両面とも**サイズ差 0 件**になります
@@ -174,14 +185,14 @@ Canvas の描画／計測との突き合わせを足し、T7 が kind と xtype 
 
 ### 未取得・対象外（理由付き）
 
-| 項目                                 | 状態・理由                                                        |
-| ------------------------------------ | ----------------------------------------------------------------- |
-| 比較デモ側の Scene オブジェクト      | デモは Scene を公開しないため、DOM の `.ui-widget` 矩形で代用した |
-| 実 IME での変換中入力                | 無人環境では実行できない。T4 が合成 composition と分けて記録した  |
-| 実ブラウザのズーム 100/200%          | T8 で実施方法と代用（DPR エミュレーション）を分けて記録する       |
-| ホスト外枠（デモのページ装飾）の文字 | ランタイム外の表示であり、本マイルストーンの対象外                |
-| 字体そのもの（グリフ形状）の差       | 対象はサイズの一致。字体はシステムのフォールバックに依存する      |
-| `--browser-endpoint` の実接続        | 実装済み。到達できる CDP 接続先がないため、この環境では未実行     |
+| 項目                                 | 状態・理由                                                                                                                     |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| 比較デモ側の Scene オブジェクト      | デモは Scene を公開しないため、DOM の `.ui-widget` 矩形で代用した                                                              |
+| 実 IME での変換中入力                | 無人環境では実行できない。T4 が合成 composition と分けて記録した                                                               |
+| 実ブラウザのズーム 100/200%          | **未実施のまま**。T8 が同値変換（CSS viewport ÷ Z・DPR × Z）で実施し、実ズーム・CSS `zoom`・DPR エミュレーションを別記録にした |
+| ホスト外枠（デモのページ装飾）の文字 | ランタイム外の表示であり、本マイルストーンの対象外                                                                             |
+| 字体そのもの（グリフ形状）の差       | 対象はサイズの一致。字体はシステムのフォールバックに依存する                                                                   |
+| `--browser-endpoint` の実接続        | 実装済み。到達できる CDP 接続先がないため、この環境では未実行                                                                  |
 
 ## 役割別サイズの単一源と reset の修正（T2）
 
@@ -282,7 +293,7 @@ computed 値から同じ変数を解決**します。`font-metrics.js` は数値
 | 親コンテキスト「panel 内」                | ホストは panel の子をステージ／レイヤー直下に絶対配置する（Scene に `parentKey` が無い）ため、**DOM 上に panel 親は存在しない**。panel 自身の box を 1 役割として検査し、実際に入れ子になる grid 行／見出し・tabbar・popup・window で代替した |
 | Grid 編集の 12px、通常 field の 13px 区別 | T4。T2 では `.ui-field > input` の 13px のみを検査する                                                                                                                                                                                        |
 | 9px・30px の役割                          | 9px は T3 で採取（Kanban カード ID）。30px の dialog 絵文字は T5                                                                                                                                                                              |
-| 幅・DPR・実ズームの行列                   | T8。T2 は 1440x1000 / DPR 1 固定                                                                                                                                                                                                              |
+| 幅・DPR・拡大の行列                       | T8 が実施（実ズームは未実施のまま代用）。T2 は 1440x1000 / DPR 1 固定。T8 が条件を動かしたのは 39 役割のうち 26 で、T2 の役割がすべて行列に乗ったわけではない（[下記](#条件を動かして測った範囲)）                                            |
 
 ## Canvas の描画と計測を役割へ接続（T3）
 
@@ -315,9 +326,13 @@ family を `monospace` に差し替えます。
 
 ### `roles` suite が Canvas 側で確認していること
 
-実 WASM の 10 画面を **19 ケース**（T2 の 2 画面はホスト 16/20px × ライト/ダークの 4 ケース、
-T3 が足した画面は ライト/ホスト 16px の 1 ケース）で実行し、**664 件の Canvas 描画／36 kind**を
-突き合わせます。Canvas のサイズは CSS の custom properties から毎フレーム解決されるので、
+**T3 時点の件数**: 実 WASM の 13 fixture（画面ファイルは 8 つ。1 つの画面ファイルからタブや
+ドラッグ状態で複数の fixture を取るため、fixture 数と画面ファイル数は一致しません）を
+**19 ケース**（T2 の 2 fixture はホスト 16/20px × ライト/ダークで 4 ケースずつ、T3 が足した
+11 fixture は ライト/ホスト 16px の 1 ケースずつ）で実行し、**664 件の Canvas 描画／36 kind**を
+突き合わせていました。T7 以降の現在値は 22 fixture（画面ファイル 9）・28 ケース・
+Canvas 描画 1276 件・37 kind です（[下記](#roles-suite-が-t7-で確認していること)）。
+Canvas のサイズは CSS の custom properties から毎フレーム解決されるので、
 テーマとホストのサイズを変えても変わりません。その独立性は T2 の 8 ケースが実測しています。
 
 - 描画 1 件ごとに、その kind に許可された役割のどれかの px であること。許可外の px は非 0
@@ -339,8 +354,9 @@ T3 が足した画面は ライト/ホスト 16px の 1 ケース）で実行し
   消えても 0 件にはならない**（F2 以前は `overflowsBox` が枠に収まる長さで、境界の
   「後」側が実際には出ていませんでした。fixture の値を 200 文字へ伸ばして条件を作り直し、
   短い値へ戻すと `roles` が非 0 になることを確かめています）
-- 必須 kind（29 種）が 1 件以上描かれていること。採れない kind は理由付きで
-  `roles.json` の `gaps` に残す
+- `CANVAS_KIND_CONTRACT` の必須 kind が 1 件以上描かれていること（**T3 時点 36 種、現在 37 種**。
+  T3 は `fieldset` を T7 へ送っていました）。採れない kind は理由付きで `roles.json` の
+  `gaps` に残す
 - 描画の役割への対応付けは、①文字を描く kind だけを候補にする（backdrop や行背景が他の
   widget の文字を吸わない）②ローカル変形がある描画は surface sprites（`figure`/`document`）
   のものとする ③候補のうちその文字列を出せる widget を優先し、同じなら位置（面積の小さい
@@ -356,7 +372,7 @@ T3 が足した画面は ライト/ホスト 16px の 1 ケース）で実行し
 | `kanban`                                 | `screens/kanban.yaml`                 | `kanban-lane`・`kanban-card`（9px の ID を含む）、`empty`                                                       |
 | `orders`                                 | `screens/orders.json`                 | 旧 Grid の `grid-header`・`row`                                                                                 |
 | `gallery`                                | `screens/uivolve-gallery.json`        | `toast`、`extra-button`（カレンダー）、`grid-page`（ページング）                                                |
-| `gallery-chart`                          | 同（チャートタブ）                    | surface sprites（T5 へ送る 39 件の実測）                                                                        |
+| `gallery-chart`                          | 同（チャートタブ）                    | surface sprites（T3 時点で T5 へ送った 39 件。T5 の現在値は 18 ケース・sprite の対 257 件）                     |
 | `dialogs`                                | `screens/dialogs.yaml`                | `dialog-message`、`window`、`window-close`                                                                      |
 | `kanban-drag-dom` / `kanban-drag-canvas` | `screens/kanban.yaml`                 | drag ghost（押下したまま計測し、Escape で取り消す）                                                             |
 
@@ -371,17 +387,17 @@ drag ghost は押しっぱなしでしか存在せず、pointer capture は実�
 
 ### T3 の時点で未実施・対象外（理由付き）
 
-| 項目                                                  | 状態・理由                                                                                                                                                                                                                                       |
-| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `figure` / `document` の sprites（39 件）             | T5。`paintSurface` がローカル変形をかけるため実効倍率の換算が別問題。`roles` suite は kind と理由を記録して除外する                                                                                                                              |
-| `dialog-icon` の 30px                                 | T5。`dialogs` 画面の標準アイコンは SVG 画像で描かれ `fillText` を通らない。絵文字・任意文字の 30px は T5 が採る                                                                                                                                  |
-| `media` の空／エラー案内                              | T5。Canvas は現在 13px、DOM は 12px（`src/runtime.css:539-548`）。**既知の不一致**で、T5 が DOM 側へ揃える                                                                                                                                       |
-| `fieldset`                                            | `uivolve-forms` の fieldset は collapsible でタイトルを `panel-toggle` が描くため、本体の描画は空文字で内容からは対応付けられない。canvas-renderer では panel と同じ分岐（`kind === "panel" \|\| kind === "fieldset"`）。T7 が kind 単位で閉じる |
-| `extra-button` の太さ                                 | Canvas は 12px/500、DOM は 12px/400（`.ui-extra-button` は font-weight を宣言しない）。**サイズは一致**。太さの差は本マイルストーンの対象外として台帳に残す（T7 が表現差として扱う）                                                             |
-| drag ghost の ID                                      | ghost は Canvas でも DOM でも ID を出しません（Canvas はタイトルと説明だけを描き、DOM の `::after` は `.ui-kanban-card` にしか当たりません）。**両面で同じ**なので既存差として記録のみ                                                           |
-| 幅境界の「ちょうど 1px 手前／後」                     | 省略の分岐は描画記録から px 単位では特定できない（`text()` に渡す width は記録に無い）。枠に収まる値と収まらない値を**同じ幅の 2 つの部品**に置き、両面の省略有無を部品単位で assert して分岐の両側を押さえている（F2）                          |
-| Grid 編集の 12px と通常 field の 13px                 | **T4 で実施**（下記）。T3 は通常 field の `label` + `body` までを接続した                                                                                                                                                                        |
-| 一時状態（selected/disabled/calendar 月端など）の網羅 | T7。T3 は fixture が出す状態で kind を網羅した                                                                                                                                                                                                   |
+| 項目                                                  | 状態・理由                                                                                                                                                                                                                                                                  |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `figure` / `document` の sprites（T3 時点 39 件）     | T5 で実施（現在は 18 ケース・sprite の対 257 件）。`paintSurface` がローカル変形をかけるため実効倍率の換算が別問題。`roles` suite は kind と理由を記録して除外する                                                                                                          |
+| `dialog-icon` の 30px                                 | T5。`dialogs` 画面の標準アイコンは SVG 画像で描かれ `fillText` を通らない。絵文字・任意文字の 30px は T5 が採る                                                                                                                                                             |
+| `media` の空／エラー案内                              | **T5 で修正済み**。T3 時点では Canvas 13px 対 DOM 12px の既知の不一致でした。現在は両面とも `caption` 12px（DOM は `[data-media-kind][data-empty]::after` ＝ `src/runtime.css:560-569`）                                                                                    |
+| `fieldset`                                            | `uivolve-forms` の fieldset は collapsible でタイトルを `panel-toggle` が描くため、本体の描画は空文字で内容からは対応付けられない。canvas-renderer では panel と同じ分岐（`kind === "panel" \|\| kind === "fieldset"`）。T7 が kind 単位で閉じる                            |
+| `extra-button` の太さ                                 | Canvas は 12px/500、DOM は 12px/400（`.ui-extra-button` は font-weight を宣言しない）。**サイズは一致**。太さの差は本マイルストーンの対象外で、**F1 の太さ一覧**（`roles` 28 ケースで 467 件）と[現在の対象外・表現差の一覧](#現在の対象外と既存の表現差一覧)に入れています |
+| drag ghost の ID                                      | ghost は Canvas でも DOM でも ID を出しません（Canvas はタイトルと説明だけを描き、DOM の `::after` は `.ui-kanban-card` にしか当たりません）。**両面で同じ**なので既存差として記録のみ                                                                                      |
+| 幅境界の「ちょうど 1px 手前／後」                     | 省略の分岐は描画記録から px 単位では特定できない（`text()` に渡す width は記録に無い）。枠に収まる値と収まらない値を**同じ幅の 2 つの部品**に置き、両面の省略有無を部品単位で assert して分岐の両側を押さえている（F2）                                                     |
+| Grid 編集の 12px と通常 field の 13px                 | **T4 で実施**（下記）。T3 は通常 field の `label` + `body` までを接続した                                                                                                                                                                                                   |
+| 一時状態（selected/disabled/calendar 月端など）の網羅 | T7。T3 は fixture が出す状態で kind を網羅した                                                                                                                                                                                                                              |
 
 ### 検査に歯があることの確認
 
@@ -473,14 +489,14 @@ Canvas 描画 665 件（うち Grid 編集中 11 件）**と、**12 本の操作
 
 ### T4 の時点で未実施・対象外（理由付き）
 
-| 項目                            | 状態・理由                                                                                                                                                                                                                                                |
-| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **実 IME での変換**             | 無人の headless Chromium では OS の IME を操作できない。`editing` suite の変換は `compositionstart` → `input(isComposing)` → `compositionend` を**ページ内で dispatch する合成**で、実 IME の確認として読み替えない。実 IME は手動確認の項目として残す    |
-| Canvas 面の押下                 | 両面を縦に積む fixture では下の面が折り返しの外に出るため、押下・ダブルクリックは既存の `clickCanvas` と同じく**ページ内で dispatch**する（hit test・listener・dispatch はホスト自身のもの）。**キー入力は実キーボード**（Playwright の `page.keyboard`） |
-| datefield 編集での文字入力      | `input[type="date"]` の入力は区切りごとの別扱いで locale に依存するため、datefield はサイズの実測と `Escape` までとし、入力・確定の操作は textfield / numberfield で行う                                                                                  |
-| dialog prompt の `Enter` 確定   | prompt の `Enter` は `accept` を投げてダイアログを閉じる既存経路。T4 はサイズ（13px）とラベル帯（22px）の実測までとし、ダイアログの状態遷移は既存の `tests/dialogs.test.js` が担保する                                                                    |
-| 幅・DPR・テーマの行列           | T8。`editing` は 1440x1000 / DPR 1 / ライト / ホスト 16px 固定（テーマとホストサイズに対する独立性は T2 の 8 ケースが実測済み）                                                                                                                           |
-| media / surface / dialog 絵文字 | T5。`editing` でも T5 送りの kind は `roles` と同じ理由で除外する                                                                                                                                                                                         |
+| 項目                            | 状態・理由                                                                                                                                                                                                                                                                                                            |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **実 IME での変換**             | 無人の headless Chromium では OS の IME を操作できない。`editing` suite の変換は `compositionstart` → `input(isComposing)` → `compositionend` を**ページ内で dispatch する合成**で、実 IME の確認として読み替えない。実 IME は手動確認の項目として残す                                                                |
+| Canvas 面の押下                 | 両面を縦に積む fixture では下の面が折り返しの外に出るため、押下・ダブルクリックは既存の `clickCanvas` と同じく**ページ内で dispatch**する（hit test・listener・dispatch はホスト自身のもの）。**キー入力は実キーボード**（Playwright の `page.keyboard`）                                                             |
+| datefield 編集での文字入力      | `input[type="date"]` の入力は区切りごとの別扱いで locale に依存するため、datefield はサイズの実測と `Escape` までとし、入力・確定の操作は textfield / numberfield で行う                                                                                                                                              |
+| dialog prompt の `Enter` 確定   | prompt の `Enter` は `accept` を投げてダイアログを閉じる既存経路。T4 はサイズ（13px）とラベル帯（22px）の実測までとし、ダイアログの状態遷移は既存の `tests/dialogs.test.js` が担保する                                                                                                                                |
+| 幅・DPR・テーマの行列           | `editing` は 1440x1000 / DPR 1 / ライト / ホスト 16px 固定（テーマとホストサイズに対する独立性は T2 の 8 ケースが実測済み）。**T8 へ送ったつもりでも届いていません**: `matrix` は編集オーバーレイを開かないので、`canvas-editor` と Grid 編集の 12px はこの 1 条件だけの実測です（[下記](#条件を動かして測った範囲)） |
+| media / surface / dialog 絵文字 | T5。`editing` でも T5 送りの kind は `roles` と同じ理由で除外する                                                                                                                                                                                                                                                     |
 
 ### 検査に歯があることの確認
 
@@ -524,9 +540,14 @@ Canvas 描画 665 件（うち Grid 編集中 11 件）**と、**12 本の操作
 `--ui-surface-border-width: 1px` を置いて `.ui-figure, .ui-document` の `border` から
 参照し、Canvas は `resolveFontMetrics(stage).surfaceBorder` で同じ値を解決します
 （[`src/font-metrics.js`](../src/font-metrics.js) の `SURFACE_BORDER_PROPERTY`）。
-`src/surfaces.js` は px の数値を 1 つも持ちません。
 
-あわせて 3 つの食い違いを閉じました。
+`src/surfaces.js` が持たなくなったのは**枠の幅と役割サイズ**で、px の数値が 1 つも無いわけでは
+ありません。文書 sprite の既存の値（表題 `fontSize: 14`、見出し 16 / 本文 12、左余白 `x: 12`）と、
+engine の補完値（`spriteFontSize()` の `?? 12`）は**この 1 ファイルにだけ**あり、両面がそこから
+読みます（決定 2 の「文書 14/16px と figure の fontSize は既存 sprites を維持」）。sprite の
+リストは DOM と Canvas で同じ 1 本なので、数値が 1 か所にある限り両面がずれる余地はありません。
+
+あわせて 4 つの食い違いを閉じました。
 
 | 直した点                          | 修正前                                                  | 修正後                                                                          |
 | --------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------- |
@@ -543,7 +564,9 @@ Canvas 描画 665 件（うち Grid 編集中 11 件）**と、**12 本の操作
 
 実 WASM の 9 fixture × **desktop 1440x1000 / narrow 390x844** の 18 ケース、
 **sprite の対（DOM 対 Canvas）257 件**・media 枠 46 件（うち案内が出ているのは 28 件）・
-ダイアログアイコン 6 件。
+ダイアログアイコン 6 件（**文字アイコン 4 ＝「重要なお知らせ」と `🚀` を 2 幅ずつ、
+標準 SVG アイコン 2 ＝ `dialogs` の `info` を 2 幅**。30px の検査が効くのは文字の 4 件で、
+SVG の 2 件は「文字を描かないこと」の実測です）。
 
 - **内容矩形**: 各 `figure` / `document` の DOM 枠幅が解決値と一致し、SVG の viewport が
   枠の内側（`box - border × 2`）であること
@@ -580,13 +603,13 @@ Canvas 描画 665 件（うち Grid 編集中 11 件）**と、**12 本の操作
 
 ### T5 の時点で未実施・対象外（理由付き）
 
-| 項目                       | 状態・理由                                                                                                                    |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| iframe の中身              | 別文書（`sandbox` 済み）で runtime の CSS もフォント解決も届かない。枠と空／エラー案内だけを対象にする                        |
-| 画像の中の文字             | ビットマップの一部で `font-size` を持たない。両面とも同じ画像を同じ内容矩形へ収める                                           |
-| 標準ダイアログアイコン     | 文字ではなく path（`src/dialog-icons.js` の 24 単位 viewBox）。文字サイズを持たないので、文字アイコンだけを 30px の対象にする |
-| DPR・テーマ・100/200% 拡大 | T8。`surfaces` は DPR 1 / ライト / ホスト 16px の 2 幅のみ                                                                    |
-| フォント完了時の再描画     | T6。`surfaces` は `settle()` 後（`document.fonts.ready` 済み）の 1 フレームを測る                                             |
+| 項目                       | 状態・理由                                                                                                                                                                                                                                              |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| iframe の中身              | 別文書（`sandbox` 済み）で runtime の CSS もフォント解決も届かない。枠と空／エラー案内だけを対象にする                                                                                                                                                  |
+| 画像の中の文字             | ビットマップの一部で `font-size` を持たない。両面とも同じ画像を同じ内容矩形へ収める                                                                                                                                                                     |
+| 標準ダイアログアイコン     | 文字ではなく path（`src/dialog-icons.js` の 24 単位 viewBox）。文字サイズを持たないので、文字アイコンだけを 30px の対象にする                                                                                                                           |
+| DPR・テーマ・100/200% 拡大 | **未実施**。`surfaces` は DPR 1 / ライト / ホスト 16px の 2 幅のみ。`matrix` は figure / document / media / dialog-icon を扱わない（surfaces の担当 kind として除外する）ので、T8 へ送ったつもりでも届いていません（[下記](#条件を動かして測った範囲)） |
+| フォント完了時の再描画     | T6。`surfaces` は `settle()` 後（`document.fonts.ready` 済み）の 1 フレームを測る                                                                                                                                                                       |
 
 ### 検査に歯があることの確認
 
@@ -672,14 +695,15 @@ F3 が足した 6 ケース（`stage-detached-load` / `stage-detached-live-dom-f
 
 ### 実測値（2026-10-06・Chromium 152.0.7977.64）
 
-送り幅（13px、`body`）。DOM ステージと Canvas ステージで同じ値です。
+送り幅。DOM ステージと Canvas ステージで同じ値です。**サンプルごとに役割が違います**
+（`FONT_SAMPLES` の `role`、既定は `body`）。
 
-| サンプル         | 読み込み前 | 読み込み後 | 期待                                      |
-| ---------------- | ---------- | ---------- | ----------------------------------------- |
-| `iiiii`          | 17.87px    | 39.00px    | 動く（probe 字体が覆う）                  |
-| `WWWWW`          | 57.07px    | 39.00px    | 動く・`iiiii` と一致（等幅になった証拠）  |
-| `ABCDEFGHIJ`     | 77.56px    | 78.00px    | 動く                                      |
-| `日本語テキスト` | 84.00px    | 84.00px    | **動かない**（probe 字体に CJK 字体なし） |
+| サンプル         | 役割           | 読み込み前 | 読み込み後 | 期待                                      |
+| ---------------- | -------------- | ---------- | ---------- | ----------------------------------------- |
+| `iiiii`          | `body` 13px    | 17.87px    | 39.00px    | 動く（probe 字体が覆う）                  |
+| `WWWWW`          | `body` 13px    | 57.07px    | 39.00px    | 動く・`iiiii` と一致（等幅になった証拠）  |
+| `ABCDEFGHIJ`     | `body` 13px    | 77.56px    | 78.00px    | 動く                                      |
+| `日本語テキスト` | `caption` 12px | 84.00px    | 84.00px    | **動かない**（probe 字体に CJK 字体なし） |
 
 - DOM の再レイアウト: `.ui-displayfield > div` のインク幅 63.6px → 70.2px。CJK の `.ui-label`
   は 120.7px のまま（コードポイント単位の fallback が維持されている証拠）。
@@ -802,7 +826,7 @@ F3 の製品側の修正を 1 つずつ戻して実行しました（手順は
 | 3   | 両方を戻す（= 差し戻し前の挙動）           | 両方非 0         | 単体試験 FAIL、`lifecycle` 非 0・指摘 27 件（`load()` が rejected、`onLoad` 0 回、effects 0 回） |
 | 4   | 変異なし                                   | 全 green         | 最終 gate の実行で確認                                                                           |
 
-## 全共通部品の状態別 coverage（T7）
+## 全共通部品の kind・xtype・状態 coverage（T7）
 
 ### 決めたこと — 役割の一覧そのものを engine から導く
 
@@ -848,12 +872,17 @@ Canvas はこの 10 件に対応づいた描画が**空文字であること**�
 ### `roles` suite が T7 で確認していること
 
 28 ケース・DOM 1243 件・Canvas 描画 1276 件・**37 kind すべて描画あり**・**48/48 xtype**・
-**状態 18 件すべて観測**で green。F1 からは同じ 28 ケースで
+**状態 18 件すべて 1 件以上観測**で green。F1 からは同じ 28 ケースで
 **両面を部品単位に突き合わせた 1254 スロット／37 kind**も同時に判定します
 （→ [役割単位の突き合わせ（F1）](#役割単位の突き合わせf1verify-round-1)）。
-T2 の時点から残っていた `fieldset` の穴も閉じました
-（states fixture が**折りたたまない** fieldset を書くので、見出しが `panel-toggle` へ移らず
-箱自身が描く）。
+**T3 が送った `fieldset` の穴**（`uivolve-forms` の fieldset は折りたたみでタイトルが
+`panel-toggle` へ移るため、箱自身の描画が空文字だった）もここで閉じました。states fixture が
+**折りたたまない** fieldset を書くので、箱自身が見出しを描きます。
+
+状態の 18 件は**各状態が少なくとも 1 回は実測されたこと**を示すもので、部品 × 状態の格子では
+ありません。たとえば `disabled` は components / grid-lab / forms / states で観測していますが、
+「全 37 kind を disabled で測った」という意味ではありません。`stateTableProblems()` が
+落とすのも「1 件も観測されなかった状態」です。
 
 xtype が「描かれた」と数える根拠は 2 段で、台帳（`roles-coverage.json`）に**どちらで示したか**を
 残します。
@@ -870,6 +899,7 @@ probe 側**にあります（上の完全一致）。ブラウザ側は「本当
 normalize が合成する xtype（画面定義に書けないもの）は、**入口の記述から**数えます
 （`screenCoverage` が `extras::normalize` のこの一部だけを再現する）。これをやらないと
 `tbtext` の kind 根拠が `label` になり、どの画面の label でも「証明」できてしまいます。
+`XTYPE_SYNTHESIZED` は **5 件**です。
 
 | 合成される xtype | 入口の記述                           |
 | ---------------- | ------------------------------------ |
@@ -878,7 +908,12 @@ normalize が合成する xtype（画面定義に書けないもの）は、**�
 | `tbseparator`    | toolbar の `"-"`                     |
 | `tbspacer`       | toolbar の空白だけの項目             |
 | `dialogbutton`   | messagebox の `buttons`              |
-| `menuseparator`  | menu の `"-"` 項目                   |
+
+`menuseparator` はこの一覧に入りません。menu の `"-"` 項目からも合成されますが、
+**`xtype: menuseparator` と画面定義に直接書けます**（engine の許可リストにあり、
+`XTYPE_SHAPES` も `{ xtype: "menuseparator", node: {} }` を直接描かせています）。
+`screenCoverage` の walk は `"-"` からの合成も数えますが、「書けないから合成から数える」
+5 件とは根拠が違うので分けてあります。
 
 ### 状態の一覧（18 件・担当 suite 付き）
 
@@ -893,7 +928,7 @@ normalize が合成する xtype（画面定義に書けないもの）は、**�
 | `dialog-image-icon`    | `roles`     | dialogs-image-icon（同上）                            |
 | `dialog-text-icon`     | `roles`     | dialogs-text-icon（30px の実測は `surfaces`）         |
 | `messagebox-answers`   | `roles`     | states-answer（`-answer-N` の target で 1 件単位）    |
-| `drag-ghost`           | `roles`     | kanban-drag-dom / kanban-drag-canvas                  |
+| `drag-ghost`           | `roles`     | **kanban-drag-dom のみ**（下記）                      |
 | `field-without-label`  | `roles`     | forms / kanban / gallery / states（`labelHeight: 0`） |
 | `grid-empty`           | `roles`     | kanban ほか（一致 0 件の案内）                        |
 | `calendar-month-shift` | `roles`     | states-month-shift（実クリックで `2026年 11月` へ）   |
@@ -901,11 +936,23 @@ normalize が合成する xtype（画面定義に書けないもの）は、**�
 | `calendar-month-edge`  | `roles`     | states（前後月の muted 日と、戻れない月の `‹` 無効）  |
 | `editing-overlay`      | `editing`   | T4: Grid 編集中 11 件を含む 16 ケース                 |
 | `media-empty-or-error` | `surfaces`  | T5: media 枠 46 件（案内 28 件）                      |
-| `font-loaded`          | `lifecycle` | T6: 遅延配信の前後 5 ケース                           |
+| `font-loaded`          | `lifecycle` | T6: 字体の遅延配信 4 ケース ＋ 倍率 1 ケース          |
 
 担当が `roles` 以外の 3 件を二重に測り直してはいません。測り直すと同じ検査が 2 か所にでき、
 片方だけ直されたときに食い違います。`stateTableProblems()` が「担当 suite の無い状態」と
 「`roles` 担当なのに判定の無い状態」を落とします。
+
+2 行だけ、担当の中身を補足します。
+
+- **`drag-ghost`**: 状態として記録するのは `kanban-drag-dom` だけです。検出条件が
+  `ROLE_CONTRACT` の `ghost-title` / `ghost-detail`（`.kanban-drag-ghost > strong` /
+  `> span`）という **DOM 側の selector** だからです。Canvas の ghost
+  （`kanban-drag-canvas`）は同じ `roles` suite の中で `kanban-card` の kind として
+  サイズを検査しますが、DOM に同じ key の節点が無いので部品単位の突き合わせからは外れ、
+  状態表の 1 件にも数えていません（[F1 の `position` 根拠](#突き合わせの決まり)）。
+- **`font-loaded`**: `lifecycle` の 5 ケースの内訳は、字体の到着・失敗・競合・dispose の
+  4 件（`fonts-arrival` / `fonts-error` / `fonts-race` / `fonts-dispose`）と、倍率だけを
+  動かす 1 件（`pixel-ratio`）です。「遅延配信の前後」なのは前の 4 件です。
 
 ### T7 で足した fixture
 
@@ -922,15 +969,15 @@ dialogs はアイコンの 3 形（標準 / 画像 / 絵文字）を、**combobo
 
 | 差                                         | 内容                                                                                                                                                                                                              |
 | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 使用不可のカレンダー日の濃さ               | DOM は `:disabled` に `opacity: 0.5`（`src/runtime.css:35-38`）、Canvas は muted 色のみで薄くしない。**色・不透明度の差でサイズの差ではない**（両面とも 11px の label 役割で一致）。この milestone はサイズが対象 |
+| 使用不可のカレンダー日の濃さ               | DOM は `:disabled` に `opacity: 0.5`（`src/runtime.css:43-46`）、Canvas は muted 色のみで薄くしない。**色・不透明度の差でサイズの差ではない**（両面とも 11px の label 役割で一致）。この milestone はサイズが対象 |
 | `grid-shell` / `menu-surface` の読み上げ名 | 両面とも文字としては描かない（上の `renderer-skips`）                                                                                                                                                             |
 
 ### T7 の時点で未実施（理由付き）
 
-| 未実施                               | 理由                                                                                                             |
-| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| 幅・拡大・配色の行列と代表画像の目視 | T8 の担当。T7 は light / 16px の 1 条件で coverage を閉じる（テーマ・ホストサイズ独立性は T2 の 8 ケースが担保） |
-| 生成配布物からの確認                 | T9 の担当                                                                                                        |
+| 未実施                               | 理由                                                                                                                                                                                                                                                                                                                                  |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 幅・拡大・配色の行列と代表画像の目視 | T8 の担当。T7 は light / 16px の 1 条件で coverage を閉じる（テーマ・ホストサイズ独立性は T2 の 8 ケースが担保）。**T8 の 7 画面に出る役割だけが行列に乗ります**。T7 が閉じた一覧のうち Kanban（9px の `meta` を含む）・ツリー・menu-item・toast は `matrix` の画面に出ないので 1 条件のままです（[下記](#条件を動かして測った範囲)） |
+| 生成配布物からの確認                 | T9 の担当                                                                                                                                                                                                                                                                                                                             |
 
 ### 検査に歯があることの確認
 
@@ -960,6 +1007,23 @@ T2〜T7 は 1 条件（ライト・ホスト 16px・1440x1000・DPR 1）で役�
 | 配色 | light ／ dark（`/themes/*.json` の実ファイル）                                                                                         | 独立 runtime は `runtime.theme()`、デモは配色セレクタ                                  |
 | 拡大 | 100% ／ 200%                                                                                                                           | 下記。**幅を狭めることとは別の条件**として実施する                                     |
 | 画面 | hello-world / uivolve-forms / orders / grid-lab / components / uivolve-gallery / dialogs（絵文字アイコンの確認ダイアログを開いた状態） | dialogs は 30px の文字アイコンと長いメッセージが開いている間しか出ないため条件に足した |
+
+### 条件を動かして測った範囲
+
+T2〜T7 の節は「幅・DPR・テーマ・拡大は T8 が見る」と書いていますが、**行列に乗ったのは
+この 7 画面に出る役割だけ**です。乗らなかったものは、ライト／ホスト 16px ／ DPR 1 ／
+1440x1000 の 1 条件でしか測っていません。範囲は次のとおりです。
+
+| 区分                           | 件数                              | 内容                                                                                                                                                       |
+| ------------------------------ | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 行列に乗った DOM 役割          | 26 / `ROLE_CONTRACT` の 39        | `matrix.json` の `roles`。6 条件 × 2 テーマ × 2 面で測る                                                                                                   |
+| 行列に乗った Canvas kind       | 28 / `CANVAS_KIND_CONTRACT` の 37 | `matrix.json` の `canvasKinds`                                                                                                                             |
+| 行列に乗らなかった DOM 役割    | 13                                | `canvas-editor`、`menu-item`、`tree-shell` / `tree-node` / `tree-toggle`、`toast`、Kanban の 5 役割（**9px の `kanban-card-id` を含む**）、ghost の 2 役割 |
+| 行列に乗らない surface の文字  | —                                 | `figure` / `document` / `media` の案内 / `dialog-icon`。`matrix` は `surfaces` 担当の kind を除外するので、2 幅 × DPR 1 × ライトのみ（`surfaces` suite）   |
+| 行列に乗らない編集オーバーレイ | —                                 | `matrix` は編集オーバーレイを開きません（編集の条件変更は下の journey 2 本＝ Hello World の通常 field だけ）。Grid 編集の 12px は `editing` の 1 条件      |
+
+`matrix` が実際に描かせた宣言サイズは 11 / 12 / 13 / 20 / 22 / 30px の 6 種で、**9px は
+1 件も出ていません**（Kanban が行列の画面に無いため）。
 
 ### ズームの方法と CSS 座標換算
 
@@ -1002,6 +1066,12 @@ Hello World の `nameInput` に下書き「下書き」を入れたまま、配�
   （`journey-dom`）も同じ段を通り、オーバーレイが無いこと以外は同じ結果です。
 - **100% → 200% → 100% の往復**は、描いた文字・font 文字列・変形・bitmap 幅まで含めて
   拡大前のフレームと完全一致することを比べます（倍率が累積していたら落ちます）。
+- **拡大の 2 段（`zoom-200` / `zoom-100`）は、解像度クエリの `change` を合成して配達します。**
+  CDP の倍率上書きは `devicePixelRatio` と `MediaQueryList.matches` を更新しますが `change` を
+  配信しないためです（T6 の限界表と同じ事情）。journey は `lifecycle` と違い、**ブラウザ自身の
+  再描画を待たずに無条件で発火**してから再描画を待ちます。合成しているのは通知の配達だけで、
+  倍率・bitmap・変形・計測値はすべてブラウザ自身の値です。`matrix` の 168 ケース本体は条件
+  ごとに harness を開き直すので、この合成を使いません（新しい runtime がその時点の倍率を読む）。
 
 ### 自動数値結果（2026-10-07 実測・Chromium 152.0.7977.64）
 
@@ -1022,16 +1092,16 @@ Hello World の `nameInput` に下書き「下書き」を入れたまま、配�
 | 証跡                         | `matrix.json`（条件・ケース・画像パス・限界）                    |
 
 - 入力位置の 2.00px は Chromium が `input[type="range"]` に付ける UA 既定の margin です
-  （`src/runtime.css:407-411` は padding と border だけを 0 にしています）。判定は
+  （`src/runtime.css:415-419` は padding と border だけを 0 にしています）。判定は
   「中心が部品の矩形の中」＋「辺のはみ出しが 4px 以内」で、位置を失った入力はレイアウトの
   刻み（数十 px）でずれるため区別できます。実測の最大値はケースごとに台帳へ出します。
 - デモ面は Scene を公開していないため、描画の部品対応付けと入力位置の照合は**行いません**。
   代わりに、デモが描いた宣言サイズの集合が独立 runtime の集合に含まれること・字体・描画時の
-  倍率を照合します（6 画面すべてで集合は一致しました）。
+  倍率を照合します（**7 画面すべて**で集合は一致しました）。
 - **F2 で assert に変えたもの**（それまでは記録だけで、落ちませんでした）:
-  - 枠外へ出た未省略の描画は**独立 runtime の全ケースで 0 件**。デモ面は対応付ける Scene が
-    無いので件数自体を出せません。Grid の行の文字を枠の 6 倍の幅で描くと `matrix` が非 0 に
-    なることを確かめています
+  - 枠外へ出た未省略の描画は**独立 runtime の 84 ケースで 0 件**（デモの 84 ケースは対応付ける
+    Scene が無いので件数自体を出せません。つまりこの 0 件はデモ面について何も言っていません）。
+    Grid の行の文字を枠の 6 倍の幅で描くと `matrix` が非 0 になることを確かめています
   - 入力位置は、**Scene に入力欄を持つ部品がある画面では 1 件以上**照合していること。
     画面ごとの件数と、0 件の画面については「Scene に入力欄を持つ部品が無い」という理由を
     `matrix.json` の `controlCoverage` に出します（7 画面すべてで 1 件以上でした）。
@@ -1052,48 +1122,62 @@ manifest を複製しています。どちらも `document.fonts.ready` の後�
 - 修正後: 同じディレクトリの `matrix-demo-<画面>-<条件>-<テーマ>.png` /
   `matrix-standalone-...`（64 枚）と `matrix.json`
 
-修正前の DOM 実測値（7 画面 × 2 幅 × 2 テーマ）と、修正後の契約値:
+修正前の DOM 実測値（7 画面 × 2 幅 × 2 テーマ = 28 ケース）と、修正後の契約値。
+**「画面」は `before.json` にその selector が実際に出た画面**で、選択肢の例ではありません。
 
-| selector                                                                                                                                                                      | 修正前                        | 修正後 | 画面               |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | ------ | ------------------ |
-| `.ui-button`                                                                                                                                                                  | 16px（ダイアログ内のみ 13px） | 12px   | 全画面             |
-| `.ui-menu-trigger`                                                                                                                                                            | 16px                          | 12px   | grid-lab / gallery |
-| `.ui-grid-column` / `.ui-grid-cell` / `.ui-grid-select` / `.ui-grid-page`                                                                                                     | 13px                          | 12px   | grid-lab / orders  |
-| `.ui-tab`                                                                                                                                                                     | 13px                          | 12px   | grid-lab / gallery |
-| `.ui-window-close`                                                                                                                                                            | 13px                          | 20px   | dialogs            |
-| `.ui-field > input` / `select` / `textarea` / `.box-control`                                                                                                                  | 13px                          | 13px   | 変化なし           |
-| `.ui-field > label` 11px・`.ui-label` 11px・`.ui-panel` 12px・`.ui-metric span` 11px / `strong` 22px・`.window-title` 12px・`.ui-dialog-message` 13px・`.ui-dialog-icon` 30px | 同左                          | 同左   | 変化なし           |
+| selector                                                                                                                                                                      | 修正前                        | 修正後 | 出た画面                              |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | ------ | ------------------------------------- |
+| `.ui-button`                                                                                                                                                                  | 16px（ダイアログ内のみ 13px） | 12px   | **7 画面中 6**（grid-lab には出ない） |
+| `.ui-menu-trigger`                                                                                                                                                            | 16px                          | 12px   | grid-lab / uivolve-gallery            |
+| `.ui-grid-column` / `.ui-grid-cell` / `.ui-grid-select` / `.ui-grid-page`                                                                                                     | 13px                          | 12px   | **grid-lab のみ**                     |
+| `.ui-tab`                                                                                                                                                                     | 13px                          | 12px   | grid-lab / uivolve-gallery            |
+| `.ui-window-close`                                                                                                                                                            | 13px                          | 20px   | dialog-text-icon                      |
+| `.ui-field > input` / `select` / `textarea` / `.box-control` / `.ui-displayfield > div`                                                                                       | 13px                          | 13px   | 変化なし                              |
+| `.ui-field > label` 11px・`.ui-label` 11px・`.ui-panel` 12px・`.ui-metric span` 11px / `strong` 22px・`.window-title` 12px・`.ui-dialog-message` 13px・`.ui-dialog-icon` 30px | 同左                          | 同左   | 変化なし                              |
 
-T2 が `roles` suite で採った修正前の値（`button` 16→12、`window-close` 13→20、
-`grid-column` / `grid-cell` / `tab` 13→12、`menu-trigger` 16→12）と、別の経路で撮った
-この実測が一致しています。
+- **orders の Grid は `.ui-grid-*` ではありません。** 旧 Grid なので `.ui-grid-header`
+  （`label` 11px）と `.ui-row`（`caption` 12px）で描かれ、この 2 つは `main` と現在で同じ値です
+  （`src/runtime.css:698-703` / `714-718`。`main` では直接 11px / 12px）。ただし
+  **`before.json` はこの 2 つを 1 件も採っていない**ので、修正前後の実測としてはこの表に
+  ありません。両面の一致は `roles`（`grid-header` / `row` kind）と `matrix` が見ています。
+- T2 が `roles` suite で採った修正前の値（`button` 16→12、`window-close` 13→20、
+  `grid-column` / `grid-cell` / `tab` 13→12、`menu-trigger` 16→12）と、別の経路で撮った
+  この実測が一致しています。
 
-### 目視結果（6 組・2026-10-07）
+### 目視結果（8 組・2026-10-07）
 
-| 画像の組                                             | 見たこと                                                                                                                                                     |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| grid-lab / desktop / light                           | 修正前は DOM のタブが `出荷状況から絞り…` と欠け、ボタン・セルが Canvas より大きい。修正後は `出荷状況から絞り込む` が収まり、両面の文字が同じ大きさに見える |
-| components / desktop / dark                          | 修正前は DOM の `▾プロフィール` `▾メモ` とボタンが一回り大きい。修正後は一致。暗い配色でも重なり・欠けは増えていない                                         |
-| orders / narrow / light                              | 修正前は DOM のセルが `SO-0…` `田中デザ…` `受…` と欠け、Canvas は `SO-001` `田中デザイン` `受注`。修正後は両面とも同じ文字・同じ省略位置（`出…`）            |
-| dialog-text-icon / narrow / light                    | 修正前は DOM の `✕` が小さい（13px）。修正後は 20px で Canvas と一致。**30px の絵文字アイコンは前後とも同じ大きさで、枠からの欠けも増えていない**            |
-| hello-world / desktop / 200%（独立 runtime・修正後） | 拡大 200% でも両ステージの文字が同じ大きさで、bitmap が 2 倍になって輪郭が崩れていない                                                                       |
-| journey-canvas / zoom-200（修正後）                  | 拡大したまま編集中の下書き「下書き」とキャレットが残り、オーバーレイが欄の上にぴたりと乗っている。サイズは 13px のまま                                       |
+修正前の 28 枚・修正後の 64 枚のうち、**下の 8 組を人が開いて見ました**。残りは自動数値だけが
+根拠です。「面」は撮った対象で、修正前の 28 枚はすべて比較デモです（`before.json` の note）。
+
+| 画像の組（修正前 → 修正後）                                                                       | 面   | テーマ | 見たこと                                                                                                                                                                                                                                    |
+| ------------------------------------------------------------------------------------------------- | ---- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `before-grid-lab-desktop-light` → `matrix-demo-grid-lab-desktop-dpr1-zoom100-light`               | デモ | light  | 修正前は DOM のタブが `出荷状況から絞り…` と欠け、ボタン・セルが Canvas より大きい。修正後は `出荷状況から絞り込む` が収まり、両面の文字が同じ大きさに見える                                                                                |
+| `before-components-desktop-dark` → `matrix-demo-components-desktop-dpr1-zoom100-dark`             | デモ | dark   | 修正前は DOM の `▾プロフィール` `▾メモ` とボタンが一回り大きい。修正後は一致。暗い配色でも重なり・欠けは増えていない                                                                                                                        |
+| `before-uivolve-forms-desktop-light` → `matrix-demo-uivolve-forms-desktop-dpr1-zoom100-light`     | デモ | light  | 修正前は DOM の `▼ 通知と選択`（panel-toggle）と `入力内容を保存`（button）が Canvas より一回り大きい。修正後は両方とも Canvas と同じ大きさ。入力欄・ラベル・listbox・displayfield は前後とも同じで、新たな欠け・重なり・行送りのずれはない |
+| `before-orders-narrow-light` → `matrix-demo-orders-narrow-dpr1-zoom100-light`                     | デモ | light  | 修正前は DOM のセルが `SO-0…` `田中デザ…` `受…` と欠け、Canvas は `SO-001` `田中デザイン` `受注`。修正後は両面とも同じ文字・同じ省略位置（`出…`）                                                                                           |
+| `before-dialog-text-icon-narrow-light` → `matrix-demo-dialog-text-icon-narrow-dpr1-zoom100-light` | デモ | light  | 修正前は DOM の `✕` が小さい（13px）。修正後は 20px で Canvas と一致。**30px の絵文字アイコンは前後とも同じ大きさで、枠からの欠けも増えていない**                                                                                           |
+| `matrix-standalone-hello-world-desktop-dpr1-zoom200-light`（修正後のみ）                          | 独立 | light  | 拡大 200% でも両ステージの文字が同じ大きさで、bitmap が 2 倍になって輪郭が崩れていない                                                                                                                                                      |
+| `matrix-journey-canvas-zoom-200`（修正後のみ）                                                    | 独立 | dark   | 拡大したまま編集中の下書き「下書き」とキャレットが残り、オーバーレイが欄の上にぴたりと乗っている。サイズは 13px のまま                                                                                                                      |
+| `matrix-demo-uivolve-gallery-narrow-dpr1-zoom100-light`（修正後のみ）                             | デモ | light  | 幅 390px でも両面が同じ大きさ・同じ行位置。タブは両面とも同じ位置で `チャ…` `メデ…` と省略され、カレンダー・ページング・パネル見出しにも新たな欠け・重なりはない                                                                            |
 
 - **22px の metric**（orders / components の `¥514400` など）は前後とも 22px で、幅 390px でも
   欠け・重なりはありません。**狭いセル**は上記 orders の組のとおり、修正後は両面が同じ位置で
   省略します。**長文**（gallery の案内文・dialogs の説明）は前後とも同じ位置で省略されます。
-- 既知の表現差（使用不可のカレンダー日が DOM だけ薄い。T7 に記録）は gallery / narrow の組でも
-  見えました。**色・不透明度の差で、サイズは両面とも一致**しています。
+- 既知の表現差（使用不可のカレンダー日が DOM だけ薄い）は目視ではなく **T7 の `roles` suite が
+  実測して記録**しています。**色・不透明度の差で、サイズは両面とも 11px の `label` で一致**します
+  → [現在の対象外と既存の表現差（一覧）](#現在の対象外と既存の表現差一覧)。
 
 ### 限界（それぞれ別に記録する）
 
-| 項目                 | 状態                                                                                                                                                                      |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 実ブラウザのズーム   | **未実施**。headless Chromium ではズーム操作ができず、CDP にページズームの命令もない（`Emulation.setPageScaleFactor` はピンチズームで再レイアウトしない）。手動確認の項目 |
-| CSS の `zoom`        | **不使用**。埋め込み側が書いたときだけ現れるもので、利用者のズームとは別物。要件が求めるのは利用者のズームなので上記の同値変換で実施した                                  |
-| DPR エミュレーション | 上の metrics override。倍率・bitmap・変形・計測値はブラウザ自身の値                                                                                                       |
-| 実 IME               | 未実施（T4 と同じ）。合成 composition と分けて記録                                                                                                                        |
-| デモ面の Scene       | 公開されていないため、デモでは部品対応付けと入力位置を照合しない（上記）                                                                                                  |
+| 項目                    | 状態                                                                                                                                                                                                                                                                                                |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 実ブラウザのズーム      | **未実施**。headless Chromium ではズーム操作ができず、CDP にページズームの命令もない（`Emulation.setPageScaleFactor` はピンチズームで再レイアウトしない）。手動確認の項目                                                                                                                           |
+| CSS の `zoom`           | **不使用**。埋め込み側が書いたときだけ現れるもので、利用者のズームとは別物。要件が求めるのは利用者のズームなので上記の同値変換で実施した                                                                                                                                                            |
+| DPR エミュレーション    | 上の metrics override。倍率・bitmap・変形・計測値はブラウザ自身の値                                                                                                                                                                                                                                 |
+| 実 IME                  | 未実施（T4 と同じ）。合成 composition と分けて記録                                                                                                                                                                                                                                                  |
+| デモ面の Scene          | 公開されていないため、デモでは部品対応付けと入力位置を照合しない（上記）                                                                                                                                                                                                                            |
+| 解像度クエリの `change` | 編集 journey の `zoom-200` / `zoom-100` は**合成した `change` を無条件に発火**してから再描画を待つ（CDP の倍率上書きは `change` を配信しない）。合成しているのは通知の配達だけで、倍率・bitmap・変形・計測値はブラウザ自身の値。168 ケース本体は条件ごとに harness を開き直すのでこの合成を使わない |
+| 測った役割の範囲        | 行列に乗ったのは 39 役割のうち 26 ／ 37 kind のうち 28（[上記](#条件を動かして測った範囲)）。9px の役割・編集オーバーレイ・surface の文字は 1 条件のまま                                                                                                                                            |
 
 ### T8 で直した観測コードの穴
 
@@ -1172,8 +1256,9 @@ T8 は細工をせずに済みました。実装中に上の 3 つの穴が**実
 | `field-input` | 13px | 13px      | 13px      |
 
 - ステージ要素（`.uivolve-runtime`）自体の computed font-size は 16px / 20px と**ホストに追従
-  します**（`src/runtime.css` は `font-size` を宣言していません）。動かないのは部品の役割サイズで、
-  これは役割ごとの宣言が効いているためです。
+  します**。`src/runtime.css` が `font-size` を宣言していないのは**ステージ自身（`.uivolve-runtime`
+  のルール）についてだけ**で、中の部品には `--ui-font-size-*` を参照する `font-size` 宣言が
+  並んでいます。動かないのは部品の役割サイズで、これは役割ごとの宣言が効いているためです。
 - Canvas の bitmap は embed 712x180、minimal 718x180 で、どちらも CSS 寸法と同じ（DPR 1）。
 - 日本語は 4 役割すべてで実測しています（`名前` / `例：太郎` / `挨拶する` /
   `名前を入力して「挨拶する」を押してください。`）。
@@ -1194,18 +1279,21 @@ T8 は細工をせずに済みました。実装中に上の 3 つの穴が**実
 Canvas 面は 16 本中 8 本で `canvas-editor` クラスの入力欄が 1 つ開き、DOM 面はページ本来の
 `input` に focus が入りました（オーバーレイ 0 件）。
 
-### 代表画像と目視結果（12 枚・2026-10-07）
+### 代表画像（12 枚）と目視結果（5 組・7 枚・2026-10-07）
 
-`distribution-embed-<host>-<テーマ>.png`（4 枚）と
-`distribution-minimal-<renderer>-<host>-<テーマ>.png`（8 枚）。
+撮った 12 枚は `distribution-embed-<host>-<テーマ>.png`（4 枚）と
+`distribution-minimal-<renderer>-<host>-<テーマ>.png`（8 枚）です。**人が開いて見たのは
+下の 5 組・のべ 7 枚**で、残りの 5 枚（`embed-16px-dark` / `embed-20px-light` /
+`minimal-dom-16px-dark` / `minimal-dom-20px-dark` / `minimal-canvas-20px-dark`）は
+自動数値だけが根拠です。
 
-| 画像の組                       | 見たこと                                                                                                                                                      |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| embed / 16px / light           | 左の DOM 面と右の Canvas 面で `名前` `例：太郎` `挨拶する` `名前を入力して…` がすべて同じ大きさ・同じ行位置。欠け・重なりなし                                 |
-| embed / 20px / dark            | 16px の組と文字の大きさが変わらない。暗い配色でも両面一致で、ボタン内の文字が枠からはみ出していない                                                           |
-| minimal / dom 対 canvas / 20px | 生成 HTML 側の見出し `Hello World`・リンク `DOMで表示` `Canvasで表示`・案内文は**ホストの 20px に追従して大きくなる**一方、枠内の部品は 16px の組と同じ大きさ |
-| minimal / dom 対 canvas / 16px | 2 枚の枠内が同じ大きさ・同じ折り返し位置。日本語の `例：太郎` も同じ                                                                                          |
-| minimal / canvas / 16px / dark | 枠内だけが暗い配色になり、ホストのページは明るいまま（ホストがページを持つという契約どおり）。文字サイズは light の組と同じ                                   |
+| 見た画像                                                      | 見たこと                                                                                                                                                      |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `distribution-embed-16px-light`                               | 左の DOM 面と右の Canvas 面で `名前` `例：太郎` `挨拶する` `名前を入力して…` がすべて同じ大きさ・同じ行位置。欠け・重なりなし                                 |
+| `distribution-embed-20px-dark`                                | 16px の組と文字の大きさが変わらない。暗い配色でも両面一致で、ボタン内の文字が枠からはみ出していない                                                           |
+| `distribution-minimal-dom-20px-light` ／ `-canvas-20px-light` | 生成 HTML 側の見出し `Hello World`・リンク `DOMで表示` `Canvasで表示`・案内文は**ホストの 20px に追従して大きくなる**一方、枠内の部品は 16px の組と同じ大きさ |
+| `distribution-minimal-dom-16px-light` ／ `-canvas-16px-light` | 2 枚の枠内が同じ大きさ・同じ折り返し位置。日本語の `例：太郎` も同じ                                                                                          |
+| `distribution-minimal-canvas-16px-dark`                       | 枠内だけが暗い配色になり、ホストのページは明るいまま（ホストがページを持つという契約どおり）。文字サイズは light の組と同じ                                   |
 
 ### 限界（配布物の面に固有のもの）
 
@@ -1446,6 +1534,57 @@ stylesheet で固定するためページ側の規則では動きません（`no
 | 2   | reset を main の 0,1,1（`.uivolve-runtime button, …`）へ | `roles` / `editing` | 非 0・1765 / 571 件。button 16px・panel-toggle 16px・grid-cell 13px など部品の宣言が負ける  |
 | 3   | ホスト規則を何にも一致しないセレクタにする               | `roles`             | 非 0・8 件。対照の 4 部品が「5 プロパティとも動いていない」として落ちる                     |
 | 4   | 変異なし                                                 | `roles` / `editing` | 両方 green（`roles` 28 ケース ＋ 6 読み取り、`editing` 16 ケース ＋ 12 読み取り）           |
+
+## 現在の対象外・表現差・限界（まとめ）
+
+各タスクの節には「その時点で未実施」「T◯ へ送る」という表が残っています。あちらは経過の記録で、
+解消済みの行と恒久の行が混ざっています。**現在どうなっているかはこの節だけを読めば分かります。**
+
+### 現在の対象外と既存の表現差（一覧）
+
+| 区分             | 対象                                                                                                  | 現在の扱い                                                                                                                                                                            |
+| ---------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 文字を描かない   | `backdrop` / `card` / `grid-head` / `grid-row` / `menuseparator` / `separator` / `tabbar` / `toolbar` | `engine-empty`。engine が `text` / `value` / `cells` を空にすることを probe が実測する（8 件）                                                                                        |
+| 文字を描かない   | `grid-shell`（一覧の題）/ `menu-surface`（引き金の見出し）                                            | `renderer-skips`。文字列は持つがどちらの面も描かない。probe は**逆に文字列が空でないこと**を確かめる（2 件）                                                                          |
+| 対象外           | iframe の中身                                                                                         | 別文書（`sandbox` 済み）で runtime の CSS もフォント解決も届かない。枠と空／エラー案内だけが対象                                                                                      |
+| 対象外           | 画像（ビットマップ）の中の文字                                                                        | `font-size` を持たない。両面とも同じ画像を同じ内容矩形へ収める                                                                                                                        |
+| 対象外           | 標準ダイアログアイコン（`info` などの SVG path）                                                      | 文字ではなく path（`src/dialog-icons.js` の 24 単位 viewBox）。「文字を描かないこと」だけを実測する                                                                                   |
+| 対象外           | ホスト外枠（デモのページ装飾・最小アプリの見出しとリンク）                                            | ランタイム外の表示。ホストの `font-size` に追従するのが正しい                                                                                                                         |
+| 対象外           | 字体そのもの（グリフ形状）の差                                                                        | 対象はサイズの一致。字体はシステムのフォールバックに依存する                                                                                                                          |
+| 対象外           | 詳細度 0,1,0 以上のホスト規則・`!important`・内部 class を名指しする規則                              | ホストが勝つ。`main` の reset（0,1,1）でも同じで、F4 で範囲を広げていない                                                                                                             |
+| 表現差（太さ）   | `extra-button` DOM 400 / Canvas 500（467 件）                                                         | `.ui-extra-button` が太さを宣言せず 400、Canvas は button と同じ 500。**サイズは一致**                                                                                                |
+| 表現差（太さ）   | `grid-column` DOM 500 / Canvas 400（16 件）                                                           | DOM は見出しとして 500、Canvas は本文と同じ 400                                                                                                                                       |
+| 表現差（太さ）   | `kanban-card` の題 700/600（12 件）・`kanban-lane` の題 700/600（9 件）                               | DOM が `<strong>`（既定 700）、Canvas は 600                                                                                                                                          |
+| 表現差（太さ）   | `tree-node` 600/400（5 件）・`tree-toggle` 600/400（2 件）                                            | `.ui-tree-shell` の 600 を継承、Canvas は 400                                                                                                                                         |
+| 表現差（不透明） | 使用不可のカレンダー日の濃さ                                                                          | DOM は `:disabled` に `opacity: 0.5`（`src/runtime.css:43-46`）、Canvas は muted 色のみ。**両面とも 11px の `label`**                                                                 |
+| 表現差（文言）   | media の空／エラー案内                                                                                | Canvas はビットマップへ widget の題名、DOM は `::after` の固定文「メディアを読み込めません」。**サイズは両面とも `caption` 12px**                                                     |
+| 表現差（重なり） | 壊れた画像の DOM 側                                                                                   | DOM は `<img>` の代替表示（alt）と `::after` の案内が重なる。Canvas は image の native 要素を持たないので案内だけ                                                                     |
+| 表現差（行分割） | 枠に収まらない文字アイコン                                                                            | `.ui-dialog-icon` は `inline-flex` ＋ `overflow: hidden` なので DOM は折り返し、Canvas は 1 行のまま横に切る。**サイズは両面とも 30px・縮小なし**                                     |
+| 表現差（省略）   | 省略の仕組み                                                                                          | DOM は CSS の `text-overflow: ellipsis`（文字列は元のまま）、Canvas は renderer が `…` を文字列へ入れる。文字列どうしは比べず、**部品単位で「省略されたか」が揃うこと**を assert する |
+| 表現差（ID）     | Kanban drag ghost の ID                                                                               | ghost は両面とも ID を出さない（Canvas は題と説明だけ、DOM の `::after` は `.ui-kanban-card` にしか当たらない）。**両面で同じ**                                                       |
+
+**解消済みのためこの一覧に無いもの**: reset の詳細度（T2 で 0,1,0・F4 で確定）、media 案内の
+サイズ（T5 で両面 12px）、`fieldset` の kind coverage（T7）、sprite の字体と `fontSize` 省略時の
+値（T5）、文字アイコンの `maxWidth` 縮小（T5）。これらは各タスクの節に経過が残っています。
+
+### 限界（未実施・代用・残っているリスク）
+
+| 項目                             | 状態                                                                                                                                                            |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 実 IME での変換                  | **未実施**。headless では OS の IME を操作できない。`editing` の変換は合成 composition で、実 IME の確認として読み替えない                                      |
+| 実ブラウザのズーム 100 / 200%    | **未実施**。CDP にページズームの命令が無い。T8 は CSS viewport ÷ Z・DPR × Z の同値変換で実施し、CSS の `zoom` は使わない（3 者を別記録）                        |
+| 解像度クエリの `change`          | **配達だけ合成**。CDP の倍率上書きは配信しないため、`lifecycle` は実再描画を 1.5 秒待ってから、T8 の journey は無条件に発火する                                 |
+| `--browser-endpoint` の実接続    | 実装済み。到達できる CDP 接続先がこの環境に無いため未実行                                                                                                       |
+| 条件を動かした範囲               | 39 役割のうち 26・37 kind のうち 28。9px の役割・編集オーバーレイ・figure / document / media / dialog-icon は 1 条件のまま（[上記](#条件を動かして測った範囲)） |
+| ホストの `* { font: inherit }`   | SVG sprite の `font-size` 属性より強く効き、図表・文書の文字サイズを変えます。検査は属性値を読むので**検出しません**。`main` から同じ                           |
+| ホストが `canvas` に寸法を指定   | `max-width` などで bitmap が縮むと文字が小さく見えます。検査は `canvas.style.width` を読むので**検出しません**。`main` から同じ                                 |
+| ブラウザの最小フォントサイズ設定 | 9px の `meta` 役割（Kanban カードの ID）が利用者の設定で引き上げられる可能性があります。**測っていません**                                                      |
+| `select` の line-height          | Blink が UA stylesheet で固定するため、ホスト規則からランタイムが守れていることを対照群で示せません（そもそも誰も動かせません）                                 |
+
+このうち **verify round 1 が残留リスクとして確認し、このマイルストーンでは修正しないもの**は
+4 つです: (1) ホストの `* { font: inherit }`、(2) ホストが `canvas` に寸法を指定する場合、
+(3) figure / document の文字を DPR 2・拡大・dark で測っていないこと（「条件を動かした範囲」の
+行）、(4) ブラウザの最小フォントサイズ設定。(1)(2) は `main` でも同じ状態です。
 
 ## 実行環境（T1 で確定）
 

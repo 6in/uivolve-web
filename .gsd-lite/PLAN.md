@@ -156,10 +156,13 @@ bun run docs:check
     突き合わせる）。この二層のデータ表は `tests/browser/font-parity.mjs` に 1 つだけ置き、
     `roles` suite と vitest の双方が同じ表を読む。製品コードへ検査専用の公開APIは足していない。
   - **PLAN 訂正（turn 10 / T7 実測）**: 「extras の normalize」から照合する範囲を、
-    **合成される6つの xtype の入口だけ**に限定した（`tbtext`/`tbfill`/`tbseparator`/`tbspacer` は
-    toolbar の文字列項目、`dialogbutton` は messagebox の `buttons`、`menuseparator` は menu の
-    `"-"`）。normalize 全体を再現すると engine の二重実装になるため。これを入れないと
+    **合成される5つの xtype の入口だけ**に限定した（`tbtext`/`tbfill`/`tbseparator`/`tbspacer` は
+    toolbar の文字列項目、`dialogbutton` は messagebox の `buttons`）。normalize 全体を
+    再現すると engine の二重実装になるため。これを入れないと
     `tbtext` の根拠が「どの画面の label でもよい」になり証明が空になることを実測で確認した。
+    （turn 18 / F5 訂正: 旧「6つ」は誤り。`menuseparator` は menu の `"-"` からも合成されるが
+    `xtype: menuseparator` と画面定義に直接書けるので `XTYPE_SYNTHESIZED` には入っていない。
+    実測: `XTYPE_SYNTHESIZED` の要素数は 5）
   - **PLAN 訂正（turn 10 / T7 実測）**: 完了基準の「文字なし…は理由付きで台帳に残す」は、
     **根拠を2種類に分けた**。`engine-empty`（8件、engine が text を空にする）と
     `renderer-skips`（2件、`grid-shell`/`menu-surface` は読み上げ名としての文字列を持つが
@@ -182,7 +185,8 @@ bun run docs:check
   - **PLAN 訂正（turn 11 / T8 実測）**: 完了基準の「全可視 role の CSS px と入力位置を検証」の
     うち、**入力位置の照合は独立 runtime の 2 面だけ**で行う。比較デモは Scene を公開しないため
     入力欄を突き合わせる矩形が無い。デモ面では代わりに「描いた宣言サイズの集合・字体・描画時の
-    倍率が独立 runtime と一致すること」を照合した（6 画面すべてで集合は一致）。
+    倍率が独立 runtime と一致すること」を照合した（**7 画面**すべてで集合は一致。
+    turn 18 / F5 訂正: 旧「6 画面」は誤り。`matrix.json` のデモ面の `screen` は 7 種）。
   - **PLAN 訂正（turn 11 / T8 実測）**: 拡大は **CSS viewport ÷ Z と devicePixelRatio × Z の
     同値変換**（1 回の metrics override）で実施した。実ブラウザのズーム操作は headless Chromium
     では実行できず（CDP にページズームの命令が無く `setPageScaleFactor` は再レイアウトしない）、

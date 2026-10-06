@@ -80,7 +80,7 @@ HTTP取得・認証に触れた場合は、別オリジンの実HTTPサーバー
 
 DOM版とCanvas版で同じ役割の文字が同じ実効サイズで出ているかは、[レンダラー間のフォントサイズ台帳](renderer-font-parity.md)に実測値・検査方法・限界をまとめている。CSSの宣言値を読み比べるのではなく、`getComputedStyle`の計算値と実際の`fillText`/`measureText`を実ブラウザで採って突き合わせる。
 
-恒久的なPlaywright実行スクリプトは2系統を同梱する。OPFS転送は`bun run test:transfer:browser`（`scripts/test-transfer-browser.mjs`）と最終判定の`bun run verify:transfer`。レンダラー間のフォントサイズは`bun scripts/test-font-parity-browser.mjs --suite <名前>`（`--list`で登録済みsuiteと実装状態、`--browser-path`/`--browser-endpoint`でブラウザ経路、`--viewport`で幅、`--evidence`で証跡の出力先を選ぶ）と最終判定の`bun scripts/verify-font-parity.mjs`。対象範囲は先に固定してあり、どちらもLinuxのシステムChromium（headless）を使い、`bunx vp dev`を127.0.0.1のOS自動割当ポートで自分で起動して終了させる。既存のサーバーへは接続しない。新しい依存は追加しておらず、既存の`playwright` devDependencyだけを使う。CI用ブラウザ環境は引き続きリポジトリへ同梱していないので、これらは手元で実行する。
+恒久的なPlaywright実行スクリプトは3本ある。うち検査の系統は2つで、もう1本は記録用の撮影スクリプト（`scripts/capture-retrospective.mjs`。比較デモのHello Worldをブログ記事の画像として撮る。`package.json`のscriptsには入れていない）。OPFS転送は`bun run test:transfer:browser`（`scripts/test-transfer-browser.mjs`）と最終判定の`bun run verify:transfer`。レンダラー間のフォントサイズは`bun scripts/test-font-parity-browser.mjs --suite <名前>`（`--list`で登録済みsuiteと実装状態、`--browser-path`/`--browser-endpoint`でブラウザ経路、`--viewport`で幅、`--evidence`で証跡の出力先を選ぶ）と最終判定の`bun scripts/verify-font-parity.mjs`。対象範囲は先に固定してあり、どちらもLinuxのシステムChromium（headless）を使い、`bunx vp dev`を127.0.0.1のOS自動割当ポートで自分で起動して終了させる。既存のサーバーへは接続しない。新しい依存は追加しておらず、既存の`playwright` devDependencyだけを使う。CI用ブラウザ環境は引き続きリポジトリへ同梱していないので、これらは手元で実行する。
 
 ## レビューに残す情報
 
