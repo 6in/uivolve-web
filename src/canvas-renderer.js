@@ -600,7 +600,7 @@ export class CanvasRenderer {
         this.text(value, x + 10, y + 53, width - 20, colors.muted, "label");
         this.text(widget.payload.id, x + 10, y + 72, width - 20, colors.muted, "meta");
       } else if (kind === "dialog-icon") {
-        this.dialogIcons.paint(ctx, widget, colors);
+        this.dialogIcons.paint(ctx, widget, colors, this.fonts);
       } else if (kind === "dialog-message") {
         ctx.beginPath();
         ctx.rect(x, y, width, height);
@@ -612,7 +612,7 @@ export class CanvasRenderer {
             this.text(line, x, cy, width, colors.text, "body");
         });
       } else if (["figure", "document"].includes(kind)) {
-        paintSurface(ctx, widget, this.scene.theme);
+        paintSurface(ctx, widget, this.scene.theme, this.fonts);
       } else if (mediaKinds.includes(kind)) {
         this.box(x, y, width, height, colors.surface, colors.border);
         const record = this.media.get(widget.key);
@@ -627,7 +627,16 @@ export class CanvasRenderer {
             img.naturalHeight * scale,
           );
         } else if (!widget.config.src || record?.root.dataset.mediaError)
-          this.text(widget.text || kind, x + 12, y + height / 2, width - 24, colors.muted);
+          // The DOM shows this notice through [data-media-kind][data-empty]::after, which
+          // the stylesheet gives the caption size; the painted notice takes the same role.
+          this.text(
+            widget.text || kind,
+            x + 12,
+            y + height / 2,
+            width - 24,
+            colors.muted,
+            "caption",
+          );
       } else if (kind === "toast") {
         this.box(x, y, width, height, colors.selected, colors.border);
         text

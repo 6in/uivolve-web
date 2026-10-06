@@ -145,7 +145,7 @@ export class CanvasDialogIcons {
     }
     for (const key of this.records.keys()) if (!keys.has(key)) this.records.delete(key);
   }
-  paint(ctx, widget, colors) {
+  paint(ctx, widget, colors, fonts) {
     const record = this.records.get(widget.key);
     let icon = record?.icon ?? "info";
     const { x, y, width, height } = widget;
@@ -173,10 +173,14 @@ export class CanvasDialogIcons {
       colors.infoText;
     if (icon.text) {
       ctx.fillStyle = colors.infoText;
-      ctx.font = '30px "Inter", "Noto Sans JP", system-ui, sans-serif';
+      // The icon size and family come from the per-frame resolution, like every other
+      // painted role. No maxWidth: the DOM icon is `overflow: hidden` at the same size, so
+      // a wide character is clipped on both surfaces. Passing the box width here would
+      // condense the glyphs instead and paint them smaller than the DOM's.
+      ctx.font = fonts.font("icon");
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(icon.text, x + width / 2, y + height / 2, width);
+      ctx.fillText(icon.text, x + width / 2, y + height / 2);
       return;
     }
     ctx.translate(x, y);

@@ -18,9 +18,14 @@ export const FONT_SIZE_PROPERTIES = {
 
 export const FONT_ROLES = Object.keys(FONT_SIZE_PROPERTIES);
 
+// The figure/document frame. The DOM SVG viewport is the element's content box, so the
+// Canvas renderer has to inset by the same declared border before it fits the shared
+// sprites; reading it here keeps the width in the stylesheet with everything else.
+export const SURFACE_BORDER_PROPERTY = "--ui-surface-border-width";
+
 // A missing stylesheet or an unusable value is an error, never a silent fallback: a
 // wrong size has to stop the frame instead of painting characters nobody declared.
-function pixels(style, role, property) {
+function pixels(style, role, property, { allowZero = false } = {}) {
   const raw = style.getPropertyValue(property).trim();
   const match = /^(\d+(?:\.\d+)?)px$/.exec(raw);
   if (!match)
@@ -29,7 +34,7 @@ function pixels(style, role, property) {
         "ランタイムCSSが読み込まれているか確認してください",
     );
   const value = Number.parseFloat(match[1]);
-  if (!Number.isFinite(value) || value <= 0)
+  if (!Number.isFinite(value) || (allowZero ? value < 0 : value <= 0))
     throw new Error(`フォントサイズ ${role} (${property}) が不正です（取得値: "${raw}"）`);
   return value;
 }
@@ -46,6 +51,7 @@ export function resolveFontMetrics(stage) {
   return {
     family,
     sizes,
+    surfaceBorder: pixels(style, "surface-border", SURFACE_BORDER_PROPERTY, { allowZero: true }),
     size(role) {
       const value = sizes[role];
       if (value === undefined)

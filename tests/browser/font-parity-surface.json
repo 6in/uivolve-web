@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "id": "font-parity-surface",
+  "title": "フォント一致検査・図表と案内文字",
+  "script": "font-parity-surface.rhai",
+  "state": {
+    "notice": "図表・メディア・ダイアログの文字を両面で採取します。",
+    "markdownSource": "# 見出しは16px\n本文は12pxで描きます。\n\n英数字 Figure sprites ABCdefg 0123456789 のような行も同じ倍率で縮みます。\n絵文字 🚀 もサイズは同じです。\nこの行はとても長いので内容矩形の幅に収まりきらず折り返されることを確かめるための行です。\n```\nlet code = \"monospace\";\n```"
+  },
+  "stateSchema": {
+    "type": "object",
+    "properties": {
+      "notice": { "type": "string" },
+      "markdownSource": { "type": "string" }
+    },
+    "required": ["notice", "markdownSource"]
+  },
+  "ui": {
+    "xtype": "container",
+    "layout": "vbox",
+    "items": [
+      { "xtype": "label", "itemId": "notice", "bind": "notice" },
+      {
+        "xtype": "container",
+        "layout": "hbox",
+        "items": [
+          {
+            "xtype": "button",
+            "itemId": "wideTextIcon",
+            "text": "長い文字アイコン",
+            "handler": "wideTextIcon"
+          },
+          {
+            "xtype": "button",
+            "itemId": "emojiIcon",
+            "text": "絵文字アイコン",
+            "handler": "emojiIcon"
+          }
+        ]
+      },
+      {
+        "xtype": "markdown",
+        "itemId": "documentSample",
+        "title": "表題は14px",
+        "bind": "markdownSource",
+        "height": 260
+      },
+      { "xtype": "component", "itemId": "emptyDocument", "value": "", "height": 48 },
+      {
+        "xtype": "draw",
+        "itemId": "figureSample",
+        "title": "図形と文字",
+        "height": 220,
+        "sprites": [
+          { "type": "rect", "x": 4, "y": 4, "width": 392, "height": 212, "strokeStyle": "border" },
+          {
+            "type": "text",
+            "x": 12,
+            "y": 24,
+            "text": "左寄せ 日本語とASCII abc",
+            "fontSize": 14,
+            "fontWeight": 600
+          },
+          { "type": "text", "x": 200, "y": 52, "text": "中央寄せ 🚀", "textAlign": "center" },
+          { "type": "text", "x": 388, "y": 80, "text": "右寄せ 123456", "textAlign": "right" },
+          { "type": "text", "x": 12, "y": 108, "text": "" },
+          {
+            "type": "text",
+            "x": 12,
+            "y": 136,
+            "text": "この文字列はとても長いので内容矩形の右端をはみ出します ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+          },
+          {
+            "type": "text",
+            "x": 12,
+            "y": 164,
+            "text": "let monospace = true;",
+            "monospace": true,
+            "fontSize": 16
+          },
+          { "type": "text", "x": 12, "y": 192, "text": "fontSizeを省略した行（WASMが12で補完）" },
+          {
+            "type": "text",
+            "x": 12,
+            "y": 208,
+            "text": "描かれない行",
+            "fillStyle": "none",
+            "fontSize": 20
+          }
+        ]
+      },
+      {
+        "xtype": "imagecomponent",
+        "itemId": "emptyImage",
+        "title": "画像なしの案内",
+        "height": 90
+      },
+      {
+        "xtype": "imagecomponent",
+        "itemId": "brokenImage",
+        "src": "./font-parity-missing-asset.png",
+        "alt": "読み込めない画像",
+        "height": 90
+      },
+      { "xtype": "video", "itemId": "emptyVideo", "title": "動画なしの案内", "height": 90 },
+      { "xtype": "uxiframe", "itemId": "emptyFrame", "title": "埋め込みなしの案内", "height": 90 }
+    ]
+  }
+}

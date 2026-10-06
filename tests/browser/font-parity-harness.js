@@ -166,6 +166,161 @@ export function measureRoles(stage, specs) {
   }));
 }
 
+// --- shared surface sprites (figure / document) -------------------------------------
+// The DOM side of the sprites both renderers paint. The effective size is the declared
+// sprite size times the SVG's live CTM scale — read off the element instead of
+// recomputed — because the viewBox is fitted inside the element's *content* box, and
+// reproducing that rectangle is exactly what the Canvas side has to get right.
+//
+// Positions come back relative to the widget's own box, so the two surfaces can be
+// compared even if the two stages are not the same width.
+export function surfaceSprites(stage) {
+  const origin = stage.getBoundingClientRect();
+  const frames = [];
+  const sprites = [];
+  for (const root of stage.querySelectorAll(".ui-figure, .ui-document")) {
+    const widget = widgetOf(root);
+    const box = root.getBoundingClientRect();
+    const style = getComputedStyle(root);
+    const svg = root.querySelector("svg");
+    const viewport = svg?.getBoundingClientRect() ?? null;
+    frames.push({
+      surface: "dom",
+      key: widget.key,
+      target: widget.target,
+      kind: widget.kind,
+      x: box.x - origin.x,
+      y: box.y - origin.y,
+      width: box.width,
+      height: box.height,
+      borderWidth: Number.parseFloat(style.borderTopWidth),
+      viewBox: svg?.getAttribute("viewBox") ?? null,
+      preserveAspectRatio: svg?.getAttribute("preserveAspectRatio") ?? null,
+      // The SVG viewport, relative to the widget box: the content box the border leaves.
+      viewportX: viewport ? viewport.x - box.x : null,
+      viewportY: viewport ? viewport.y - box.y : null,
+      viewportWidth: viewport?.width ?? null,
+      viewportHeight: viewport?.height ?? null,
+      textCount: svg ? svg.querySelectorAll("text").length : null,
+    });
+    if (!svg) continue;
+    let order = 0;
+    for (const node of svg.querySelectorAll("text")) {
+      const matrix = node.getScreenCTM();
+      const scale = matrix ? Math.sqrt(Math.abs(matrix.a * matrix.d - matrix.b * matrix.c)) : null;
+      const spriteX = Number.parseFloat(node.getAttribute("x"));
+      const spriteY = Number.parseFloat(node.getAttribute("y"));
+      const declared = Number.parseFloat(node.getAttribute("font-size"));
+      // `fill="none"` paints nothing on either surface; it is recorded, not ordered, so
+      // the two paint orders stay comparable.
+      const painted = node.getAttribute("fill") !== "none";
+      const text = node.textContent ?? "";
+      sprites.push({
+        surface: "dom",
+        key: widget.key,
+        kind: widget.kind,
+        order: painted ? order++ : null,
+        painted,
+        text,
+        declaredFontSize: declared,
+        scale,
+        effectiveFontSize: scale === null ? null : declared * scale,
+        fontWeight: node.getAttribute("font-weight"),
+        fontFamily: getComputedStyle(node).fontFamily,
+        textAnchor: node.getAttribute("text-anchor"),
+        inkWidth: text && scale !== null ? node.getComputedTextLength() * scale : 0,
+        x: matrix ? matrix.a * spriteX + matrix.c * spriteY + matrix.e - box.x : null,
+        y: matrix ? matrix.b * spriteX + matrix.d * spriteY + matrix.f - box.y : null,
+      });
+    }
+  }
+  return { frames, sprites };
+}
+
+// The media notice is generated content, so it has no element of its own and is read off
+// the ::after pseudo-element. On the Canvas stage the same markup is the *native* overlay
+// (video and iframe keep a real element); the image kind has none and is painted instead.
+export function mediaNotices(stage) {
+  const origin = stage.getBoundingClientRect();
+  return [...stage.querySelectorAll("[data-media-kind]")].map((root) => {
+    const after = getComputedStyle(root, "::after");
+    const rect = root.getBoundingClientRect();
+    const widget = widgetOf(root);
+    const native = root.querySelector(".native-media");
+    return {
+      surface: root.classList.contains("canvas-media") ? "canvas-native" : "dom",
+      mediaKind: root.dataset.mediaKind ?? null,
+      key: widget.key,
+      target: widget.target,
+      empty: root.dataset.empty === "true",
+      error: root.dataset.mediaError === "true",
+      nativeTag: native?.tagName.toLowerCase() ?? null,
+      nativeHidden: native ? native.hidden : null,
+      // A Canvas overlay is hidden behind a modal, so its box collapses. The position the
+      // renderer wrote stays readable and is what the Scene widget is matched against.
+      hidden: root.hidden,
+      styleLeft: Number.parseFloat(root.style.left),
+      styleTop: Number.parseFloat(root.style.top),
+      content: after.content,
+      shown: !root.hidden && after.content !== "none" && after.content !== "normal",
+      fontSize: Number.parseFloat(after.fontSize),
+      fontFamily: after.fontFamily,
+      x: rect.x - origin.x,
+      y: rect.y - origin.y,
+      width: rect.width,
+      height: rect.height,
+    };
+  });
+}
+
+// The DOM dialog icon. A character icon is a text node inside a fixed 32px box with
+// `overflow: hidden`, so the laid-out width is measured with a Range: the Canvas side has
+// to clip the same way instead of condensing the glyphs to the box.
+// `[data-icon]` picks the icon the host built: the widget root carries the same class
+// (`ui-${kind}`) but none of the content, and would otherwise be measured as a second icon.
+export function dialogIconSurfaces(stage) {
+  return [...stage.querySelectorAll(".ui-dialog-icon[data-icon]")].map((root) => {
+    const style = getComputedStyle(root);
+    const rect = root.getBoundingClientRect();
+    const widget = widgetOf(root);
+    const text = directText(root);
+    let inkWidth = 0;
+    let inkHeight = 0;
+    let lineCount = 0;
+    if (text) {
+      const range = root.ownerDocument.createRange();
+      range.selectNodeContents(root);
+      const ink = range.getBoundingClientRect();
+      inkWidth = ink.width;
+      inkHeight = ink.height;
+      // A bare text node in this inline-flex box is an anonymous flex item, so a wide
+      // string is broken across lines instead of overflowing on one. The count tells the
+      // two cases apart: only a single line can be compared with the Canvas advance width.
+      lineCount = range.getClientRects().length;
+      range.detach?.();
+    }
+    return {
+      surface: "dom",
+      key: widget.key,
+      target: widget.target,
+      icon: root.dataset.icon ?? null,
+      label: root.getAttribute("aria-label"),
+      text,
+      fontSize: Number.parseFloat(style.fontSize),
+      fontFamily: style.fontFamily,
+      overflow: style.overflow,
+      inkWidth,
+      inkHeight,
+      lineCount,
+      clipped: inkWidth > rect.width + 0.5 || inkHeight > rect.height + 0.5 || lineCount > 1,
+      boxWidth: rect.width,
+      boxHeight: rect.height,
+      hasSvg: Boolean(root.querySelector("svg")),
+      hasImage: Boolean(root.querySelector("img")),
+    };
+  });
+}
+
 // What the Canvas side will resolve from the same stage. Reported as data — including
 // the failure message — so the suite decides, instead of a fallback hiding missing CSS.
 export function resolvedMetrics(stage) {
@@ -175,11 +330,19 @@ export function resolvedMetrics(stage) {
       ok: true,
       family: metrics.family,
       sizes: metrics.sizes,
+      surfaceBorder: metrics.surfaceBorder,
       fonts: Object.fromEntries(FONT_ROLES.map((role) => [role, metrics.font(role)])),
       error: null,
     };
   } catch (error) {
-    return { ok: false, family: null, sizes: null, fonts: null, error: error.message };
+    return {
+      ok: false,
+      family: null,
+      sizes: null,
+      surfaceBorder: null,
+      fonts: null,
+      error: error.message,
+    };
   }
 }
 
@@ -346,6 +509,21 @@ function sceneRecord(scene) {
       dialog: Boolean(widget.config?.dialog),
       placeholder: widget.config?.placeholder ?? null,
       column: widget.payload?.column ?? null,
+      // The engine's own surface numbers, carried only by the kinds that have them: the
+      // sprite sizes are checked against these rather than against a second table, so a
+      // renderer substituting its own value for an omitted one shows up as a difference.
+      ...(["figure", "document"].includes(widget.kind)
+        ? {
+            sprites: widget.config?.sprites ?? null,
+            lines: widget.config?.lines ?? null,
+            viewWidth: widget.config?.viewWidth ?? null,
+            viewHeight: widget.config?.viewHeight ?? null,
+          }
+        : null),
+      ...(["image", "video", "iframe"].includes(widget.kind)
+        ? { src: widget.config?.src ?? null, alt: widget.config?.alt ?? null }
+        : null),
+      ...(widget.kind === "dialog-icon" ? { icon: widget.config?.icon ?? null } : null),
       // Every string this widget can paint. Attribution uses it together with the draw
       // position, never on its own, so repeated strings stay distinguishable.
       strings: [
@@ -356,7 +534,15 @@ function sceneRecord(scene) {
         widget.config?.boxLabel,
         widget.config?.placeholder,
         widget.config?.count === undefined ? null : String(widget.config.count),
-        ...(widget.config?.lines ?? []),
+        // A dialog message carries plain strings; a document's lines are objects, and a
+        // figure keeps its text in the sprites. All three feed the same attribution.
+        ...(widget.config?.lines ?? []).map((line) =>
+          typeof line === "string" ? line : line?.text,
+        ),
+        ...(widget.config?.sprites ?? []).map((sprite) => sprite?.text),
+        // A character dialog icon paints its own string. Without it the icon's draw would
+        // be attributed to whichever widget happens to contain the same character.
+        widget.config?.icon?.text,
         ...(widget.config?.options?.map((option) => option.text) ?? []),
       ].filter((value) => typeof value === "string" && value !== ""),
     })),
@@ -663,6 +849,29 @@ export async function createFontParityHarness({
         canvasStage: measureRoles(canvasStage, specs),
         canvasSurface: window.__fontParity?.forCanvas(canvas) ?? null,
         scene: sceneRecord(runtime.scenes[1]),
+        resolved: { dom: resolvedMetrics(domStage), canvas: resolvedMetrics(canvasStage) },
+        hostFrame: hostFrame(host),
+        environment: {
+          domStage: environment(domStage, null),
+          canvasStage: environment(canvasStage, canvas),
+        },
+        errors: [...errors],
+      };
+    },
+    // The shared surfaces: the SVG sprites the DOM mounted, the notices the media roots
+    // generate on each stage, the dialog icons, and the Canvas frame those same sprites
+    // were painted into. Both Scenes come back because the comparison is per widget box.
+    surfaces() {
+      return {
+        dom: surfaceSprites(domStage),
+        // Must stay empty: the Canvas surface paints the sprites onto its bitmap and
+        // mounts no SVG of its own. Recorded so that stops being an assumption.
+        canvasStage: surfaceSprites(canvasStage),
+        media: { dom: mediaNotices(domStage), canvas: mediaNotices(canvasStage) },
+        icons: { dom: dialogIconSurfaces(domStage), canvas: dialogIconSurfaces(canvasStage) },
+        canvasSurface: window.__fontParity?.forCanvas(canvas) ?? null,
+        scene: sceneRecord(runtime.scenes[1]),
+        domScene: sceneRecord(runtime.scenes[0]),
         resolved: { dom: resolvedMetrics(domStage), canvas: resolvedMetrics(canvasStage) },
         hostFrame: hostFrame(host),
         environment: {

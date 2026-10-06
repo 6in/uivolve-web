@@ -95,11 +95,27 @@ bun run docs:check
     `input[type="date"]` の文字入力は区切りごとの別扱いで locale に依存するため、入力・確定・拒否の
     操作は `textfield` / `numberfield` で行う。
 
-- [ ] T5: 文書・図表とdialog/media文字の実効倍率を合わせる
+- [x] T5: 文書・図表とdialog/media文字の実効倍率を合わせる
   - 完了基準: 共有spritesを維持し、DOM SVGのborder内側viewport/CTMとCanvasのローカルtransformを同じ内容矩形に揃える。documentタイトル14・見出し16・本文/code12とfigureのScene fontSizeをCSS px換算して一致を検証する。WASM補完値を使用しDSLの省略を勝手に別値にしない。字体差が幅/欠けに影響する非code文字はruntime字体へ揃え、monospaceを保つ。dialog絵文字/任意テキスト30pxのmaxWidthによる意図しない縮小を防ぐ。mediaの空/エラー案内はDOM12pxへ合わせ、native overlayも確認する。desktop/390pxで日本語・英数字・絵文字・空・長文・複数行を数値と画像で確認。iframe内部・画像内文字・非文字SVGアイコンは対象外理由を残す。gallery/dialog状態回帰も成功。
   - 対象: `src/surfaces.js`、`src/dialog-icons.js`、`src/canvas-renderer.js`、必要なら `src/runtime.css`、`tests/browser/font-parity.mjs`、`tests/browser/font-parity-harness.js`、`docs/renderer-font-parity.md`。
   - 依存: T4
   - 並列サブ作業: なし（同じCanvas font呼出しとsurface倍率を変更する）。
+  - **PLAN 訂正（turn 8 / T5 実測）**: 対象ファイルに新設 `tests/browser/font-parity-surface.json`
+    ＋ `font-parity-surface.rhai`（実WASMの補助fixture）と `src/font-metrics.js` を追加した。
+    前者は、空のsprite・`fillStyle: "none"` の行・`fontSize` を省略した text sprite・空の文書・
+    空/エラーの media・枠に収まらない文字アイコンが**どのアプリ画面にも揃って出ない**ため。
+    後者は、DOMのSVG viewportが枠の内側（content box）なので Canvas も同じ枠幅で内側へ寄せる
+    必要があり、その幅を `src/runtime.css` の `--ui-surface-border-width` に置いて
+    `resolveFontMetrics(stage).surfaceBorder` で解決する形にしたため（サイズと同じ単一源）。
+  - **PLAN 訂正（turn 8 / T5 実測）**: 完了基準の「字体差が幅/欠けに影響する非code文字は
+    runtime字体へ揃え」に加えて、**`fontSize` を持たない text sprite** も揃える対象に入れた。
+    修正前は DOM が属性を出さずホストの継承値（16px）、Canvas が 12px で、**宣言の無い
+    sprite だけが両面で別サイズ**になっていた。両面とも WASM の補完値（12）を使う。
+  - **PLAN 訂正（turn 8 / T5 実測）**: 文字アイコンの**行分割**は対象外とし台帳へ記録した。
+    `.ui-dialog-icon` は `inline-flex` ＋ `overflow: hidden` なので、枠に収まらない文字列は
+    DOM では匿名 flex item として折り返され、Canvas は 1 行のまま横に切る。完了基準が求める
+    のは「30pxの maxWidth による意図しない縮小を防ぐ」ことなので、サイズと非縮小だけを揃え、
+    送り幅の一致は DOM が 1 行に収まる場合だけ検査する。
 
 - [ ] T6: フォント完了とDPR変更時の再描画・解放を保証する
   - 完了基準: 初期fonts.readyと以後の使用字体load完了で必要な再描画/再計測を行い、失敗時もfallbackで動作する。テストサーバーで読取可能なテスト字体を遅延配信し、読込前後の実計測と描画更新を確認する（T1で字体経路を固定、依存追加なし）。font完了とtheme/renderの競合、load失敗、dispose後の完了では例外・復活描画・購読漏れなし。DPRだけが変わってCSS幅が同じ場合もbitmap/transformを更新し、DPR1→2→1で倍率が累積しない。複数runtimeのdisposeは他方へ影響しない。編集ノード・selection・draftを失わず、runtime状態回帰とlifecycle suiteが成功。

@@ -12,7 +12,8 @@ DOM 版と Canvas 版が同じ役割の文字を同じ実効サイズで表示�
   [`tests/browser/font-parity-harness.js`](../tests/browser/font-parity-harness.js) ・
   [`tests/browser/font-parity.html`](../tests/browser/font-parity.html)
 - 補助 fixture: [`tests/browser/font-parity-text.json`](../tests/browser/font-parity-text.json)（文字の形）・
-  [`tests/browser/font-parity-edit.json`](../tests/browser/font-parity-edit.json)（列エディタの kind）
+  [`tests/browser/font-parity-edit.json`](../tests/browser/font-parity-edit.json)（列エディタの kind）・
+  [`tests/browser/font-parity-surface.json`](../tests/browser/font-parity-surface.json)（図表・media・文字アイコン）
 - runner 自体の検査: [`tests/font-parity-runner.test.js`](../tests/font-parity-runner.test.js)
 
 ## 実行方法
@@ -22,6 +23,7 @@ bun run build:wasm
 bun scripts/test-font-parity-browser.mjs --suite baseline
 bun scripts/test-font-parity-browser.mjs --suite roles
 bun scripts/test-font-parity-browser.mjs --suite editing
+bun scripts/test-font-parity-browser.mjs --suite surfaces
 ```
 
 - `--suite <name>` は繰り返し指定できます。`--list` で登録済み suite と実装状態を表示します。
@@ -44,7 +46,7 @@ bun scripts/test-font-parity-browser.mjs --suite editing
 | `baseline`     | T1    | 修正前の台帳。差があっても報告のみで成功する                    |
 | `roles`        | T2/T3 | 役割別サイズと reset（T2 済）、Canvas 描画・計測の照合（T3 済） |
 | `editing`      | T4    | 通常値・編集オーバーレイ・Grid 編集（T4 済）                    |
-| `surfaces`     | T5    | document / figure / dialog / media の実効倍率                   |
+| `surfaces`     | T5    | document / figure / dialog / media の実効倍率（T5 済）          |
 | `lifecycle`    | T6    | フォント完了・DPR 変更時の再描画と解放                          |
 | `matrix`       | T8    | 幅・拡大・配色の行列と代表画像                                  |
 | `distribution` | T9    | 生成した配布物からの独立 runtime / minimal 確認                 |
@@ -441,6 +443,113 @@ Canvas 描画 665 件（うち Grid 編集中 11 件）**と、**7 本の操作�
 `font-parity-edit.json` ＋ `.rhai` は実 WASM の補助 fixture です。列エディタの 5 kind のうち
 `datefield` と `checkbox` はどのアプリ画面にも無いため、**実際に編集状態を描かせてから**
 サイズを測ります。
+
+## 文書・図表と dialog / media の文字（T5）
+
+### 決めたこと — 内容矩形を 1 つにする
+
+図表（`figure`）と文書（`document`）の sprites は **DOM と Canvas で同じ 1 本のリスト**
+（[`src/surfaces.js`](../src/surfaces.js) の `documentSprites()` と `surface()`）です。
+違い得るのは「リストを**どの矩形へ収めるか**」だけでした。
+
+| 面     | 修正前                                             | 修正後                                                  |
+| ------ | -------------------------------------------------- | ------------------------------------------------------- |
+| DOM    | `<svg width/height: 100%>` ＝ 枠の内側（内容矩形） | 変更なし                                                |
+| Canvas | `widget.width × widget.height`（枠を含む全体）     | `contentFit()` が同じ内容矩形（枠の幅ぶん内側）へ収める |
+
+枠の幅も**サイズと同じ単一源**にしました。`src/runtime.css` に
+`--ui-surface-border-width: 1px` を置いて `.ui-figure, .ui-document` の `border` から
+参照し、Canvas は `resolveFontMetrics(stage).surfaceBorder` で同じ値を解決します
+（[`src/font-metrics.js`](../src/font-metrics.js) の `SURFACE_BORDER_PROPERTY`）。
+`src/surfaces.js` は px の数値を 1 つも持ちません。
+
+あわせて 3 つの食い違いを閉じました。
+
+| 直した点                          | 修正前                                                  | 修正後                                                                          |
+| --------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| sprite の字体                     | Canvas だけ `system-ui, sans-serif` 固定                | ステージの解決済み字体。`monospace` 指定だけが例外で、両面とも `monospace`      |
+| `fontSize` を持たない text sprite | DOM は属性を出さずホストの継承値、Canvas は 12px        | 両面とも `spriteFontSize()`（WASM の補完値 12）。属性を省かない                 |
+| ダイアログの文字アイコン          | `fillText(..., width)` の `maxWidth` で 32px へ**縮小** | `maxWidth` なし。DOM と同じく 30px のまま枠で切る。字体もステージの解決済み字体 |
+| media の空／エラー案内            | Canvas は `body` 13px、DOM は `::after` の 12px         | Canvas も `caption` 12px（`[data-media-kind][data-empty]::after` と同じ役割）   |
+
+文書のサイズは変えていません（表題 14 / 見出し 16 / 本文・コード 12）。図表の
+`fontSize` は **DSL の指定か WASM の補完値**をそのまま使い、レンダラーが別の値を
+入れないことを検査で確かめます。
+
+### `surfaces` suite が確認していること
+
+実 WASM の 9 fixture × **desktop 1440x1000 / narrow 390x844** の 18 ケース、
+**sprite の対（DOM 対 Canvas）257 件**・media 案内 46 件・ダイアログアイコン 6 件。
+
+- **内容矩形**: 各 `figure` / `document` の DOM 枠幅が解決値と一致し、SVG の viewport が
+  枠の内側（`box - border × 2`）であること
+- **sprite の対**: 同じ widget の DOM `<text>` と Canvas の `fillText` を**描画順で 1 対 1**に
+  並べ（`fill="none"` の sprite は両面とも描かないので順序から外す）、文字・宣言サイズ・
+  **倍率**・実効サイズ・widget 枠内の位置・太さ・寄せ（`text-anchor` ↔ `textAlign`）・字体を照合。
+  倍率は**実際の CTM と実際の Canvas transform**から採り、計算し直しません
+- **サイズの根拠**: 図表は Scene の sprite が持つ `fontSize`、文書は Scene の行が持つ
+  `heading` / `code` から**期待値を独立に導出**して照合します（折り返しの規則は内容一致で
+  たどるので、ここで作り直していません）
+- **media**: 空／エラーの案内が DOM の `::after`・Canvas のビットマップ・Canvas 面の
+  native overlay（video / iframe）すべてで 12px であること。`src` があるのに文字を描いて
+  いないこと
+- **ダイアログの文字アイコン**: DOM・Canvas とも 30px、Canvas の `maxWidth` が無いこと、
+  ローカル倍率が 1 であること、字体・寄せ・文字が一致すること、1 行に収まる場合は
+  **送り幅が両面で一致**すること。標準アイコン（SVG path）は文字を描かないこと
+- **文字の条件**（実際の描画から数え、0 件なら失敗）: 日本語・英数字・絵文字・空文字・
+  長文・等幅・14/16/12px・中央寄せ・右寄せ・内容矩形をはみ出す行。複数行の図表が 1 件以上
+- **倍率が 2 種類以上**あること（幅による縮尺が効いていない状態を見逃さない）
+- 証跡: `surfaces.json` と `surfaces-<ケース名>-<desktop|narrow>.png` 18 枚
+
+### 既存の表現差として記録すること（変更しない）
+
+| 差                       | 内容                                                                                                                                                          |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| media 案内の**文言**     | Canvas はビットマップへ widget の題名、DOM は `::after` の固定文「メディアを読み込めません」。今回揃えたのはサイズだけ                                        |
+| 文字アイコンの**行分割** | `.ui-dialog-icon` は `inline-flex` ＋ `overflow: hidden` なので、枠に収まらない文字列は DOM では匿名 flex item として折り返され、Canvas は 1 行のまま横に切る |
+| 壊れた画像の DOM 側      | DOM は `<img>` の代替表示（alt）と `::after` の案内が重なる。Canvas は image の native 要素を持たないので案内だけ                                             |
+
+### T5 の時点で未実施・対象外（理由付き）
+
+| 項目                       | 状態・理由                                                                                                                    |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| iframe の中身              | 別文書（`sandbox` 済み）で runtime の CSS もフォント解決も届かない。枠と空／エラー案内だけを対象にする                        |
+| 画像の中の文字             | ビットマップの一部で `font-size` を持たない。両面とも同じ画像を同じ内容矩形へ収める                                           |
+| 標準ダイアログアイコン     | 文字ではなく path（`src/dialog-icons.js` の 24 単位 viewBox）。文字サイズを持たないので、文字アイコンだけを 30px の対象にする |
+| DPR・テーマ・100/200% 拡大 | T8。`surfaces` は DPR 1 / ライト / ホスト 16px の 2 幅のみ                                                                    |
+| フォント完了時の再描画     | T6。`surfaces` は `settle()` 後（`document.fonts.ready` 済み）の 1 フレームを測る                                             |
+
+### 検査に歯があることの確認
+
+4 か所それぞれを修正前へ戻して `surfaces` を実行しました。
+
+| 戻した場所                               | 出た不一致                                                                              |
+| ---------------------------------------- | --------------------------------------------------------------------------------------- |
+| `contentFit()` の枠幅を 0（widget 全体） | **744 件**。倍率 0.9923 対 1、実効 13.89px 対 14px、位置 (14.46,18.86) 対 (12.00,18.00) |
+| sprite の字体を `system-ui, sans-serif`  | 全 sprite が「Canvas の font ... がステージの字体ではない」                             |
+| 文字アイコンの `maxWidth` を復活         | 「Canvas の文字アイコンに maxWidth 32」                                                 |
+| media 案内の役割を既定（`body`）へ       | image / video / iframe の「Canvas 案内が 13px」                                         |
+
+いずれも確認後に元へ戻しています。
+
+### T5 で足した fixture
+
+[`tests/browser/font-parity-surface.json`](../tests/browser/font-parity-surface.json) ＋
+[`.rhai`](../tests/browser/font-parity-surface.rhai) は実 WASM の補助 fixture です。
+アプリ画面には次の条件が揃って出ないため、**実際に描かせてから**測ります。
+
+| 条件                                       | 置いたもの                                                             |
+| ------------------------------------------ | ---------------------------------------------------------------------- |
+| 空の sprite・`fillStyle: "none"` の行      | `draw` の text sprite（描かない行は両面とも描画 0 件）                 |
+| `fontSize` を省略した text sprite          | 同上（WASM が 12 で補完することの確認）                                |
+| 中央寄せ・右寄せ・はみ出す長文・絵文字     | 同上                                                                   |
+| 空の文書                                   | `component`（値が空 → 空行 1 つ）                                      |
+| 空／エラーの media（image・video・iframe） | `src` 無しの 3 件と、読み込めない `src` の image                       |
+| 枠に収まらない文字アイコン                 | `wideTextIcon` ハンドラの `alert`（`icon: #{text: "重要なお知らせ"}`） |
+
+アプリ画面側は `screens/uivolve-gallery.json` の 5 タブ（編集・チャート・グラフ・会話・
+メディア）と `screens/dialogs.yaml`（標準 SVG アイコン）で、実データの文書・図表・
+正常な media を測っています。
 
 ## 実行環境（T1 で確定）
 

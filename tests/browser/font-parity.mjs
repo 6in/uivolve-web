@@ -758,15 +758,18 @@ const CANVAS_KIND_CONTRACT = {
   slider: ["label"],
 };
 
-// Canvas text a later task owns. Recorded with the task and the reason instead of dropped,
-// so an exemption is visible in the ledger rather than implied by a missing check.
+// Canvas text the `surfaces` suite owns instead of this one. Recorded with the reason
+// rather than dropped, so an exemption is visible in the ledger instead of being implied
+// by a missing check. These kinds do not paint one of the role sizes: the shared sprites
+// carry their own sizes under a local scale, and the dialog icon and the media notice are
+// compared against their DOM counterparts directly (see runSurfaces below).
 const CANVAS_DEFERRED_KINDS = {
-  figure: "T5: figure sprites の内容矩形換算",
-  document: "T5: 文書 sprites の内容矩形換算",
-  "dialog-icon": "T5: ダイアログ絵文字の 30px と maxWidth",
-  image: "T5: media の空/エラー案内を DOM の 12px へ",
-  video: "T5: media の空/エラー案内を DOM の 12px へ",
-  iframe: "T5: media の空/エラー案内を DOM の 12px へ",
+  figure: "surfaces suite: sprites の内容矩形換算（ローカル倍率あり）",
+  document: "surfaces suite: 文書 sprites の内容矩形換算（ローカル倍率あり）",
+  "dialog-icon": "surfaces suite: ダイアログの文字アイコン 30px と maxWidth",
+  image: "surfaces suite: media の空/エラー案内を DOM の 12px と直接比較",
+  video: "surfaces suite: media の空/エラー案内を DOM の 12px と直接比較",
+  iframe: "surfaces suite: media の空/エラー案内を DOM の 12px と直接比較",
 };
 
 // Kinds these fixtures really render, and the ones they cannot reach. Both lists are
@@ -1043,7 +1046,7 @@ async function runRoles({ context, origin, evidenceDir, viewport, log }) {
     `${captures.length} cases, ${asserted.length} DOM role samples, ` +
       `${canvasAsserted.length} Canvas draws over ` +
       `${new Set(canvasAsserted.map((record) => record.kind)).size} kinds ` +
-      `(${canvasDeferred.length} deferred to T5), ` +
+      `(${canvasDeferred.length} deferred to the surfaces suite), ` +
       `shapes ${Object.entries(shapes)
         .map(([name, count]) => `${name}=${count}`)
         .join(" ")}, ` +
@@ -1635,6 +1638,525 @@ async function runEditing({ context, origin, evidenceDir, viewport, log }) {
   return { cases: captures.length, samples: asserted.length, operations: operations.length, file };
 }
 
+// --- surfaces ---------------------------------------------------------------------
+// The shared sprites (figure / document), the dialog icon and the media notice. One
+// sprite list feeds both renderers, so what could differ is never the list: it is the
+// rectangle the list is fitted into, the family the Canvas text asks for, and the
+// maxWidth the icon is condensed to. All three are compared here against the DOM.
+//
+// The DOM SVG is `width/height: 100%` inside the frame declared in src/runtime.css, so
+// its viewport is the element's content box. Canvas has no element and insets by the same
+// resolved border; every assertion below is on the *live* CTM and the *live* Canvas
+// transform, never on a recomputed scale.
+
+const SURFACE_FIXTURE_SCREEN = "/tests/browser/font-parity-surface.json";
+const GALLERY_SCREEN = "screens/uivolve-gallery.json";
+
+// The document sizes from DECISIONS. Each painted sprite is checked against what the
+// engine's own line flags say it must be, so this is the rule and not a copy of the output.
+const DOCUMENT_SIZES = { title: 14, heading: 16, body: 12 };
+
+// Both widths the task names. The sprites are scaled to fit, so a narrow viewport is a
+// different scale factor on exactly the same sprite list.
+const SURFACE_VIEWPORTS = [
+  { name: "desktop", width: 1440, height: 1000 },
+  { name: "narrow", width: 390, height: 844 },
+];
+
+// What is out of scope, with the reason, so an exemption is in the ledger rather than in
+// nobody's head.
+const SURFACE_EXCLUSIONS = {
+  "iframe-content":
+    "iframe の中身は別文書（sandbox 済み）で、runtime の CSS もフォント解決も届かない。" +
+    "枠と空/エラー案内だけを対象にする",
+  "image-pixels":
+    "画像の中に描かれている文字はビットマップの一部で font-size を持たない。両面とも同じ" +
+    "画像を同じ内容矩形へ収めるため、サイズの比較対象にならない",
+  "svg-icon-paths":
+    "標準ダイアログアイコンは文字ではなく path（src/dialog-icons.js の 24 単位 viewBox）。" +
+    "文字サイズを持たないので、文字アイコンだけを 30px の対象にする",
+  "media-notice-text":
+    "Canvas はビットマップへ widget の題名を描き、DOM は ::after の固定文「メディアを" +
+    "読み込めません」を出す。文言の違いは既存の表現差で、今回揃えるのはサイズだけ",
+  "text-icon-wrapping":
+    "32px の枠に収まらない文字アイコンは、DOM では匿名 flex item として折り返され" +
+    "（`.ui-dialog-icon` は inline-flex・overflow hidden）、Canvas では 1 行のまま横に" +
+    "切られる。行分割の違いは既存の表現差で、サイズ（30px）と縮小しないことだけを揃える",
+};
+
+const SURFACE_FIXTURES = [
+  {
+    name: "fixture",
+    screen: SURFACE_FIXTURE_SCREEN,
+    steps: [],
+    media: true,
+    requires: ["document", "figure", "image", "video", "iframe"],
+  },
+  // A character icon far wider than its 32px box: the DOM clips it, so Canvas must clip
+  // too instead of condensing the glyphs to the box width.
+  {
+    name: "fixture-wide-icon",
+    screen: SURFACE_FIXTURE_SCREEN,
+    steps: [{ surface: "dom", selector: '.ui-button[data-target="wideTextIcon"]' }],
+    media: true,
+    requires: ["dialog-icon"],
+    textIcon: "clipped",
+  },
+  {
+    name: "fixture-emoji-icon",
+    screen: SURFACE_FIXTURE_SCREEN,
+    steps: [{ surface: "dom", selector: '.ui-button[data-target="emojiIcon"]' }],
+    media: true,
+    requires: ["dialog-icon"],
+    textIcon: "any",
+  },
+  // The application screens: markdown / diff / box documents, every figure kind, the chat
+  // and terminal documents, and the media tab with real sources.
+  {
+    name: "gallery-documents",
+    screen: GALLERY_SCREEN,
+    steps: [{ surface: "dom", selector: ".ui-tab:nth-of-type(2)" }],
+    requires: ["document"],
+  },
+  {
+    name: "gallery-charts",
+    screen: GALLERY_SCREEN,
+    steps: [{ surface: "dom", selector: ".ui-tab:nth-of-type(3)" }],
+    requires: ["figure"],
+  },
+  {
+    name: "gallery-graphs",
+    screen: GALLERY_SCREEN,
+    steps: [{ surface: "dom", selector: ".ui-tab:nth-of-type(4)" }],
+    requires: ["figure"],
+  },
+  {
+    name: "gallery-chat",
+    screen: GALLERY_SCREEN,
+    steps: [{ surface: "dom", selector: ".ui-tab:nth-of-type(5)" }],
+    requires: ["document"],
+  },
+  {
+    name: "gallery-media",
+    screen: GALLERY_SCREEN,
+    steps: [{ surface: "dom", selector: ".ui-tab:nth-of-type(6)" }],
+    media: true,
+    requires: ["image", "video", "iframe"],
+  },
+  // The built-in SVG icon, recorded as the out-of-scope case it is: it must paint no text.
+  {
+    name: "dialogs-svg-icon",
+    screen: "screens/dialogs.yaml",
+    steps: [{ surface: "dom", selector: '.ui-button[data-target="showAlert"]' }],
+    requires: ["dialog-icon"],
+    textIcon: "none",
+  },
+];
+
+// The conditions the surface text has to be measured under. Counted over the real sprites
+// so an empty run means the fixtures stopped producing one, not that it passed.
+const SURFACE_SHAPES = {
+  japanese: (sprite) => /[぀-ヿ一-鿿]/u.test(sprite.text),
+  ascii: (sprite) => /[A-Za-z0-9]/u.test(sprite.text),
+  emoji: (sprite) => /\p{Extended_Pictographic}/u.test(sprite.text),
+  empty: (sprite) => sprite.text === "",
+  long: (sprite) => sprite.text.length >= 24,
+  monospace: (sprite) => /monospace/u.test(sprite.fontFamily),
+  "size-title": (sprite) => sprite.declaredFontSize === DOCUMENT_SIZES.title,
+  "size-heading": (sprite) => sprite.declaredFontSize === DOCUMENT_SIZES.heading,
+  "size-body": (sprite) => sprite.declaredFontSize === DOCUMENT_SIZES.body,
+  "anchor-middle": (sprite) => sprite.textAnchor === "middle",
+  "anchor-end": (sprite) => sprite.textAnchor === "end",
+  // A sprite whose ink leaves the content box: the fit must not shrink the text to make
+  // it fit, on either surface.
+  overflowing: (sprite) => sprite.inkWidth > 0 && sprite.x + sprite.inkWidth > sprite.frameWidth,
+};
+
+// The size a painted sprite has to declare, taken from the engine's own data. A figure
+// carries the completed fontSize on each sprite; a document carries the heading/code flags
+// the shared builder turns into the title/heading/body sizes. Matching a document sprite by
+// content instead of by index avoids restating the shared wrapping rule here, and an
+// ambiguous chunk is reported rather than passed.
+function expectedSpriteSize(widget, sprite, index) {
+  if (widget.kind === "figure") {
+    const texts = (widget.sprites ?? []).filter(
+      (entry) => entry.type === "text" && entry.fillStyle !== "none",
+    );
+    const entry = texts[index];
+    if (!entry) return { size: null, reason: "Scene の sprite 一覧に対応する text が無い" };
+    if (typeof entry.fontSize !== "number")
+      return { size: null, reason: "WASM が sprite の fontSize を補完していない" };
+    return { size: entry.fontSize, monospace: Boolean(entry.monospace) };
+  }
+  if (index === 0 && widget.text && sprite.text === widget.text)
+    return { size: DOCUMENT_SIZES.title, monospace: false };
+  const matches = (widget.lines ?? []).filter((line) => {
+    const text = line.text ?? "";
+    return sprite.text === "" ? text === "" : text.includes(sprite.text);
+  });
+  if (!matches.length) return { size: null, reason: "どの行にも含まれない文字" };
+  const sizes = new Set(
+    matches.map((line) => (line.heading ? DOCUMENT_SIZES.heading : DOCUMENT_SIZES.body)),
+  );
+  if (sizes.size !== 1) return { size: null, reason: "見出しと本文の両方に一致する文字" };
+  const monos = new Set(matches.map((line) => Boolean(line.code)));
+  return { size: [...sizes][0], monospace: monos.size === 1 ? [...monos][0] : null };
+}
+
+const ANCHOR_TO_ALIGN = { start: "left", middle: "center", end: "right" };
+
+// One figure or document: the DOM sprites it mounted against the Canvas draws it painted.
+function assertSurfaceWidget({ frame, widget, domSprites, canvasSprites, resolved, note }) {
+  if (domSprites.length !== canvasSprites.length) {
+    note(
+      `${frame.kind} ${frame.key} の描画数が DOM ${domSprites.length} 対 ` +
+        `Canvas ${canvasSprites.length}`,
+    );
+    return [];
+  }
+  if (!domSprites.length) return [];
+  const asserted = [];
+  domSprites.forEach((dom, index) => {
+    const canvas = canvasSprites[index];
+    const label = `${frame.kind} ${frame.key}#${index} "${dom.text.slice(0, 14)}"`;
+    const relativeX = canvas.x - widget.x;
+    const relativeY = canvas.y - widget.y;
+    asserted.push({ ...dom, frameWidth: frame.viewportWidth, canvas: { ...canvas } });
+    if (dom.text !== canvas.text) note(`${label}: Canvas の文字が "${canvas.text.slice(0, 14)}"`);
+    if (dom.declaredFontSize !== canvas.declaredFontSize)
+      note(`${label}: 宣言サイズ DOM ${dom.declaredFontSize} 対 Canvas ${canvas.declaredFontSize}`);
+    // The content rectangle, read as the scale each surface actually applied.
+    if (Math.abs(dom.scale - canvas.localScale) > 0.001)
+      note(`${label}: 倍率 DOM ${dom.scale} 対 Canvas ${canvas.localScale}`);
+    if (Math.abs(dom.effectiveFontSize - canvas.effectiveFontSize) > 0.01)
+      note(`${label}: 実効 DOM ${dom.effectiveFontSize}px 対 Canvas ${canvas.effectiveFontSize}px`);
+    if (Math.abs(dom.x - relativeX) > 0.5 || Math.abs(dom.y - relativeY) > 0.5)
+      note(
+        `${label}: 位置 DOM (${dom.x.toFixed(2)},${dom.y.toFixed(2)}) 対 ` +
+          `Canvas (${relativeX.toFixed(2)},${relativeY.toFixed(2)})`,
+      );
+    if (String(dom.fontWeight) !== String(canvas.fontWeight))
+      note(`${label}: 太さ DOM ${dom.fontWeight} 対 Canvas ${canvas.fontWeight}`);
+    if (ANCHOR_TO_ALIGN[dom.textAnchor] !== canvas.textAlign)
+      note(`${label}: 寄せ DOM ${dom.textAnchor} 対 Canvas ${canvas.textAlign}`);
+    // Monospace is the one family override the sprites allow; everything else has to use
+    // the family the stage resolved, on both surfaces.
+    const domMono = /monospace/u.test(dom.fontFamily);
+    const canvasMono = canvas.font.includes("monospace");
+    if (domMono !== canvasMono) note(`${label}: 等幅 DOM ${domMono} 対 Canvas ${canvasMono}`);
+    if (!domMono) {
+      if (dom.fontFamily !== resolved.family)
+        note(`${label}: DOM の字体 "${dom.fontFamily}" がステージの "${resolved.family}" ではない`);
+      if (!canvas.font.endsWith(resolved.family))
+        note(`${label}: Canvas の font "${canvas.font}" がステージの字体ではない`);
+    }
+    const expected = expectedSpriteSize(widget, dom, index);
+    if (expected.size === null) note(`${label}: ${expected.reason}`);
+    else if (dom.declaredFontSize !== expected.size)
+      note(`${label}: ${dom.declaredFontSize}px だが ${expected.size}px のはず`);
+    if (
+      expected.monospace !== null &&
+      expected.monospace !== undefined &&
+      expected.monospace !== domMono
+    )
+      note(`${label}: 等幅の指定が ${expected.monospace} なのに DOM は ${domMono}`);
+  });
+  return asserted;
+}
+
+function assertSurfaceCase(capture, problems) {
+  const where = `${capture.fixture}/${capture.viewport}`;
+  const note = (message) => problems.push(`${where}: ${message}`);
+  const result = { kinds: new Set(), sprites: [], notices: 0, icons: 0, multiline: 0 };
+  if (capture.errors.length) note(`runtime errors: ${capture.errors.join("; ")}`);
+  if (!capture.scene) {
+    note("Scene が取得できなかった");
+    return result;
+  }
+  const resolved = capture.resolved.canvas;
+  if (!resolved.ok) {
+    note(`canvas resolver failed: ${resolved.error}`);
+    return result;
+  }
+  if (capture.canvasStage.sprites.length)
+    note(`Canvas 面に SVG sprite が ${capture.canvasStage.sprites.length} 件ある`);
+  if (capture.icons.canvas.length)
+    note(`Canvas 面に HTML のダイアログアイコンが ${capture.icons.canvas.length} 件ある`);
+  const widgets = new Map(capture.scene.widgets.map((widget) => [widget.key, widget]));
+  const draws = capture.canvasSurface
+    ? canvasRecords(capture.canvasSurface, capture.scene.widgets, capture.fixture)
+    : [];
+  // --- figure / document -----------------------------------------------------------
+  for (const frame of capture.dom.frames) {
+    const widget = widgets.get(frame.key);
+    if (!widget) {
+      note(`DOM の ${frame.kind} ${frame.key} が Scene に無い`);
+      continue;
+    }
+    result.kinds.add(frame.kind);
+    // The frame the Canvas side insets by has to be the one the browser applied.
+    if (Math.abs(frame.borderWidth - resolved.surfaceBorder) > 0.01)
+      note(
+        `${frame.kind} ${frame.key} の border ${frame.borderWidth}px が ` +
+          `解決値 ${resolved.surfaceBorder}px と違う`,
+      );
+    // The SVG viewport is the content box: that is the rectangle both surfaces fit into.
+    for (const [axis, viewport, box] of [
+      ["幅", frame.viewportWidth, frame.width],
+      ["高さ", frame.viewportHeight, frame.height],
+    ])
+      if (Math.abs(viewport - (box - frame.borderWidth * 2)) > 0.5)
+        note(
+          `${frame.kind} ${frame.key} の SVG viewport ${axis} ${viewport} が ` +
+            `内容矩形 ${box - frame.borderWidth * 2} と違う`,
+        );
+    const domSprites = capture.dom.sprites.filter(
+      (sprite) => sprite.key === frame.key && sprite.painted,
+    );
+    const canvasSprites = draws.filter((record) => record.key === frame.key);
+    if (domSprites.length >= 2) result.multiline++;
+    result.sprites.push(
+      ...assertSurfaceWidget({
+        frame,
+        widget,
+        domSprites,
+        canvasSprites,
+        resolved,
+        note,
+      }),
+    );
+  }
+  // A sprite the DOM never mounted but Canvas painted (or the reverse) is caught above
+  // per widget; a draw attributed to no widget at all is caught here.
+  for (const record of draws)
+    if (!record.key)
+      note(`"${record.text.slice(0, 18)}" (${record.x},${record.y}) を部品に対応付けられない`);
+  // --- media ------------------------------------------------------------------------
+  for (const widget of capture.scene.widgets) {
+    if (!["image", "video", "iframe"].includes(widget.kind)) continue;
+    result.kinds.add(widget.kind);
+    const domNotice = capture.media.dom.find((entry) => entry.key === widget.key);
+    if (!domNotice) {
+      note(`DOM に ${widget.kind} ${widget.key} のメディア枠が無い`);
+      continue;
+    }
+    result.notices++;
+    if (domNotice.shown && domNotice.fontSize !== SIZE_CONTRACT.caption)
+      note(
+        `${widget.kind} の DOM 案内が ${domNotice.fontSize}px` +
+          `（${SIZE_CONTRACT.caption}px のはず）`,
+      );
+    // The Canvas surface keeps a native element for video and iframe; the image kind has
+    // none, and its notice is painted onto the bitmap instead.
+    // The Canvas overlays carry no widget key, so they are matched on the position the
+    // renderer wrote into their style — which survives being hidden behind a modal.
+    const native = capture.media.canvas.find(
+      (entry) =>
+        Math.abs(entry.styleLeft - widget.x) < 1.5 && Math.abs(entry.styleTop - widget.y) < 1.5,
+    );
+    if (widget.kind === "image") {
+      if (native) note(`Canvas 面に image の native 要素がある`);
+    } else if (!native) note(`Canvas 面に ${widget.kind} の native 要素が無い`);
+    else {
+      result.notices++;
+      if (native.shown && native.fontSize !== SIZE_CONTRACT.caption)
+        note(`${widget.kind} の native overlay が ${native.fontSize}px`);
+      if (native.mediaKind !== widget.kind) note(`native overlay の kind が ${native.mediaKind}`);
+    }
+    const painted = draws.filter((record) => record.key === widget.key);
+    if (!widget.src || domNotice.error) {
+      if (!painted.length) note(`Canvas が ${widget.kind} ${widget.key} の案内を描いていない`);
+      for (const record of painted) {
+        if (record.declaredFontSize !== SIZE_CONTRACT.caption)
+          note(`${widget.kind} の Canvas 案内が ${record.declaredFontSize}px`);
+        if (Math.abs(record.localScale - 1) > 0.001)
+          note(`${widget.kind} の Canvas 案内の localScale が ${record.localScale}`);
+        if (!record.font.endsWith(resolved.family))
+          note(`${widget.kind} の Canvas 案内の font "${record.font}" が字体と違う`);
+      }
+    } else if (painted.length)
+      note(`src があるのに ${widget.kind} が ${painted.length} 件の文字を描いている`);
+  }
+  // --- dialog icon ------------------------------------------------------------------
+  for (const widget of capture.scene.widgets) {
+    if (widget.kind !== "dialog-icon") continue;
+    result.kinds.add("dialog-icon");
+    const domIcon = capture.icons.dom.find((entry) => entry.key === widget.key);
+    if (!domIcon) {
+      note(`DOM に dialog-icon ${widget.key} が無い`);
+      continue;
+    }
+    result.icons++;
+    const painted = draws.filter((record) => record.key === widget.key);
+    if (domIcon.icon !== "text") {
+      // Out of scope by SURFACE_EXCLUSIONS["svg-icon-paths"] / ["image-pixels"]: an icon
+      // that is not a character must paint no character either.
+      if (painted.length) note(`${domIcon.icon} アイコンが ${painted.length} 件の文字を描いている`);
+      continue;
+    }
+    if (domIcon.fontSize !== SIZE_CONTRACT.icon)
+      note(`文字アイコンの DOM が ${domIcon.fontSize}px（${SIZE_CONTRACT.icon}px のはず）`);
+    if (domIcon.overflow !== "hidden")
+      note(`文字アイコンの DOM の overflow が ${domIcon.overflow}`);
+    if (painted.length !== 1) {
+      note(`Canvas の文字アイコンの描画が ${painted.length} 件`);
+      continue;
+    }
+    const [record] = painted;
+    if (record.declaredFontSize !== SIZE_CONTRACT.icon)
+      note(`Canvas の文字アイコンが ${record.declaredFontSize}px`);
+    // The defect this closes: a maxWidth condenses the glyphs instead of clipping them.
+    if (record.maxWidth !== null) note(`Canvas の文字アイコンに maxWidth ${record.maxWidth}`);
+    if (Math.abs(record.localScale - 1) > 0.001)
+      note(`Canvas の文字アイコンの localScale が ${record.localScale}`);
+    if (!record.font.endsWith(resolved.family))
+      note(`Canvas の文字アイコンの font "${record.font}" が字体と違う`);
+    if (record.textAlign !== "center" || record.textBaseline !== "middle")
+      note(`Canvas の文字アイコンの寄せが ${record.textAlign}/${record.textBaseline}`);
+    if (record.text !== domIcon.text)
+      note(`文字アイコンの文字が DOM "${domIcon.text}" 対 Canvas "${record.text}"`);
+    // The same string at the same size lays out to the same advance width on both
+    // surfaces — but only while the DOM keeps it on one line. A wide string is broken
+    // across lines there (SURFACE_EXCLUSIONS["text-icon-wrapping"]), and a wrapped box is
+    // narrower than the advance width without anything having been condensed.
+    if (domIcon.lineCount === 1) {
+      const tolerance = Math.max(2, domIcon.inkWidth * 0.08);
+      if (Math.abs(record.measuredWidth - domIcon.inkWidth) > tolerance)
+        note(
+          `文字アイコンの幅が DOM ${domIcon.inkWidth.toFixed(2)}px 対 ` +
+            `Canvas ${record.measuredWidth.toFixed(2)}px`,
+        );
+    }
+    if (capture.textIcon === "clipped") {
+      if (!domIcon.clipped) note("DOM の文字アイコンが枠内に収まっている（はみ出す指定のはず）");
+      if (record.measuredWidth <= domIcon.boxWidth)
+        note("Canvas の文字アイコンが枠内に収まっている（縮小された疑い）");
+    }
+  }
+  if (capture.textIcon === "none" && capture.icons.dom.some((icon) => icon.icon === "text"))
+    note("文字アイコンのないはずの画面に文字アイコンがある");
+  if (["clipped", "any"].includes(capture.textIcon) && !result.icons)
+    note("文字アイコンを実測していない");
+  for (const kind of capture.requires ?? [])
+    if (!result.kinds.has(kind)) note(`${kind} を実測していない`);
+  return result;
+}
+
+async function captureSurfaces(page, fixture, viewport) {
+  await page.setViewportSize({ width: viewport.width, height: viewport.height });
+  await page.evaluate(
+    async (input) => {
+      const module = await import("/tests/browser/font-parity-harness.js");
+      const harness = await module.createFontParityHarness({ screen: input.screen });
+      window.__fontParityHarness = harness;
+      try {
+        await harness.settle();
+        for (const step of input.steps)
+          if (step.surface === "dom") await harness.clickDom(step.selector);
+          else await harness.clickCanvas(step.target);
+      } catch (error) {
+        document.getElementById("font-parity-error").textContent = error.stack ?? String(error);
+        throw error;
+      }
+    },
+    { screen: fixture.screen, steps: fixture.steps },
+  );
+  if (fixture.media) {
+    // An image reports its failure asynchronously. Wait for every media root to have
+    // settled (loaded, empty or failed) before measuring, then repaint: recording the
+    // frame from before the error would measure a notice that is not on screen yet.
+    await page.waitForFunction(() => {
+      const stage = window.__fontParityHarness?.domStage;
+      const roots = [...(stage?.querySelectorAll("[data-media-kind]") ?? [])];
+      return (
+        roots.length > 0 &&
+        roots.every((root) => {
+          if (root.dataset.empty === "true" || root.dataset.mediaError === "true") return true;
+          const native = root.querySelector(".native-media");
+          return native?.complete !== false;
+        })
+      );
+    });
+    await page.evaluate(() => window.__fontParityHarness.afterFrame());
+  }
+  const observed = await page.evaluate(() => window.__fontParityHarness.surfaces());
+  return {
+    fixture: fixture.name,
+    viewport: viewport.name,
+    viewportSize: { width: viewport.width, height: viewport.height },
+    requires: fixture.requires ?? [],
+    textIcon: fixture.textIcon ?? null,
+    ...observed,
+  };
+}
+
+async function runSurfaces({ context, origin, evidenceDir, viewport, log }) {
+  const { page, pageErrors } = await instrument(
+    context,
+    `${origin}/tests/browser/font-parity.html`,
+    viewport,
+  );
+  const file = resolve(evidenceDir, "surfaces.json");
+  const captures = [];
+  const problems = [];
+  try {
+    for (const size of SURFACE_VIEWPORTS)
+      for (const fixture of SURFACE_FIXTURES) {
+        const capture = await captureSurfaces(page, fixture, size);
+        const image = resolve(evidenceDir, `surfaces-${fixture.name}-${size.name}.png`);
+        await page.locator("#font-parity-host").screenshot({ path: image });
+        await page.evaluate(() => window.__fontParityHarness?.dispose());
+        captures.push({ ...capture, image });
+      }
+  } finally {
+    // Leave the page on the viewport the runner handed over, whatever happened above.
+    await page.setViewportSize(viewport).catch(() => {});
+    await writeFile(
+      file,
+      `${JSON.stringify({ exclusions: SURFACE_EXCLUSIONS, captures, pageErrors }, null, 2)}\n`,
+    );
+    log(`Surfaces ledger: ${file}`);
+    await page.close();
+  }
+  if (pageErrors.length) problems.push(`page errors: ${pageErrors.join("; ")}`);
+  const results = captures.map((capture) => assertSurfaceCase(capture, problems));
+  const sprites = results.flatMap((result) => result.sprites);
+  const kinds = new Set(results.flatMap((result) => [...result.kinds]));
+  for (const kind of ["figure", "document", "image", "video", "iframe", "dialog-icon"])
+    if (!kinds.has(kind)) problems.push(`kind ${kind} を一度も実測していない`);
+  const shapes = {};
+  for (const [name, matches] of Object.entries(SURFACE_SHAPES))
+    shapes[name] = sprites.filter(matches).length;
+  for (const [name, count] of Object.entries(shapes))
+    if (!count) problems.push(`surface text shape ${name} was never painted`);
+  if (!results.some((result) => result.multiline)) problems.push("複数行の図表を実測していない");
+  // Both widths have to have produced measurements, and the narrow one has to have scaled
+  // the sprites differently: the same numbers at both widths would mean the fit never ran.
+  const byViewport = new Map();
+  for (const [index, result] of results.entries())
+    byViewport.set(
+      captures[index].viewport,
+      (byViewport.get(captures[index].viewport) ?? 0) + result.sprites.length,
+    );
+  for (const size of SURFACE_VIEWPORTS)
+    if (!byViewport.get(size.name)) problems.push(`${size.name} で sprite を実測していない`);
+  const scales = new Set(sprites.map((sprite) => sprite.scale.toFixed(4)));
+  if (scales.size < 2) problems.push("倍率が 1 種類しかない（幅による縮尺が効いていない）");
+  log(
+    `${captures.length} cases, ${sprites.length} sprite pairs over ` +
+      `${[...kinds].sort().join("/")}, ` +
+      `${results.reduce((total, result) => total + result.notices, 0)} media notices, ` +
+      `${results.reduce((total, result) => total + result.icons, 0)} dialog icons, ` +
+      `${scales.size} distinct scales, ` +
+      `shapes ${Object.entries(shapes)
+        .map(([name, count]) => `${name}=${count}`)
+        .join(" ")}`,
+  );
+  if (problems.length)
+    throw new Error(`surfaces: ${problems.length} problems\n- ${problems.join("\n- ")}`);
+  return { cases: captures.length, sprites: sprites.length, file };
+}
+
 // Every suite named by the plan is registered. Suites a later task owns have no runner
 // and must fail loudly: an unimplemented check is never reported as a pass.
 export const SUITES = [
@@ -1643,7 +2165,7 @@ export const SUITES = [
   // T3 adds the Canvas draw/measure comparison for the same roles.
   { name: "roles", owner: "T2/T3", run: runRoles },
   { name: "editing", owner: "T4", run: runEditing },
-  { name: "surfaces", owner: "T5", run: null },
+  { name: "surfaces", owner: "T5", run: runSurfaces },
   { name: "lifecycle", owner: "T6", run: null },
   { name: "matrix", owner: "T8", run: null },
   { name: "distribution", owner: "T9", run: null },

@@ -11,6 +11,10 @@
   --ui-font-size-close: 20px;
   --ui-font-size-metric: 22px;
   --ui-font-size-icon: 30px;
+  /* The surface frame, for the same reason: the DOM SVG fills the content box inside this
+     border, and the Canvas renderer has no element to read it from, so it resolves this
+     property and insets by the same amount. */
+  --ui-surface-border-width: 1px;
   font-family: "Inter", "Noto Sans JP", system-ui, sans-serif;
   font-synthesis: none;
   color: var(--ui-text, #263f50);
@@ -487,7 +491,7 @@
 :where(.uivolve-runtime) .ui-figure,
 :where(.uivolve-runtime) .ui-document {
   background: var(--ui-surface);
-  border: 1px solid var(--ui-border);
+  border: var(--ui-surface-border-width) solid var(--ui-border);
   border-radius: 7px;
 }
 
