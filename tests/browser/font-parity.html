@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Font parity fixtures</title>
+    <style>
+      body {
+        margin: 0;
+      }
+      /* The host must not declare a font-size; each fixture sets it explicitly. */
+      #font-parity-host {
+        display: flex;
+        align-items: flex-start;
+        gap: 16px;
+        padding: 16px;
+      }
+      #font-parity-host > div {
+        flex: 1 1 0;
+        min-width: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="font-parity-host"></div>
+    <pre id="font-parity-error" hidden></pre>
+  </body>
+</html>
