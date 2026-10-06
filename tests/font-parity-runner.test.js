@@ -98,9 +98,12 @@ it("requires exactly one browser route and a well-formed viewport", () => {
 });
 
 it("exits non-zero for an unimplemented suite before starting a server or a browser", () => {
-  const result = runner(["--suite", "roles"]);
+  // `roles` is implemented from T2 on; this check needs a suite a later task still owns.
+  const pending = SUITES.find((suite) => !suite.run);
+  expect(pending).toBeTruthy();
+  const result = runner(["--suite", pending.name]);
   expect(result.status).toBe(1);
-  expect(result.stderr).toContain('Suite "roles" is not implemented yet');
+  expect(result.stderr).toContain(`Suite "${pending.name}" is not implemented yet`);
   expect(result.stdout).not.toContain("Fixture server");
   expect(result.stdout).not.toContain("Launched browser");
 });

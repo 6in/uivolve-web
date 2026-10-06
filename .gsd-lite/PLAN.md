@@ -56,11 +56,13 @@ bun run docs:check
   - 依存: なし
   - 並列サブ作業: なし（実行環境の確定とharnessの契約を先に揃える）。
 
-- [ ] T2: DOMの役割別サイズを保持してresetを修正し共通サイズ源を作る
+- [x] T2: DOMの役割別サイズを保持してresetを修正し共通サイズ源を作る
   - 完了基準: runtime内resetを低詳細度へ変更し、DOMの既存11/12/13/20/22/30px等の宣言が勝つ。新設CSS custom propertiesを既存サイズ宣言から参照し、Canvas用の解決関数はstageのcomputed値を取得する。9pxのIDも含む。文字ごとのgetComputedStyleやJS側の独立したサイズ表は増やさない。roles suiteにroot直下・panel/window内・popup内・Canvas stage直下を追加し、host font-size 16/20px、light/darkでbutton12・close20・editor13等が局所指定どおりであることを実測する。ホスト外枠のcomputed値が変わらないことも確認。CSS欠落や不正な解決値を静かに成功扱いしない。
   - 対象: `src/runtime.css`、新設 `src/font-metrics.js`、`tests/browser/font-parity.mjs`、`tests/browser/font-parity-harness.js`、`docs/renderer-font-parity.md`。
   - 依存: T1
   - 並列サブ作業: なし（CSSとresolverの契約に依存）。
+  - **PLAN 訂正（turn 5 / T2 実測）**: 親コンテキスト「panel内」は**DOM上に存在しない**。ホストはpanel/fieldsetの子をステージ（レイヤー）直下に絶対配置し、Sceneに `parentKey` を付けないため、panelの子のCSS親はステージになる。根拠: `src/dom-renderer.js:262`（`parentKey` が無い widget は `layers.get(widget.layer)` 直下）と、`parentKey` を設定するのが grid / kanban / tab / tree / menu だけであること（`engine/src/grid.rs`・`kanban.rs`・`navigation.rs:396,430,451,518`）。実測した必須コンテキストは `root` / `window` / `popup` / `canvas-stage` / `grid-row` / `grid-head` / `tabbar` の7つに置き換え、panel自身のboxは1役割（12px/600）として検査した。後続タスクで「panel内」を要求しない。
+  - **PLAN 訂正（turn 5 / T2 実測）**: 既存テスト `tests/font-parity-runner.test.js` の「未実装suiteは非0」検査は `roles` を名指ししていたため、未実装の suite を `SUITES` から動的に選ぶよう変更した（`roles` はT2から実装済みになる）。
 
 - [ ] T3: Canvasの基本・追加部品の描画と計測を役割へ接続する
   - 完了基準: text窓口だけでなく全直接ctx.font/measureTextを棚卸しして同じ解決済みサイズを使う。label/empty/metric、button、panel/fieldset/window、旧row/Grid、tab/tree/menu、calendar/paging、toast/dialog-message、kanbanタイトル/件数/説明/ID/drag ghostの全roleがDOM実効pxと一致する。通常field値/labelも接続しT4の編集を準備する。selected/disabledでサイズは変わらない。左/中央/右寄せ、空、日本語、長い英数字、幅境界直前/直後、複数行でmeasureTextと描画fontが一致し、既存省略/折返し/clipを超える新たな欠けがない。roles suiteの当該roleを実WASM fixtureと元処理を通すCanvas観測で検証する。Kanban ghostのID非表示は既存差として台帳に残す。

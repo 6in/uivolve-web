@@ -436,11 +436,236 @@ async function runBaseline({ context, origin, evidenceDir, viewport, log }) {
   return { captures: captures.map((capture) => capture.source), file };
 }
 
+// --- roles ------------------------------------------------------------------------
+// The custom properties from DECISIONS, written as the numbers they must resolve to.
+// src/font-metrics.js holds no numbers of its own, so this is the only place the
+// contract is spelled out, and the browser has to reproduce it from the stylesheet.
+const SIZE_CONTRACT = {
+  meta: 9,
+  label: 11,
+  caption: 12,
+  body: 13,
+  close: 20,
+  metric: 22,
+  icon: 30,
+};
+
+// One line per role: its own declaration wins over the host's font-size and over the
+// form-control reset, in every parent context and in both themes.
+const ROLE_CONTRACT = [
+  { role: "button", selector: ".ui-button", size: "caption", weight: "500" },
+  // The panel box carries a size nothing inherits (its children are stage-level), so it
+  // is checked as its own role rather than as a parent context.
+  { role: "panel", selector: ".ui-panel", size: "caption", weight: "600" },
+  { role: "panel-toggle", selector: ".ui-panel-toggle", size: "caption", weight: "600" },
+  { role: "window-title", selector: ".window-title", size: "caption", weight: "600" },
+  { role: "window-close", selector: ".ui-window-close", size: "close" },
+  { role: "metric-caption", selector: ".ui-metric span", size: "label" },
+  { role: "metric-value", selector: ".ui-metric strong", size: "metric", weight: "600" },
+  { role: "field-label", selector: ".ui-field > label", size: "label", weight: "500" },
+  { role: "field-input", selector: ".ui-field > input", size: "body" },
+  { role: "label", selector: ".ui-label", size: "label" },
+  { role: "canvas-editor", selector: ".canvas-editor", size: "body" },
+  { role: "menu-trigger", selector: ".ui-menu-trigger", size: "caption" },
+  { role: "menu-item", selector: ".ui-menu-item", size: "caption" },
+  { role: "grid-column", selector: ".ui-grid-column", size: "caption" },
+  { role: "grid-cell", selector: ".ui-grid-cell", size: "caption" },
+  { role: "tab", selector: ".ui-tab", size: "caption" },
+].map((entry) => ({ ...entry, px: SIZE_CONTRACT[entry.size] }));
+
+for (const entry of ROLE_CONTRACT)
+  if (entry.px === undefined) throw new Error(`Role ${entry.role} names an unknown size`);
+
+// The parent contexts this task has to prove. A context nothing was measured in is a
+// gap in the check, not a pass. `panel` is absent on purpose: the host gives panel
+// children the stage as their CSS parent, so no DOM node ever has a panel parent.
+const REQUIRED_CONTEXTS = [
+  "root",
+  "window",
+  "popup",
+  "canvas-stage",
+  "grid-row",
+  "grid-head",
+  "tabbar",
+];
+
+const ROLE_THEMES = [
+  { mode: "light", url: "/themes/light.json" },
+  { mode: "dark", url: "/themes/dark.json" },
+];
+const ROLE_HOST_SIZES = ["16px", "20px"];
+
+// Steps are data, not functions: they cross into page.evaluate. Every overlay and popup
+// is opened with a real click so the measured node is the one the host builds.
+const ROLE_FIXTURES = [
+  {
+    name: "components",
+    screen: "screens/components.json",
+    steps: [
+      { surface: "dom", selector: '.ui-button[data-target="openEditor"]' },
+      { surface: "canvas", target: "draftName" },
+    ],
+  },
+  {
+    name: "grid-lab",
+    screen: "screens/grid-lab.json",
+    steps: [{ surface: "dom", selector: ".ui-menu-trigger" }],
+  },
+];
+
+async function captureRoles(page, { fixture, theme, hostFontSize }) {
+  const observed = await page.evaluate(
+    async (input) => {
+      const module = await import("/tests/browser/font-parity-harness.js");
+      const harness = await module.createFontParityHarness({
+        screen: input.screen,
+        hostFontSize: input.hostFontSize,
+        themeUrl: input.themeUrl,
+      });
+      window.__fontParityHarness = harness;
+      try {
+        await harness.settle();
+        for (const step of input.steps)
+          if (step.surface === "dom") await harness.clickDom(step.selector);
+          else await harness.clickCanvas(step.target);
+        return harness.roles(input.contract);
+      } catch (error) {
+        document.getElementById("font-parity-error").textContent = error.stack ?? String(error);
+        throw error;
+      }
+    },
+    {
+      screen: fixture.screen,
+      hostFontSize,
+      themeUrl: theme.url,
+      steps: fixture.steps,
+      contract: ROLE_CONTRACT.map(({ role, selector }) => ({ role, selector })),
+    },
+  );
+  return { fixture: fixture.name, mode: theme.mode, hostFontSize, ...observed };
+}
+
+// Flatten the per-surface role measurements into one list of asserted samples.
+function roleSamples(capture) {
+  const samples = [];
+  for (const [surface, measured] of [
+    ["dom-stage", capture.dom],
+    ["canvas-stage", capture.canvasStage],
+  ])
+    for (const entry of measured)
+      for (const sample of entry.samples)
+        samples.push({ surface, role: entry.role, selector: entry.selector, ...sample });
+  return samples;
+}
+
+function assertRoleCase(capture, problems) {
+  const where = `${capture.fixture}/${capture.mode}/host ${capture.hostFontSize}`;
+  const note = (message) => problems.push(`${where}: ${message}`);
+  if (capture.errors.length) note(`runtime errors: ${capture.errors.join("; ")}`);
+  // The resolver must work on both stages and agree with the contract, or the Canvas
+  // side would later read sizes nobody declared.
+  for (const [surface, resolved] of Object.entries(capture.resolved)) {
+    if (!resolved.ok) {
+      note(`${surface} resolver failed: ${resolved.error}`);
+      continue;
+    }
+    for (const [size, expected] of Object.entries(SIZE_CONTRACT))
+      if (resolved.sizes[size] !== expected)
+        note(`${surface} resolved ${size}=${resolved.sizes[size]}px, contract ${expected}px`);
+  }
+  // The runtime declares no root font-size, so the stage inherits the host's value;
+  // that is what makes the local declarations the only thing holding the sizes.
+  if (capture.environment.domStage.stageFontSize !== capture.hostFontSize)
+    note(`DOM stage font-size ${capture.environment.domStage.stageFontSize}`);
+  if (capture.hostFrame.hostFontSize !== capture.hostFontSize)
+    note(`host font-size ${capture.hostFrame.hostFontSize}`);
+  const asserted = [];
+  for (const sample of roleSamples(capture)) {
+    if (!sample.visible) continue;
+    const entry = ROLE_CONTRACT.find((candidate) => candidate.role === sample.role);
+    asserted.push(sample);
+    if (sample.fontSize !== entry.px)
+      note(
+        `${sample.role} in ${sample.context} is ${sample.fontSize}px, expected ${entry.px}px` +
+          ` (${sample.path})`,
+      );
+    if (entry.weight && sample.fontWeight !== entry.weight)
+      note(
+        `${sample.role} in ${sample.context} has weight ${sample.fontWeight},` +
+          ` expected ${entry.weight} (${sample.path})`,
+      );
+  }
+  if (!asserted.length) note("no visible role samples were measured");
+  return asserted;
+}
+
+async function runRoles({ context, origin, evidenceDir, viewport, log }) {
+  const { page, pageErrors } = await instrument(
+    context,
+    `${origin}/tests/browser/font-parity.html`,
+    viewport,
+  );
+  const file = resolve(evidenceDir, "roles.json");
+  const captures = [];
+  const problems = [];
+  let rejections = [];
+  try {
+    rejections = await page.evaluate(async () => {
+      const module = await import("/tests/browser/font-parity-harness.js");
+      return module.resolverRejections();
+    });
+    for (const fixture of ROLE_FIXTURES)
+      for (const theme of ROLE_THEMES)
+        for (const hostFontSize of ROLE_HOST_SIZES) {
+          const capture = await captureRoles(page, { fixture, theme, hostFontSize });
+          const image = resolve(
+            evidenceDir,
+            `roles-${fixture.name}-${theme.mode}-host${hostFontSize.replace("px", "")}.png`,
+          );
+          await page.locator("#font-parity-host").screenshot({ path: image });
+          await page.evaluate(() => window.__fontParityHarness?.dispose());
+          captures.push({ ...capture, image });
+        }
+  } finally {
+    await writeFile(file, `${JSON.stringify({ rejections, captures, pageErrors }, null, 2)}\n`);
+    log(`Roles ledger: ${file}`);
+    await page.close();
+  }
+  if (pageErrors.length) problems.push(`page errors: ${pageErrors.join("; ")}`);
+  // A resolver that guesses instead of failing would make every later check meaningless.
+  for (const rejection of rejections)
+    if (!rejection.threw)
+      problems.push(`resolver accepted ${rejection.label}: ${rejection.message}`);
+  if (rejections.length !== 3) problems.push(`expected 3 resolver rejection probes`);
+  const asserted = captures.flatMap((capture) => assertRoleCase(capture, problems));
+  // Nothing may drop out silently: every contracted role and every required parent
+  // context has to carry at least one real measurement.
+  for (const entry of ROLE_CONTRACT)
+    if (!asserted.some((sample) => sample.role === entry.role))
+      problems.push(`role ${entry.role} (${entry.selector}) was never measured`);
+  for (const parent of REQUIRED_CONTEXTS)
+    if (!asserted.some((sample) => sample.context === parent))
+      problems.push(`parent context ${parent} was never measured`);
+  // The page outside the runtime must read the same before and after the fix.
+  const bodySizes = [...new Set(captures.map((capture) => capture.hostFrame.bodyFontSize))];
+  if (bodySizes.length !== 1) problems.push(`host page font-size moved: ${bodySizes.join(", ")}`);
+  log(
+    `${captures.length} cases, ${asserted.length} role samples, ` +
+      `contexts ${[...new Set(asserted.map((sample) => sample.context))].sort().join("/")}, ` +
+      `host page ${bodySizes.join(",")}`,
+  );
+  if (problems.length)
+    throw new Error(`roles: ${problems.length} problems\n- ${problems.join("\n- ")}`);
+  return { cases: captures.length, samples: asserted.length, file };
+}
+
 // Every suite named by the plan is registered. Suites a later task owns have no runner
 // and must fail loudly: an unimplemented check is never reported as a pass.
 export const SUITES = [
   { name: "baseline", owner: "T1", run: runBaseline },
-  { name: "roles", owner: "T2/T3", run: null },
+  // T2 covers the DOM declarations, the parent contexts and the shared size source;
+  // T3 adds the Canvas draw/measure comparison for the same roles.
+  { name: "roles", owner: "T2/T3", run: runRoles },
   { name: "editing", owner: "T4", run: null },
   { name: "surfaces", owner: "T5", run: null },
   { name: "lifecycle", owner: "T6", run: null },

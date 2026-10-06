@@ -1,4 +1,5 @@
 import { createRuntime } from "../../src/runtime.js";
+import { resolveFontMetrics, FONT_ROLES } from "../../src/font-metrics.js";
 
 // Browser-side observation for the renderer font-size ledger. Everything here only
 // reads: no font declaration is added, no painted pixel is replaced. The Canvas side
@@ -44,6 +45,40 @@ function directText(element) {
   return text.trim();
 }
 
+// The CSS parent context a text node was measured in. The reset defect was a context
+// defect — a component's own declaration losing to an inherited value — so every record
+// carries its context and the role checks assert each context separately.
+//
+// Only the containers the host really nests in the DOM can appear here. Panels and
+// fieldsets position their children absolutely at the stage/layer level (no parentKey in
+// the Scene), so a widget "inside a panel" has the stage as its CSS parent and reports
+// `root`; the panel's own box is measured as its own role instead.
+const CONTEXT_MARKERS = [
+  ["popup", "ui-menu-surface"],
+  ["grid-row", "ui-grid-row"],
+  ["grid-head", "ui-grid-head"],
+  ["grid-shell", "ui-grid-shell"],
+  ["tree-shell", "ui-tree-shell"],
+  ["kanban-lane", "ui-kanban-lane"],
+  ["tabbar", "ui-tabbar"],
+  ["panel", "ui-panel"],
+  ["panel", "ui-fieldset"],
+  ["window", "ui-window"],
+];
+
+// The context is where the element *inherits from*, so the walk starts at the parent:
+// an element is never its own context. Sitting directly under the Canvas stage is the
+// one case the stage itself names, because that is where the editor overlay lives.
+export function contextOf(element, stage) {
+  if (element !== stage && element.parentElement === stage)
+    return stage.classList.contains("canvas-stage") ? "canvas-stage" : "root";
+  for (let node = element.parentElement; node && node !== stage; node = node.parentElement) {
+    const hit = CONTEXT_MARKERS.find(([, className]) => node.classList.contains(className));
+    if (hit) return hit[0];
+  }
+  return "root";
+}
+
 function metrics(element, stage, part, text) {
   const style = getComputedStyle(element);
   const rect = element.getBoundingClientRect();
@@ -58,6 +93,7 @@ function metrics(element, stage, part, text) {
     target: widget.target,
     kind: widget.kind,
     role: roleOf(element, widget.kind, part),
+    context: contextOf(element, stage),
     part: part ?? "text",
     text,
     visible: style.display !== "none" && style.visibility !== "hidden" && rect.width > 0,
@@ -98,6 +134,81 @@ export function observeDom(stage, label) {
         });
   }
   return records;
+}
+
+// Measure one named role everywhere it appears, queried by selector so a role the
+// fixture does not render comes back with `found: 0` instead of quietly disappearing.
+export function measureRoles(stage, specs) {
+  return specs.map((spec) => ({
+    role: spec.role,
+    selector: spec.selector,
+    samples: [...stage.querySelectorAll(spec.selector)].map((element) => {
+      const style = getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return {
+        context: contextOf(element, stage),
+        path: cssPath(element, stage),
+        text: (element.value ?? directText(element) ?? "").slice(0, 24),
+        placeholder: element.placeholder ?? null,
+        fontSize: Number.parseFloat(style.fontSize),
+        fontWeight: style.fontWeight,
+        fontFamily: style.fontFamily,
+        visible: style.display !== "none" && style.visibility !== "hidden" && rect.width > 0,
+      };
+    }),
+  }));
+}
+
+// What the Canvas side will resolve from the same stage. Reported as data — including
+// the failure message — so the suite decides, instead of a fallback hiding missing CSS.
+export function resolvedMetrics(stage) {
+  try {
+    const metrics = resolveFontMetrics(stage);
+    return {
+      ok: true,
+      family: metrics.family,
+      sizes: metrics.sizes,
+      fonts: Object.fromEntries(FONT_ROLES.map((role) => [role, metrics.font(role)])),
+      error: null,
+    };
+  } catch (error) {
+    return { ok: false, family: null, sizes: null, fonts: null, error: error.message };
+  }
+}
+
+// The resolver has to fail loudly, not guess. Three ways to lose the sizes: no element,
+// an element outside the runtime stylesheet, and an unusable declared value.
+export function resolverRejections() {
+  const attempt = (label, build) => {
+    const probe = build();
+    try {
+      const metrics = resolveFontMetrics(probe?.element ?? probe);
+      return {
+        label,
+        threw: false,
+        message: `解決できてしまった: ${JSON.stringify(metrics.sizes)}`,
+      };
+    } catch (error) {
+      return { label, threw: true, message: error.message };
+    } finally {
+      probe?.element?.remove?.();
+    }
+  };
+  return [
+    attempt("no-element", () => null),
+    attempt("outside-runtime", () => {
+      const element = document.createElement("div");
+      document.body.append(element);
+      return { element };
+    }),
+    attempt("invalid-value", () => {
+      const element = document.createElement("div");
+      element.className = "uivolve-runtime";
+      element.style.setProperty("--ui-font-size-body", "1.1em");
+      document.body.append(element);
+      return { element };
+    }),
+  ];
 }
 
 function ink(text, font) {
@@ -164,6 +275,19 @@ export function fontEvidence(stage) {
   };
 }
 
+// The page outside the runtime. Fixing the reset must not reach past the mounted
+// surface, so the host element and the document body are measured alongside it.
+export function hostFrame(host) {
+  const style = getComputedStyle(host);
+  const body = getComputedStyle(document.body);
+  return {
+    hostFontSize: style.fontSize,
+    hostFontFamily: style.fontFamily,
+    bodyFontSize: body.fontSize,
+    bodyFontFamily: body.fontFamily,
+  };
+}
+
 export function environment(stage, canvas) {
   return {
     devicePixelRatio: window.devicePixelRatio,
@@ -219,6 +343,7 @@ export async function createFontParityHarness({
   screen = "screens/hello-world.json",
   hostFontSize = "16px",
   theme,
+  themeUrl,
   host = document.getElementById("font-parity-host"),
 } = {}) {
   host.textContent = "";
@@ -245,13 +370,66 @@ export async function createFontParityHarness({
       if (error) errors.push(error.message);
     },
   });
-  if (theme) runtime.theme(theme);
+  let definition = theme;
+  if (!definition && themeUrl) {
+    const response = await fetch(themeUrl);
+    if (!response.ok) throw new Error(`テーマ ${themeUrl} を取得できません (${response.status})`);
+    definition = await response.json();
+  }
+  if (definition) runtime.theme(definition);
   await runtime.load(screen);
   await runtime.whenIdle();
   await document.fonts.ready;
   return {
     runtime,
     errors,
+    host,
+    domStage,
+    canvasStage,
+    canvas,
+    // Open overlays and popups the way a user does. Building the element by hand would
+    // measure a node the host never produced, which is exactly what has to be checked.
+    async clickDom(selector) {
+      const node = domStage.querySelector(selector);
+      if (!node) throw new Error(`DOM側に ${selector} に一致する部品がありません`);
+      node.click();
+      await runtime.whenIdle();
+      await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+    },
+    async clickCanvas(target) {
+      const scene = runtime.scenes[1];
+      const widget = scene?.widgets.find((entry) => entry.target === target);
+      if (!widget)
+        throw new Error(
+          `Canvas側に target="${target}" の部品がありません` +
+            `（候補: ${[...new Set(scene?.widgets.map((entry) => entry.target) ?? [])].join(", ")}）`,
+        );
+      const rect = canvas.getBoundingClientRect();
+      canvas.dispatchEvent(
+        new PointerEvent("pointerdown", {
+          bubbles: true,
+          cancelable: true,
+          pointerId: 1,
+          clientX: rect.left + ((widget.x + widget.width / 2) * rect.width) / scene.width,
+          clientY: rect.top + ((widget.y + widget.height / 2) * rect.height) / scene.height,
+        }),
+      );
+      await runtime.whenIdle();
+      await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+    },
+    roles(specs) {
+      return {
+        dom: measureRoles(domStage, specs),
+        canvasStage: measureRoles(canvasStage, specs),
+        resolved: { dom: resolvedMetrics(domStage), canvas: resolvedMetrics(canvasStage) },
+        hostFrame: hostFrame(host),
+        environment: {
+          domStage: environment(domStage, null),
+          canvasStage: environment(canvasStage, canvas),
+        },
+        errors: [...errors],
+      };
+    },
     // Repaint after the fonts settled so the recorded Canvas draw calls are the ones
     // the user finally sees, then hand back one JSON record per surface.
     async settle() {
