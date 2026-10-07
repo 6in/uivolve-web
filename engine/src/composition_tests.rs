@@ -29,17 +29,75 @@ fn load_error(package: Package, script: &str) -> String {
 }
 
 fn load(package: Package, script: &str) -> Result<instance::Instance, String> {
+    load_in(
+        package,
+        script,
+        true,
+        &extensions::ExtensionContext::default(),
+    )
+}
+
+/// Load a package the way a parent loads a component: no host effects, `emit` instead.
+fn load_child(package: Package, script: &str) -> Result<instance::Instance, String> {
+    load_in(
+        package,
+        script,
+        false,
+        &extensions::ExtensionContext::default(),
+    )
+}
+
+fn child_error(package: Package, script: &str) -> String {
+    load_child(package, script)
+        .err()
+        .expect("expected a load error")
+}
+
+fn load_in(
+    package: Package,
+    script: &str,
+    effects: bool,
+    context: &extensions::ExtensionContext,
+) -> Result<instance::Instance, String> {
     let mut dialogs = dialogs::Requests::default();
     let pages = pages::Requests::default();
     instance::Instance::load(
         package,
         script,
         HashMap::new(),
+        context,
         None,
+        effects,
         |_| {},
         &mut dialogs,
         &pages,
     )
+}
+
+/// The smallest child package: one button whose `run` handler each effect test fills in.
+fn child() -> Package {
+    serde_json::from_value(json!({
+        "version": 1, "id": "child", "title": "Child", "script": "child.rhai",
+        "state": {"value": 0},
+        "ui": {"xtype": "container", "items": [
+            {"xtype": "button", "itemId": "run", "handler": "run"},
+        ]},
+    }))
+    .expect("test child package")
+}
+
+/// Run a child handler the way `dispatch` will once the instance tree exists (T4), and return
+/// the error it fails with. The committed state is never touched by a failed call.
+fn run_child(instance: &instance::Instance, handler: &str) -> Result<Dynamic, String> {
+    instance
+        .engine
+        .call_fn::<Dynamic>(
+            &mut Scope::new(),
+            &instance.ast,
+            handler,
+            (instance.state.clone(), Dynamic::from(rhai::Map::new())),
+        )
+        .map_err(|e| e.to_string())
 }
 
 // --- declarations ---
@@ -280,5 +338,282 @@ fn a_declared_component_node_loads_and_waits_for_its_package() {
     assert_eq!(
         Runtime::load(package, SCRIPT).err().unwrap(),
         "Component packages were not bundled"
+    );
+}
+
+// --- the instance environment of a child ---
+
+/// `"a", "b", ...`: a stub takes `Dynamic` arguments, so only the count has to match.
+fn arguments(arity: usize) -> String {
+    (0..arity)
+        .map(|i| format!("\"{}\"", (b'a' + i as u8) as char))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+#[test]
+fn effect_functions_written_out_in_a_child_script_are_rejected_at_load() {
+    for (name, arities) in composition::STUBS {
+        for arity in arities {
+            let script = format!(
+                "fn init(s) {{ s }} fn run(s, e) {{ {name}({}); s }}",
+                arguments(*arity)
+            );
+            let error = child_error(child(), &script);
+            assert!(
+                error.contains(name) && error.contains("is not available in components"),
+                "{name}/{arity}: {error}"
+            );
+            assert!(
+                error.contains("line 1, position "),
+                "{name}/{arity}: {error}"
+            );
+        }
+    }
+}
+
+#[test]
+fn effect_functions_reached_through_a_function_pointer_are_rejected_when_the_handler_runs() {
+    for (name, arities) in composition::STUBS {
+        for arity in arities {
+            // `Fn("navigate")` hides the name from the load-time walk; the stub answers instead.
+            let script = format!(
+                "fn init(s) {{ s }} fn run(s, e) {{ let f = Fn(\"{name}\"); f.call({}); s.value = 1; s }}",
+                arguments(*arity)
+            );
+            let instance = load_child(child(), &script)
+                .unwrap_or_else(|e| panic!("{name}/{arity} should load: {e}"));
+            let before = instance.state_json().expect("child state");
+            let error = run_child(&instance, "run").expect_err("the stub must refuse");
+            assert!(
+                error.contains(name) && error.contains("is not available in components"),
+                "{name}/{arity}: {error}"
+            );
+            assert_eq!(instance.state_json().expect("child state"), before);
+        }
+    }
+}
+
+#[test]
+fn every_effect_function_the_host_registers_has_a_stub() {
+    // Each call below resolves against a root engine, so no table entry is a dead name. The
+    // argument types are the real signatures, unlike the `Dynamic` stubs.
+    let calls: [(&str, &str); 24] = [
+        ("alert", "\"m\""),
+        ("alert", "\"m\", #{}"),
+        ("alert", "\"m\", \"onDone\", #{}"),
+        ("confirm", "\"m\", \"onDone\""),
+        ("confirm", "\"m\", \"onDone\", #{}"),
+        ("file_list", "\"vol\", \"f\""),
+        ("file_mkdir", "\"vol\", \"f\""),
+        ("file_read_bytes", "\"vol\", \"f\""),
+        ("file_read_text", "\"vol\", \"f\""),
+        ("file_remove", "\"vol\", \"f\""),
+        ("file_stat", "\"vol\", \"f\""),
+        ("file_write_bytes", "\"vol\", \"f\", file_bytes(\"x\")"),
+        ("file_write_text", "\"vol\", \"f\", \"text\""),
+        ("host_call", "\"op\", #{}"),
+        ("host_cancel", "\"op\""),
+        ("http_get", "\"req\""),
+        ("navigate", "\"page\""),
+        ("prompt", "\"m\", \"onDone\""),
+        ("prompt", "\"m\", \"default\", \"onDone\""),
+        ("prompt", "\"m\", \"default\", \"onDone\", #{}"),
+        ("rpc_call", "\"call\", #{}"),
+        ("storage_read", "\"key\""),
+        ("storage_remove", "\"key\""),
+        ("storage_write", "\"key\", #{}"),
+    ];
+    let mut table: BTreeSet<(&str, usize)> = BTreeSet::new();
+    for (name, arities) in composition::STUBS {
+        for arity in arities {
+            table.insert((name, *arity));
+        }
+    }
+    let mut resolved: BTreeSet<(&str, usize)> = BTreeSet::new();
+    let root = load(child(), "fn init(s) { s } fn run(s, e) { s }").expect("root instance");
+    for (name, args) in calls {
+        let script = format!("fn probe(s, e) {{ {name}({args}); s }}");
+        let ast = root.engine.compile(&script).expect(&script);
+        let error = root
+            .engine
+            .call_fn::<Dynamic>(
+                &mut Scope::new(),
+                &ast,
+                "probe",
+                (root.state.clone(), Dynamic::from(rhai::Map::new())),
+            )
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        assert!(
+            !error.contains("Function not found"),
+            "{script} does not resolve on a root engine: {error}"
+        );
+        resolved.insert((name, args.split(',').count()));
+    }
+    assert_eq!(resolved, table);
+
+    // A new effect function must be added to `STUBS`, so the registration count is pinned.
+    // Four of these register values rather than effects: `len` and three `file_bytes`.
+    let sites: usize = [
+        include_str!("dialogs.rs"),
+        include_str!("files.rs"),
+        include_str!("host.rs"),
+        include_str!("http.rs"),
+        include_str!("pages.rs"),
+        include_str!("rpc.rs"),
+        include_str!("storage.rs"),
+    ]
+    .iter()
+    .map(|source| source.matches("register_fn(").count())
+    .sum();
+    assert_eq!(
+        sites, 21,
+        "an effect module gained or lost a register_fn: check composition::STUBS"
+    );
+}
+
+#[test]
+fn a_child_emit_queues_a_json_payload_up_to_eight_per_handler() {
+    let instance = load_child(
+        child(),
+        "fn init(s) { s } fn run(s, e) { emit(\"selected\", #{ id: 1 }); s }",
+    )
+    .expect("child with an emit");
+    let _ = run_child(&instance, "run").expect("the emit is queued");
+    assert_eq!(
+        instance.emits.take(),
+        vec![("selected".to_string(), json!({"id": 1}))]
+    );
+    assert!(
+        instance.emits.take().is_empty(),
+        "the queue is drained once"
+    );
+
+    let instance = load_child(
+        child(),
+        "fn init(s) { s } fn run(s, e) { emit(\"bad\", Fn(\"init\")); s }",
+    )
+    .expect("child with an unserializable payload");
+    let error = run_child(&instance, "run").expect_err("a function pointer is not JSON");
+    assert!(
+        error.contains("emit bad: payload must be JSON-serializable"),
+        "{error}"
+    );
+
+    let instance = load_child(
+        child(),
+        "fn init(s) { s } fn run(s, e) { for i in 0..9 { emit(\"tick\", #{}); } s }",
+    )
+    .expect("child with nine emits");
+    let error = run_child(&instance, "run").expect_err("the ninth emit is refused");
+    assert!(error.contains("At most 8 emits per handler"), "{error}");
+}
+
+#[test]
+fn emit_is_refused_during_init_and_undefined_on_a_root() {
+    let error = child_error(
+        child(),
+        "fn init(s) { emit(\"ready\", #{}); s } fn run(s, e) { s }",
+    );
+    assert_eq!(error, "emit is only available in event handlers, not init");
+    // A root has no parent to announce to, so `emit` is simply not a function there.
+    let instance = load(
+        child(),
+        "fn init(s) { s } fn run(s, e) { emit(\"ready\", #{}); s }",
+    )
+    .expect("root instance");
+    let error = run_child(&instance, "run").expect_err("emit is undefined on a root");
+    assert!(error.contains("Function not found: emit"), "{error}");
+}
+
+#[test]
+fn a_child_cannot_own_a_window_at_any_depth() {
+    for xtype in ["window", "messagebox"] {
+        let package: Package = serde_json::from_value(json!({
+            "version": 1, "id": "child", "title": "Child", "script": "child.rhai",
+            "state": {"open": false},
+            "ui": {"xtype": "container", "items": [{"xtype": "panel", "itemId": "wrap", "items": [
+                {"xtype": xtype, "itemId": "dialog", "visibleBind": "open", "width": 320.0},
+            ]}]},
+        }))
+        .expect("child with a window");
+        let error = child_error(package.clone(), SCRIPT);
+        assert_eq!(
+            error, "window is not available in components (reserved for a later stage)",
+            "{xtype}"
+        );
+        // The same template is fine on a root, so the rejection is about being a component.
+        load(package, SCRIPT).unwrap_or_else(|e| panic!("{xtype} should load on a root: {e}"));
+    }
+}
+
+#[test]
+fn a_child_cannot_declare_host_effects_or_metadata() {
+    let declarations = [
+        (
+            "requests",
+            json!({"load": {"url": "https://x/y", "handler": "run"}}),
+        ),
+        (
+            "operations",
+            json!({"op": {"connection": "c", "action": "a", "handler": "run"}}),
+        ),
+        ("pages", json!({"next": {"url": "next.json"}})),
+        (
+            "storage",
+            json!({"draft": {"backend": "opfs", "key": "draft", "handler": "run"}}),
+        ),
+        (
+            "files",
+            json!({"vol": {"backend": "opfs", "access": "read", "handler": "run"}}),
+        ),
+        (
+            "rpc",
+            json!({"echo": {
+                "url": "https://x/y", "descriptor": "d", "service": "s", "method": "m",
+                "protocol": "connect", "handler": "run",
+            }}),
+        ),
+        ("webmcp", json!({"description": "child"})),
+    ];
+    for (key, value) in declarations {
+        let mut package = json!({
+            "version": 1, "id": "child", "title": "Child", "script": "child.rhai",
+            "state": {}, "ui": {"xtype": "container", "items": []},
+        });
+        package[key] = value;
+        let package: Package =
+            serde_json::from_value(package).unwrap_or_else(|e| panic!("{key}: {e}"));
+        let error = child_error(package, SCRIPT);
+        assert_eq!(
+            error,
+            "requests, operations, storage, files, rpc, pages and webmcp are not available in components (reserved for a later stage)",
+            "{key}"
+        );
+    }
+}
+
+#[test]
+fn a_child_reads_the_clock_its_parent_is_holding() {
+    // One context for the whole screen: the parent enters the clock, the child inherits it.
+    let context = extensions::ExtensionContext::default();
+    let _guard = context
+        .enter(Some(extensions::Clock {
+            now_ms: 1_791_088_440_123,
+            tz_offset_minutes: 540,
+        }))
+        .expect("a valid clock");
+    let instance = load_in(
+        child(),
+        "fn init(s) { s.today = date_today(); s } fn run(s, e) { s }",
+        false,
+        &context,
+    )
+    .expect("child with a clock");
+    assert_eq!(
+        instance.state_json().expect("child state")["today"],
+        "2026-10-04"
     );
 }

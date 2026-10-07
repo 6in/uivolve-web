@@ -409,11 +409,15 @@ impl Runtime {
     ) -> Result<Self, String> {
         let mut dialogs = dialogs::Requests::default();
         let pages = pages::Requests::default();
+        // One context per screen: the instance tree of `load_with_components` shares this clock.
+        let context = extensions::ExtensionContext::default();
         let root = instance::Instance::load(
             package,
             script,
             descriptors,
+            &context,
             clock,
+            true,
             register,
             &mut dialogs,
             &pages,
