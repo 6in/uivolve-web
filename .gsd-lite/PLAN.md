@@ -1,532 +1,220 @@
-# PLAN — renderer-font-size-parity
+# PLAN — component-instance-refactor
 
-- 作成: 2026-10-06 / gsd-lite-plan
-- 入力: REQUIREMENTS.md / DECISIONS.md / RESEARCH.md
-- 対象: `.`（`gsd-lite-loop.sh --where`: mode=repo、milestone_dir=.gsd-lite）。fix_round=0、subagents=auto。現ターンは計画のみ。
+- 作成: 2026-10-07 / gsd-lite-plan（turn 2）
+- 入力: REQUIREMENTS.md / DECISIONS.md / RESEARCH.md / `.gsd-lite/reflect/` 直近 2 件
+- `$MS` = `.gsd-lite`、`$TARGET` = `.`（mode=repo）。対象側の `CLAUDE.md` / `AGENTS.md` は無い（`ls` で確認）。規約は `CONTRIBUTING.md` と `docs/testing.md`（検証コマンド）に従う
 
 ## 検証コマンド
 
-対象リポジトリのルートで、変更に関係する検査を実行する。既存コマンドの根拠は `package.json` の scripts、`docs/testing.md` のコマンド・ブラウザ確認節。
+impl の各ターンがテストに使うコマンド（リポジトリルートで実行。`docs/testing.md:7-13` のコマンド列 + 本マイルストーンの照合）:
 
 ```bash
-bun run build:wasm
-bunx vp test run tests/fields.test.js tests/grid-navigation.test.js tests/dialogs.test.js tests/gallery.test.js tests/kanban.test.js tests/runtime.test.js
-bun scripts/test-font-parity-browser.mjs --suite baseline
-bun scripts/test-font-parity-browser.mjs --suite roles
-bun scripts/test-font-parity-browser.mjs --suite editing
-bun scripts/test-font-parity-browser.mjs --suite surfaces
-bun scripts/test-font-parity-browser.mjs --suite lifecycle
-bun scripts/test-font-parity-browser.mjs --suite matrix
-bun scripts/test-font-parity-browser.mjs --suite distribution
-bun run build
-bun run build:runtime
-bun run build:minimal
-bun run check
-bun run docs:check
+bun run build:wasm                      # public/engine.wasm と public/screens/rpc-demo.pb を生成（照合の前提）
+bunx vp test run                        # Vitest（既存テストファイルは無改修・期待値変更 0）
+bun run test:rust                       # cargo test（lib.rs 4 本 + extensions 系が無改修 green）
+bun run check                           # oxlint/oxfmt + cargo fmt --check
+bun run docs:check                      # Markdown リンク検査
+bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-35120e0.wasm --candidate public/engine.wasm
+                                        # T1 以降。応答 JSON の差分 0 で exit 0
 ```
 
-- 上記の font-parity スクリプトと suite は **T1で新設する計画名**。baseline は差を採取し、他 suite は担当タスクで検査を追加する。distribution はT9の生成配布物検査。未実装の suite を成功として扱わず非0終了する。
-- **PLAN 訂正（turn 4 / T1 実測）**: 上の suite 一覧は「全ターンで green にする一覧」ではない。未実装 suite は担当タスクが実装するまで**非0で終了するのが期待どおり**なので、各実装ターンで green を確認するのは**その時点で実装済みの suite だけ**（T1終了時点では baseline のみ）。全 suite が green になるのはT9の `bun scripts/verify-font-parity.mjs` 一本。根拠: 同じ行の「未実装の suite を成功として扱わず非0終了する」という決定と、T1で実装した `--list` / 非0終了の実測。
-- 環境の初期化（毎回）: `bun run build:wasm`。DB初期化は不要。ブラウザ runner は新しい context/runtime を作り、対象 suite のみを実行し、終了時にページ・context・ブラウザ・所有サーバーを閉じる。起動するサーバーのポートは自動割当とし、既存プロセスを終了しない。
-- スクリプト実行前は `node --check <対象.mjs>`、撮影前は対象差分の整形→build。実行中の整形でページを再読込させない。
-- 最終判定1本（T1で新設）: `bun scripts/verify-font-parity.mjs`。順番は build:wasm → 全Vitest → test:rust → check → docs:check → build → build:runtime → build:minimal → 全font-parity suite（baseline除く）→生成物からの独立runtime/minimal確認。失敗・中断を非0で返す。手動目視の記録はこのコマンドの成功に加えて必要。
-- サーバー・Chromiumの実行経路と日本語フォントはT1で固定して `docs/renderer-font-parity.md` に記録する。新規の依存追加なし。runner は `--browser-path` と `--browser-endpoint` のどちらかを選べるようにし、外部ブラウザ接続時は所有したcontextのみ閉じる。無人環境で両方利用不能ならT1を未完了のままBLOCKEDをコミットする。researchで失敗したsnap Chromiumを無条件に再試行しない。
-- **T1 実測で確定（turn 4）**: ブラウザは `/usr/bin/chromium-browser`（Chromium 152.0.7977.64、headless）、サーバーは `bunx vp dev` を空きポートで所有起動。環境変数は `FONT_PARITY_BROWSER_PATH` / `FONT_PARITY_BROWSER_ENDPOINT`。日本語は実在の字体で描画されることをインク幅で確認済み（`document.fonts.check` は未割当コードポイントにも true を返すため字体の証拠にしない）。**turn 3 のBLOCKEDは解消**。
-- OSの実IMEと実ブラウザズームを実行できない場合は要件どおり限界・代用方式を明記する。ブラウザ数値比較・代表画像自体を省略して合格にしない。
+- 環境の初期化（テストの前に毎回）: `bun run build:wasm`（`public/engine.wasm` を作業ツリーから再生成。`rpc-demo.pb` も生成される）。base WASM が無ければ `bun scripts/build-engine-variant.mjs --commit 35120e0 --out target/engine-compare/base-35120e0.wasm`（T1 以降。約 30 秒）。T1 より前は `.gsd-lite/logs/component-instance-refactor/base-main-35120e0.wasm`（research が保存済み）を `cp` して使ってよい
+- 最終判定（クリーンな状態から全検査。verify と最終タスクが使う）: `bun scripts/verify-instance-refactor.mjs`（T4 で作る。build:wasm → vp test → test:rust → check → docs:check → build → base ビルド（無ければ）→ 照合 → 変異 M1〜M3 の非 0 確認、手順ごとの所要と合計を最後に出力、exit code を返す）。T4 完了までは上のコマンド列を順に手で回す
+- base コミット: `main` = `35120e0`（`git log --oneline -1 main`）。DECISIONS「`main` = `github/main` = `35120e0`」と一致
 
 ## 追従先チェックリスト
 
-部品追加ではなく既存描画の修正。対象側のAGENTS.md/CLAUDE.mdは `rg --files --hidden -g '*AGENTS.md' -g '*CLAUDE.md' -g '!node_modules' -g '!.git'` で見つからなかった。部品変更規約は `docs/component-development.md:51,60,62,92` を適用する。
-
-| 変更の種類           | 直す場所                                                                                                     | 確かめ方                                                                                                                               |
-| -------------------- | ------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
-| 役割別サイズ・reset  | `src/runtime.css`、Canvasの全font指定、編集用要素、台帳                                                      | `rg -n 'font-size                                                                                                                      | font: | ctx.font | measureText | fillText' src` と実ブラウザの役割coverageを照合。デモ外枠の指定は対象外理由を残す |
-| 入力サイズ・Grid例外 | `src/dom-renderer.js`、`src/canvas-renderer.js`、必要なら `src/field-control.js`                             | gridEditor有無、labelHeight有無、値/placeholder/select option、再描画時のnode identityを実ブラウザで検証                               |
-| SVG/Canvas変換       | `src/surfaces.js`、`src/dialog-icons.js`、surface CSS                                                        | spritesのサイズ・SVG CTM・Canvas transformをCSS pxへ換算しborder内側viewportも照合                                                     |
-| font/DPR購読         | `src/runtime.js`、rendererのrender/paint/reset/dispose                                                       | font完了・失敗・dispose後、DPRだけの変化、複数runtimeの独立性を確認                                                                    |
-| 配布CSS・JS          | `src/runtime-entry.js`、`scripts/build-runtime.mjs` の既存配布経路                                           | build:runtime/build:minimal後、生成したindex.css/index.jsを使用する面で比較。生成物は手編集しない                                      |
-| ブラウザ検査の常設   | 新runner/harness、`docs/testing.md`、`docs/renderer-font-parity.md`、`docs/README.md`                        | `docs/testing.md` の「恒久的なPlaywright実行スクリプト…同梱していない」を現状に合わせて更新。docs:check、全suiteが未実装skipなしで成功 |
-| 機能/本数記載        | `README.md`、`docs/testing.md`、`docs/uivolve-gallery.md`、`docs/dialogs.md`、`docs/runtime-distribution.md` | 部品/API本数は今回変えない。`rg -n 'フォント                                                                                           | font  | ブラウザ | [0-9]+(件   | 種類                                                                              | タブ | つ  | 本)' README.md docs` で変更に関連する記載を照合し、更新した旧文言の残存0件を確認。既存の無関係な件数は保持 |
+| 変更の種類                                 | 直す場所                                                                                                                                                                                                                                                                      | 確かめ方                                                                                                                                                                                                                                                                                                                |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `engine/src/instance.rs` を足す            | `lib.rs` の `mod` 一覧（`lib.rs:5-28`）、`docs/architecture.md:25-55` の責務表（`場所 \| 担当` 2 列）、`README.md:98-99`（ルート README の engine ファイル箇条書き）、`docs/architecture.md:59-61`（「Runtime は…保持する」「成功した Runtime だけをスロットへ」の 1 文追従） | `git grep -n "instance.rs" -- README.md docs/architecture.md` が 2 ファイルとも 1 行以上、かつ `git grep -n "mod instance" -- engine/src/lib.rs` が 1 行（**訂正（turn 5 / 実測）**: Rust の `mod` 宣言は拡張子を書かないので `lib.rs` に `instance.rs` の文字列は現れない。`lib.rs:21` の `mod instance;` を確かめる） |
+| 文書 `docs/components-plan.md` を足す      | `docs/README.md:11-42` の表（`やりたいこと \| 読む文書` 2 列。検討書は「計画」「検討」と明記して契約と区別）                                                                                                                                                                  | `git grep -n "components-plan.md" -- docs/README.md` が 1 行。`bun run docs:check` green                                                                                                                                                                                                                                |
+| `scripts/` に恒久スクリプトを足す          | `docs/testing.md:83` の恒久スクリプト段落（Playwright 3 本の件数は変えず、**別の文**で照合スクリプト 3 本（compare / build-engine-variant / verify-instance-refactor）の用途と入口を足す）                                                                                    | `git grep -n -E "compare-engine-behavior                                                                                                                                                                                                                                                                                | verify-instance-refactor | build-engine-variant" -- docs/testing.md` が 3 名とも 1 行以上。`3本` の記述は Playwright 用のまま |
+| `Runtime` の公開 API 名を使う文書          | `docs/native-extensions.md:83-91`（`load_with_extensions` / `load_with_clock`）、`docs/date-functions.md:59`（`load_with_clock` / `with_clock`）、`docs/component-development.md:39`（`Runtime::load` / `Runtime::dispatch`）、`docs/dialogs.md:106`（`lib.rs` の記述）       | 公開シグネチャは維持するので**変更しない**。`git diff main --stat -- docs/native-extensions.md docs/date-functions.md docs/component-development.md docs/dialogs.md` が空                                                                                                                                               |
+| エラー文字列（`lib.rs` の `Err(` 41 か所） | 移す先の `instance.rs`。文字列は 1 字も変えない                                                                                                                                                                                                                               | main の `lib.rs` と HEAD の `lib.rs`+`instance.rs` から `"..."` リテラルを抽出した集合が一致（T2 の完了基準。`git grep -c "Err(" -- engine/src/lib.rs` は main で 41）                                                                                                                                                  |
 
 ## Tasks
 
-- [x] T1: 実ブラウザ検証の入口と修正前台帳を作る
-  - 完了基準: サーバー起動・終了、実Chromium接続、実WASM load、document.fonts.ready待機、日本語表示を確認する。比較デモと独立UiRuntime双方でHello Worldの修正前値と画像を取得し、DOM selector/key/kind/role、computed font-size、実fillText font/transform、CSS幅/bitmap幅、viewport/DPR/theme/font状態をJSONに保存する。描画観測は元のfillText/measureTextを呼び、画像を変えない。フォント名指定と使用可能字体の証拠を分ける。重複文字の照合は位置・key・roleを使い、文字列だけで対応付けない。baselineは差があっても報告できるが未知suite・起動失敗・未取得データは非0。最終runnerの順序・失敗伝播・cleanupを小さなプロセス試験で検証し、今後の未実装suiteをskipしない。実ブラウザ利用不能時はBLOCKED、T1を完了にしない。
-  - 対象: 新設 `scripts/test-font-parity-browser.mjs`、`scripts/verify-font-parity.mjs`、`tests/browser/font-parity.html`、`tests/browser/font-parity-harness.js`、`tests/browser/font-parity.mjs`、`tests/font-parity-runner.test.js`、`docs/renderer-font-parity.md`。証跡は `.gsd-lite/logs/renderer-font-size-parity/`。
+- [x] T1: 挙動照合スクリプトと WASM 変種ビルドスクリプト（受け入れ基準 2 の道具。変異表つき）
+  - **訂正（turn 3 / 実測）**: `steps = 346` / `okResponses = 325` / `errorResponses = 21` / `sequences = 41`（22 画面 + font-parity 4 + 追加 15）。T2・T4 はこの 4 値を期待値として使う
+  - 完了基準:
+    1. `scripts/compare-engine-behavior.mjs` が `--base <wasm> --candidate <wasm>`（**両方必須**。既定値で `public/engine.wasm` を base と見なさない = P8）と `--evidence <json>`（既定 `target/engine-compare/compare.json`）を取り、「決めた事項 6〜8」のリクエスト列を 2 つの WASM に流し、応答 JSON の**文字列一致**を数える。差分は `DIFF <画面id> <label> <最初に異なる JSON 経路（例 data.widgets[3].x）>` と両者の値（各 120 文字まで）で表示する（RESEARCH §3「先頭 200 文字では読めない」への対応）。最後に 1 行 JSON `{steps, diffs, okResponses, errorResponses, sequences, durationMs}` を出し、`diffs = 0` なら exit 0、`> 0` なら exit 1、引数不備・WASM 不在は exit 2。判定に WASM のハッシュを使わない（P5）
+    2. 全リクエスト（load / event / `*_result` / host_progress）に固定 `clock`（決めた事項 6）を付ける（P6）。`rpc` 定義を持つ画面は `buffer_store` で `public/screens/rpc-demo.pb` を入れてから `load`（P9）。集計行の `okResponses` / `errorResponses` を証跡 JSON に残す
+    3. `scripts/build-engine-variant.mjs` が (a) `--commit <rev> --out <wasm>`: `git worktree add --detach <scratch>/worktree-<rev> <rev>` → `cargo build --release --target wasm32-unknown-unknown --locked --manifest-path <wt>/engine/Cargo.toml --target-dir <scratch>/cargo-target` → `.wasm` を `--out` へ `cp` → `git worktree remove --force` の順で base を作れる。(b) `--mutation <name> --out <wasm>`: 決めた事項 9 の変異表から 1 件を選び、`engine/`（`target/` を除く）と `public/themes/`（`theme.rs:41,59` の `include_str!` が要る = P14）を `<scratch>/mutant-<name>/` へ写し、`from` 文字列が**ちょうど 1 回**出現することを確かめてから置換してビルドする（0 回・2 回以上は exit 2 で止まる）。作業ツリーの `engine/` は触らない（`git status --porcelain engine/` が空のまま）。どちらも所要秒を出力する。`<scratch>` の既定は `target/engine-compare/`（`.gitignore:1` の `target/` で無視される）。cargo の target-dir は変種間で共有し 2 回目以降を速くする
+    4. 実測（証跡は `target/engine-compare/*.json` と PROGRESS の集計行のみ。生の値を他の文書へ写さない）:
+       - base（`--commit 35120e0`）vs 作業ツリーの `public/engine.wasm`: `diffs = 0`
+       - 同一 WASM 同士: `diffs = 0`（決定性。P6）
+       - 変異 M1 / M2 / M3（決めた事項 9）: それぞれ exit 1 かつ `diffs > 0`。M1 は `layout:*` label の差分、M2 は `dialog-prompt-input` label の `data.revision`、M3 は `event:unknown-target` label の `error` を含むこと（P2 / P3 / P7 の歯）
+       - `steps ≥ 230`（RESEARCH §3 の基本列と同数以上）。実測の `steps` / `okResponses` / `errorResponses` を PLAN の本タスク直下に「訂正（turn N / 実測）」として 1 行追記する（T2・T4 が期待値として使う）
+    5. 後始末: `git worktree list` が 1 行（P12）。`target/engine-compare/` は残してよい（base WASM の再利用のため）
+    6. `node --check scripts/compare-engine-behavior.mjs` / `node --check scripts/build-engine-variant.mjs` を通し、`bun run check`（oxlint/oxfmt）green。既存テストは触らない
+  - 対象: `scripts/compare-engine-behavior.mjs`（新規）、`scripts/build-engine-variant.mjs`（新規）
   - 依存: なし
-  - 並列サブ作業: なし（実行環境の確定とharnessの契約を先に揃える）。
+  - 並列サブ作業:
+    - A: `compare-engine-behavior.mjs`（リクエスト列の生成・部品種別 payload・インライン fixture・JSON 経路差分・集計・exit code）（対象: `scripts/compare-engine-behavior.mjs`）
+    - B: `build-engine-variant.mjs`（worktree ビルド・変異コピービルド・target-dir 共有・後始末）（対象: `scripts/build-engine-variant.mjs`）
+    - 親が両方を結合して 4 の実測を前景で回す（各ビルド約 30 秒、2 回目以降は約 10 秒）
 
-- [x] T2: DOMの役割別サイズを保持してresetを修正し共通サイズ源を作る
-  - 完了基準: runtime内resetを低詳細度へ変更し、DOMの既存11/12/13/20/22/30px等の宣言が勝つ。新設CSS custom propertiesを既存サイズ宣言から参照し、Canvas用の解決関数はstageのcomputed値を取得する。9pxのIDも含む。文字ごとのgetComputedStyleやJS側の独立したサイズ表は増やさない。roles suiteにroot直下・panel/window内・popup内・Canvas stage直下を追加し、host font-size 16/20px、light/darkでbutton12・close20・editor13等が局所指定どおりであることを実測する。ホスト外枠のcomputed値が変わらないことも確認。CSS欠落や不正な解決値を静かに成功扱いしない。
-  - 対象: `src/runtime.css`、新設 `src/font-metrics.js`、`tests/browser/font-parity.mjs`、`tests/browser/font-parity-harness.js`、`docs/renderer-font-parity.md`。
+- [x] T2: `Runtime` → `Instance` の挙動不変リファクタ
+  - 完了基準:
+    1. `engine/src/instance.rs` 新設。「決めた事項 1〜5」の構造どおり（`Instance` の 12 フィールドを `lib.rs:363-374` の順で、`Instance::load` / `clear_queues` / `state_json` を持つ）。`lib.rs` の `Runtime` は `root: Instance` / `dialogs` / `pages` / `pub revision` の 4 フィールド
+    2. `Runtime` の公開シグネチャ（`load` / `load_with_extensions` / `load_with_descriptors` / `load_with_clock` / `with_clock` / `dispatch` / `progress_host` / `complete_host` / `complete_http` / `complete_storage` / `complete_file` / `complete_rpc` / `complete_dialog` / `take_effects` / `state_json` / `layout`、`lib.rs:381-991`）は 1 字も変えない。`abi.rs` は**無改修**（`git diff main --stat -- engine/src/abi.rs` が空。`revision` が `pub` のまま Runtime に残るため差し替えも不要 = REQUIREMENTS「差し替えのみ」の 0 件）
+    3. `bunx vp test run` / `bun run test:rust` が green で、`git diff main --stat -- tests/ engine/src/extensions/` が空（既存テスト無改修）。`lib.rs` 内テスト 4 本（`lib.rs:1667,1694,1723,1733`）は無改修のまま `mod tests` に残す（P4 の `event_failure_rolls_back_and_execution_is_bounded` / `host_progress_and_cancel_roll_back_without_consuming_completion` を含む）
+    4. 照合: `bun run build:wasm` 後、`bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-35120e0.wasm --candidate public/engine.wasm` が `diffs = 0`、`steps` / `okResponses` / `errorResponses` が T1 の訂正行と一致（P1 / P2 / P3 / P4 / P6 の実証）
+    5. 変異 M1〜M3 を**リファクタ後のソース**で再ビルドして exit 1（`from` 文字列が refactor で動いた場合は `build-engine-variant.mjs` の変異表の `from` だけを直し、PLAN 決めた事項 9 に訂正行を書く）
+    6. エラー文字列の集合一致（P3）: `.gsd-lite/logs/component-instance-refactor/scratch/turn-NNN-strings.mjs` で `git show main:engine/src/lib.rs` と HEAD の `engine/src/lib.rs` + `engine/src/instance.rs` から `"..."` リテラル（`Err(` 行と `format!(` 行）を抽出し、集合の差が空であることを出力で確認（結果は PROGRESS に「差 0」とだけ書く）
+    7. 受け入れ基準 6: `lib.rs` の `load_with_clock` / `dispatch` に Instance を選ぶ分岐・`HashMap<_, Instance>`・`components` が無い（`git grep -n -E "components|HashMap<String, Instance>|instances" -- engine/src/lib.rs engine/src/instance.rs` が 0 行）
+    8. `bun run check` green（`cargo fmt` は `engine/src/instance.rs` と `lib.rs` に掛けてよいが、`abi.rs` に波及しないこと = P11）。制限値（`lib.rs:423` 100 KB、`:455-460` Engine 上限、`:470,488,509` 8 件、`abi.rs:33` 8 descriptors、`abi.rs:139` 2 MB、`dynamic_ui` の 200 / 20）の数値に差分が無いこと（`git diff main -- engine/src | grep -E "^[-+].*[0-9]"` を目視し、動いた行は移動のみであること）
+  - 対象: `engine/src/instance.rs`（新規）、`engine/src/lib.rs`
   - 依存: T1
-  - 並列サブ作業: なし（CSSとresolverの契約に依存）。
-  - **PLAN 訂正（turn 5 / T2 実測）**: 親コンテキスト「panel内」は**DOM上に存在しない**。ホストはpanel/fieldsetの子をステージ（レイヤー）直下に絶対配置し、Sceneに `parentKey` を付けないため、panelの子のCSS親はステージになる。根拠: `src/dom-renderer.js:262`（`parentKey` が無い widget は `layers.get(widget.layer)` 直下）と、`parentKey` を設定するのが grid / kanban / tab / tree / menu だけであること（`engine/src/grid.rs`・`kanban.rs`・`navigation.rs:396,430,451,518`）。実測した必須コンテキストは `root` / `window` / `popup` / `canvas-stage` / `grid-row` / `grid-head` / `tabbar` の7つに置き換え、panel自身のboxは1役割（12px/600）として検査した。後続タスクで「panel内」を要求しない。
-  - **PLAN 訂正（turn 5 / T2 実測）**: 既存テスト `tests/font-parity-runner.test.js` の「未実装suiteは非0」検査は `roles` を名指ししていたため、未実装の suite を `SUITES` から動的に選ぶよう変更した（`roles` はT2から実装済みになる）。
+  - 並列サブ作業: なし（`instance.rs` と `lib.rs` は互いに依存し、借用の整合を 1 人で取る方が早い）
 
-- [x] T3: Canvasの基本・追加部品の描画と計測を役割へ接続する
-  - 完了基準: text窓口だけでなく全直接ctx.font/measureTextを棚卸しして同じ解決済みサイズを使う。label/empty/metric、button、panel/fieldset/window、旧row/Grid、tab/tree/menu、calendar/paging、toast/dialog-message、kanbanタイトル/件数/説明/ID/drag ghostの全roleがDOM実効pxと一致する。通常field値/labelも接続しT4の編集を準備する。selected/disabledでサイズは変わらない。左/中央/右寄せ、空、日本語、長い英数字、幅境界直前/直後、複数行でmeasureTextと描画fontが一致し、既存省略/折返し/clipを超える新たな欠けがない。roles suiteの当該roleを実WASM fixtureと元処理を通すCanvas観測で検証する。Kanban ghostのID非表示は既存差として台帳に残す。
-  - 対象: `src/canvas-renderer.js`、必要なら `src/font-metrics.js`、`tests/browser/font-parity.mjs`、`tests/browser/font-parity-harness.js`、`docs/renderer-font-parity.md`。
-  - 依存: T2
-  - 並列サブ作業: なし（同じrendererと観測suiteを更新する）。
-  - **PLAN 訂正（turn 6 / T3 実測）**: 対象ファイルに2件追加した。(1) 新設 `tests/browser/font-parity-text.json` ＋ `font-parity-text.rhai`（実WASMの補助fixture）。既存のアプリ画面には「左/中央/右寄せ・空・日本語・長い英数字・幅境界の両側・等幅の複数行」が揃って出ないため、条件を実際に描かせないと「measureTextと描画fontが一致」を主張できない。実測で確認: 寄せはCanvas側では `textAlign` ではなくxの事前計算で行われる箇所が多く、既存画面の描画は全件 `textAlign: "left"` だった。(2) `tests/fields.test.js` の既存テスト1件（`text()` のシグネチャ変更に追従）。
-  - **PLAN 訂正（turn 6 / T3 実測）**: 完了基準の「全roleがDOM実効pxと一致」のうち **media（image/video/iframe）の空/エラー案内は T5 の担当**とする。Canvas 13px 対 DOM 12px（`src/runtime.css:539-548`）で、PLANのT5完了基準が既に「mediaの空/エラー案内はDOM12pxへ合わせ」と明記しているため。T3では kind と理由を `roles.json` の除外に記録した。`fieldset` も T7 送り（`uivolve-forms` の fieldset は collapsible でタイトルが panel-toggle に移り、本体の描画が空文字のため内容で対応付けられない。canvas-renderer では panel と同一分岐）。
+- [x] T3: 設計文書 `docs/components-plan.md` と追従（R1）
+  - 完了基準:
+    1. `docs/components-plan.md` を新設。冒頭は `docs/platform-features-plan.md:3` と同じ定型（「状態: 計画・検討記録。現行 API の判断は[ドキュメント案内](README.md)から各契約を参照し、この文書を現行仕様の根拠にしない。合成が実装された段階で契約文書 `components.md` を別に起こす」）。節構成は「決めた事項 10」のとおり
+    2. 「設計決定」表は DECISIONS.md「設計決定」の 8 論点をそのまま載せ、備考に (a) 子の storage / files scope の区切り文字は `storage::safe_key`（`storage.rs:49`、`/` 不可）と合わせて段階 4 で決める、(b) `http` effect だけ `kind` を持たない（`{id, request, url}`）ので段階 4 の `instance` 追加時に揃える、の 2 注記を入れる（RESEARCH §6）
+    3. 「Instance のフィールド一覧」は `engine/src/instance.rs` の struct 定義から**名前・型・順序**を機械的に写した 12 行（`git grep -n -E "^    pub\(crate\) [a-z_]+:" -- engine/src/instance.rs` の行数と表の行数が一致 = P10）。続けて Runtime 側の 4 フィールド（root / dialogs / pages / revision）と「root 共通物を Runtime に残す理由」（DECISIONS「リファクタの構造」）を表にする
+    4. 「段階計画」は段階 1・2（本マイルストーンで完了。何をしたか）、3（同期のみの合成）、4（効果の instance ルーティング）、5（ローダー再帰・キャッシュ・2 MB）、6（WebMCP・契約文書・デモ）。REQUIREMENTS R1 の各段階の内容を落とさない
+    5. 追従: `docs/README.md` 表に 1 行、`docs/architecture.md` 責務表に `engine/src/instance.rs` 行（`lib.rs` 行の「Runtime」を「Runtime（root 共通物）」に、新行を「Instance（1 画面パッケージの package / 確定ツリー / Rhai Engine・AST / state / 依頼キュー）」に）、`docs/architecture.md:59-61` の 1 文追従、`README.md:98-99` に `engine/src/instance.rs` の 1 行（追従先チェックリスト 1〜2 行目）
+    6. `bun run docs:check` green。`bun run check`（oxfmt が Markdown を整形対象にするなら整形済みであること）green。文書に生の実測値（steps 件数・sha256 など）を書かない（検討記録は判定と理由だけ。証跡は `target/engine-compare/` の JSON を指す）
+  - 対象: `docs/components-plan.md`（新規）、`docs/README.md`、`docs/architecture.md`、`README.md`
+  - 依存: T2（フィールド一覧を実物から写すため）
+  - 並列サブ作業:
+    - A: `docs/components-plan.md` 本文（対象: `docs/components-plan.md`）
+    - B: 追従 4 か所（対象: `docs/README.md`、`docs/architecture.md`、`README.md`）
+    - 親が `docs:check` / `check` を回してコミット
 
-- [x] T4: 通常値と編集オーバーレイ、Grid編集を揃える
-  - 完了基準: 通常fieldは13px、Grid cellの表示/DOM編集/Canvas編集は12px。gridEditorを局所識別して通常fieldを変更しない。labelHeight=0/有り、textfield/number/date/textarea/combobox/listbox、placeholder/option/monospace、dialog promptを両面で確認。Hello World・フォーム・orders/grid-labでfocus→編集開始→入力→Enter確定→再編集→Escape取消、GridのRhai拒否と下書き保持を実操作しstate/value/revisionを照合する。composing中のtheme/resize/renderでも同じinput、activeElement、selection、未確定値を保持する。合成composition試験と実IME確認の有無を分ける。フォーム関連・Grid・dialogの既存状態テストも成功。
-  - 対象: `src/dom-renderer.js`、`src/canvas-renderer.js`、`src/runtime.css`、必要なら `src/field-control.js`、`tests/browser/font-parity.mjs`、`tests/browser/font-parity-harness.js`、変更契約に応じ `tests/fields.test.js` / `tests/grid-navigation.test.js` / `tests/dialogs.test.js`、`docs/renderer-font-parity.md`。
+- [x] T4: 最終判定スクリプトと全検査（gate は前景・並列なし）
+  - 完了基準:
+    1. `scripts/verify-instance-refactor.mjs` を新設。`scripts/verify-transfer.mjs:7-15` の手順配列の形を流用し、手順は順に `bun run build:wasm` → `bunx vp test run` → `bun run test:rust` → `bun run check` → `bun run docs:check` → `bun run build` → base WASM が無ければ `bun scripts/build-engine-variant.mjs --commit <base> --out target/engine-compare/base-<base>.wasm` → `bun scripts/compare-engine-behavior.mjs --base … --candidate public/engine.wasm`（exit 0 を要求）→ 変異 M1 / M2 / M3 を順にビルドして照合（**exit 1 を要求**。exit 0 なら歯なしとして失敗）。`--base-commit <rev>`（既定 `main`）、`--skip-mutations`（開発中の短縮用。最終判定では付けない）。各手順の所要秒と合計を最後に表形式で出力し、exit code を返す（振り返り「gate 所要の食い違い」への対応）
+    2. `docs/testing.md:83` の段落の後に、照合スクリプト 3 本の用途・入口・所要の目安を 1 段落追加（追従先チェックリスト 3 行目。Playwright「3本」の記述は変えない）
+    3. クリーンな作業ツリー（`git status --porcelain` が空）で `bun scripts/verify-instance-refactor.mjs` を前景で 1 回通し、exit 0。出力の集計行（steps / diffs / ok / error、M1〜M3 の diffs、手順別所要と合計）を PROGRESS の本ターンに写す（PROGRESS 以外には写さない）
+    4. 受け入れ基準 1〜6 を順に確認して PROGRESS に「満たした根拠（コマンド名と結果）」を 1 行ずつ書く。基準 5（文書とコードの一致）は T3 の 3 の `git grep` 行数比較を再実行する
+    5. `git worktree list` が 1 行、`git status --porcelain` が空（証跡は `target/` 配下のみ）
+  - 対象: `scripts/verify-instance-refactor.mjs`（新規）、`docs/testing.md`
   - 依存: T3
-  - 並列サブ作業: なし（共通編集契約と両面の操作試験を一緒に検証）。
-  - **PLAN 訂正（turn 7 / T4 実測）**: 対象ファイルに新設 `tests/browser/font-parity-edit.json` ＋
-    `font-parity-edit.rhai`（実WASMの補助fixture）を追加した。Grid の列エディタに使える xtype は
-    エンジンが `textfield` / `numberfield` / `datefield` / `combobox` / `checkbox` に限っており
-    （`engine/src/grid.rs:61-67`）、このうち `datefield` と `checkbox` の列エディタは**どのアプリ画面にも
-    存在しない**ため、実際に編集状態を描かせないと「date を両面で確認」を主張できない。
-  - **PLAN 訂正（turn 7 / T4 実測）**: 完了基準の kind 一覧のうち **`textarea` と `listbox` は Grid の
-    列エディタになれない**（同上のエンジン制約）。この2つは「通常 field ＋ Canvas 編集オーバーレイ」
-    として検査した。あわせて、一覧に無い `checkbox` 列エディタもエンジンが許すため
-    `.ui-field.grid-editor .box-control` を 12px 側へ入れて実測した（放置するとセル12px対
-    キャプション13pxの不一致が残るため）。
-  - **PLAN 訂正（turn 7 / T4 実測）**: 「Enter確定→再編集→Escape取消」のうち**通常 field の
-    `Escape` は値を戻さない**（値は入力のたびに確定済みで、`Escape` は Canvas のオーバーレイを
-    閉じるだけ）。`textarea` の `Enter` は改行でオーバーレイを閉じない。どちらも既存の挙動として
-    台帳に記録し、下書きの破棄は Grid 編集の `Escape` でのみ検査した。
-  - **PLAN 訂正（turn 7 / T4 実測）**: `datefield` の編集は**サイズの実測と `Escape` まで**とした。
-    `input[type="date"]` の文字入力は区切りごとの別扱いで locale に依存するため、入力・確定・拒否の
-    操作は `textfield` / `numberfield` で行う。
-
-- [x] T5: 文書・図表とdialog/media文字の実効倍率を合わせる
-  - 完了基準: 共有spritesを維持し、DOM SVGのborder内側viewport/CTMとCanvasのローカルtransformを同じ内容矩形に揃える。documentタイトル14・見出し16・本文/code12とfigureのScene fontSizeをCSS px換算して一致を検証する。WASM補完値を使用しDSLの省略を勝手に別値にしない。字体差が幅/欠けに影響する非code文字はruntime字体へ揃え、monospaceを保つ。dialog絵文字/任意テキスト30pxのmaxWidthによる意図しない縮小を防ぐ。mediaの空/エラー案内はDOM12pxへ合わせ、native overlayも確認する。desktop/390pxで日本語・英数字・絵文字・空・長文・複数行を数値と画像で確認。iframe内部・画像内文字・非文字SVGアイコンは対象外理由を残す。gallery/dialog状態回帰も成功。
-  - 対象: `src/surfaces.js`、`src/dialog-icons.js`、`src/canvas-renderer.js`、必要なら `src/runtime.css`、`tests/browser/font-parity.mjs`、`tests/browser/font-parity-harness.js`、`docs/renderer-font-parity.md`。
-  - 依存: T4
-  - 並列サブ作業: なし（同じCanvas font呼出しとsurface倍率を変更する）。
-  - **PLAN 訂正（turn 8 / T5 実測）**: 対象ファイルに新設 `tests/browser/font-parity-surface.json`
-    ＋ `font-parity-surface.rhai`（実WASMの補助fixture）と `src/font-metrics.js` を追加した。
-    前者は、空のsprite・`fillStyle: "none"` の行・`fontSize` を省略した text sprite・空の文書・
-    空/エラーの media・枠に収まらない文字アイコンが**どのアプリ画面にも揃って出ない**ため。
-    後者は、DOMのSVG viewportが枠の内側（content box）なので Canvas も同じ枠幅で内側へ寄せる
-    必要があり、その幅を `src/runtime.css` の `--ui-surface-border-width` に置いて
-    `resolveFontMetrics(stage).surfaceBorder` で解決する形にしたため（サイズと同じ単一源）。
-  - **PLAN 訂正（turn 8 / T5 実測）**: 完了基準の「字体差が幅/欠けに影響する非code文字は
-    runtime字体へ揃え」に加えて、**`fontSize` を持たない text sprite** も揃える対象に入れた。
-    修正前は DOM が属性を出さずホストの継承値（16px）、Canvas が 12px で、**宣言の無い
-    sprite だけが両面で別サイズ**になっていた。両面とも WASM の補完値（12）を使う。
-  - **PLAN 訂正（turn 8 / T5 実測）**: 文字アイコンの**行分割**は対象外とし台帳へ記録した。
-    `.ui-dialog-icon` は `inline-flex` ＋ `overflow: hidden` なので、枠に収まらない文字列は
-    DOM では匿名 flex item として折り返され、Canvas は 1 行のまま横に切る。完了基準が求める
-    のは「30pxの maxWidth による意図しない縮小を防ぐ」ことなので、サイズと非縮小だけを揃え、
-    送り幅の一致は DOM が 1 行に収まる場合だけ検査する。
-
-- [x] T6: フォント完了とDPR変更時の再描画・解放を保証する
-  - 完了基準: 初期fonts.readyと以後の使用字体load完了で必要な再描画/再計測を行い、失敗時もfallbackで動作する。テストサーバーで読取可能なテスト字体を遅延配信し、読込前後の実計測と描画更新を確認する（T1で字体経路を固定、依存追加なし）。font完了とtheme/renderの競合、load失敗、dispose後の完了では例外・復活描画・購読漏れなし。DPRだけが変わってCSS幅が同じ場合もbitmap/transformを更新し、DPR1→2→1で倍率が累積しない。複数runtimeのdisposeは他方へ影響しない。編集ノード・selection・draftを失わず、runtime状態回帰とlifecycle suiteが成功。
-  - 対象: `src/runtime.js`、`src/canvas-renderer.js`、必要なら `src/font-metrics.js`、`tests/runtime.test.js`、`tests/browser/font-parity.mjs`、`tests/browser/font-parity-harness.js`、`scripts/test-font-parity-browser.mjs`、`docs/renderer-font-parity.md`。
-  - 依存: T5
-  - 並列サブ作業: なし（購読・再描画・disposeの実装と試験は依存）。
-  - **PLAN 訂正（turn 9 / T6 実測）**: 「テストサーバーで読取可能なテスト字体を遅延配信」は、
-    **実行環境の実フォントファイル**（既定 `/usr/share/fonts/truetype/freefont/FreeMono.ttf`、
-    `FONT_PARITY_TEST_FONT` で変更可）を読み、fixtureサーバーのoriginのURL
-    （`/tests/browser/font-parity-probe-<id>.ttf`）で配信する形にした。**バイト列を保留して
-    遅らせるのは runner の route** で、`bunx vp dev` にテスト専用の経路は足していない
-    （サーバーは共有の開発サーバーで、遅延配信の口を足すと製品側の配布物に検査専用の経路が
-    混ざる）。字体をリポジトリへ同梱しない（再配布しない）ためでもある。依存追加なし。
-  - **PLAN 訂正（turn 9 / T6 実測）**: 「DPRだけが変わってCSS幅が同じ場合」の通知は
-    `matchMedia("(resolution: Ndppx)")` の `change` で受ける（ResizeObserver は CSS 寸法が
-    動かない変更を報告しないため）。ただし **CDP の `Emulation.setDeviceMetricsOverride` は
-    `devicePixelRatio` と `MediaQueryList.matches` を更新するが `change` を配信しない**ことを
-    実測した。そのため lifecycle suite は、購読済みの**実 `MediaQueryList` 上でイベントだけを
-    発火**する（倍率・bitmap・変形・計測値はすべてブラウザ自身の値）。購読と張り直しは
-    `tests/runtime.test.js` の単体試験でも確認し、台帳の限界表に代用であることを明記した。
-  - **PLAN 訂正（turn 9 / T6 実測）**: 字体の読込前後を比べるケースだけ、画面を
-    `screens/hello-world.json` ではなく T3 の `tests/browser/font-parity-text.json` にした。
-    probe 字体（等幅）に CJK 字体が無く、**日本語だけの画面では送り幅が 1 件も動かない**ため
-    （実測: 日本語テキスト 84.00px → 84.00px、ラテン `iiiii` 17.87px → 39.00px）。
-    他の 4 ケースは hello-world のまま。
-
-- [x] T7: 全共通部品の状態別coverageを閉じる
-  - 完了基準: DomRendererのcreate/render、CanvasRendererのpaint/paintField、extrasのnormalize/arrange、実生成Sceneからkindとxtypeの二層で全役割を照合し、対応無しを黙ってskipしない。文字なし・対象外・既存の表現差は理由付きで台帳に残す。gallery全タブ、popup/menu、toast、dialog標準/画像/絵文字、media error、drag、selected/disabled、calendar月移動/長い月名/月端、label無しfieldを網羅する。代表画面だけにないroleは実WASM補助fixtureで検証する。台帳の全対象roleが実測結果を持ち、不一致0件。既存描画差を理由にサイズ不一致を免除しない。不足修正は既に確定したサイズ/倍率方針内に限定する。
-  - 対象: `tests/browser/font-parity.mjs`、`tests/browser/font-parity-harness.js`、`docs/renderer-font-parity.md`、実測で残差がある場合のみ `src/runtime.css` / `src/canvas-renderer.js` / `src/dom-renderer.js` / `src/surfaces.js` / `src/dialog-icons.js`。
-  - 依存: T6
-  - 並列サブ作業: なし（coverage集計と残差修正を単一台帳へ統合）。
-  - **PLAN 訂正（turn 10 / T7 実測）**: 対象ファイルに新設 `tests/browser/font-parity-states.json`
-    ＋ `.rhai`（実WASMの補助fixture）と、既存 `tests/font-parity-runner.test.js` を追加した。
-    前者は「折りたたまない fieldset・文字列項目の toolbar・card レイアウト・pagingtoolbar・
-    messagebox・月端と最長見出しのカレンダー」が**どのアプリ画面にも揃って出ない**ため。
-    後者は、完了基準の「kind と xtype の二層」のうち **xtype 層はブラウザを必要としない**ため
-    （engine の許可リスト48件を起点に、各 xtype を実WASMで描かせて Scene kind を完全一致で
-    突き合わせる）。この二層のデータ表は `tests/browser/font-parity.mjs` に 1 つだけ置き、
-    `roles` suite と vitest の双方が同じ表を読む。製品コードへ検査専用の公開APIは足していない。
-  - **PLAN 訂正（turn 10 / T7 実測）**: 「extras の normalize」から照合する範囲を、
-    **合成される5つの xtype の入口だけ**に限定した（`tbtext`/`tbfill`/`tbseparator`/`tbspacer` は
-    toolbar の文字列項目、`dialogbutton` は messagebox の `buttons`）。normalize 全体を
-    再現すると engine の二重実装になるため。これを入れないと
-    `tbtext` の根拠が「どの画面の label でもよい」になり証明が空になることを実測で確認した。
-    （turn 18 / F5 訂正: 旧「6つ」は誤り。`menuseparator` は menu の `"-"` からも合成されるが
-    `xtype: menuseparator` と画面定義に直接書けるので `XTYPE_SYNTHESIZED` には入っていない。
-    実測: `XTYPE_SYNTHESIZED` の要素数は 5）
-  - **PLAN 訂正（turn 10 / T7 実測）**: 完了基準の「文字なし…は理由付きで台帳に残す」は、
-    **根拠を2種類に分けた**。`engine-empty`（8件、engine が text を空にする）と
-    `renderer-skips`（2件、`grid-shell`/`menu-surface` は読み上げ名としての文字列を持つが
-    どちらの面も描かない）。「文字を持たない」と「文字を描かない」は別の主張で、前者で
-    一括りにすると `grid-shell` の実測（`データ一覧`）で落ちる。
-  - **PLAN 訂正（turn 10 / T7 実測）**: 残差修正は **0 件**だった（`src/` は 1 行も変えていない）。
-    37 kind・48 xtype・18 状態すべてで不一致 0 件。唯一見つかった両面の差は
-    **使用不可のカレンダー日の濃さ**（DOM は `:disabled` に `opacity: 0.5`、Canvas は薄くしない）で、
-    色・不透明度の差でありサイズは両面とも一致するため、既存の表現差として台帳に記録した。
-
-- [x] T8: 幅・拡大・配色の行列を実行し代表画像を目視する
-  - 完了基準: Hello World、uivolve-forms、orders/grid-lab、components、uivolve-galleryについて、比較デモ/独立runtime × desktop/約390px × DPR1/2 × light/darkで全可視roleのCSS pxと入力位置を検証。viewportを狭めるだけでなく100/200%相当の拡大を別条件として実施し、方法とCSS座標換算を記録する。可能なら実ブラウザ100→200→100%も実施し、DPRエミュレーションやCSS拡大と別記録にする。focus/編集中にtheme/resize/拡大を変え、状態同期とnode/selectionを確認。修正前後の代表画像を同じ字体ロード後に撮影し、目視でサイズ差解消と長文/22px metric/30px icon/狭いセルの新たな欠け・重なりなしを記録する。自動数値結果、画像パス、目視結果、実IME/実ズームの限界を台帳に分けて残す。matrix suite成功。
-  - 対象: `tests/browser/font-parity.mjs`、`tests/browser/font-parity-harness.js`、`scripts/test-font-parity-browser.mjs`、`docs/renderer-font-parity.md`。画像・JSONは `.gsd-lite/logs/renderer-font-size-parity/`。
-  - 依存: T7
-  - 並列サブ作業: なし（同じsuiteと目視記録を更新する）。
-  - **PLAN 訂正（turn 11 / T8 実測）**: 画面の一覧を **7 画面**にした。「orders/grid-lab」は
-    orders と grid-lab の 2 画面として読み、さらに **dialogs を足した**。完了基準が求める
-    「30px icon の新たな欠け・重なりなし」の 30px 文字アイコンと長いダイアログ本文は
-    **ダイアログを開いている間しか出ない**ため、5 画面だけでは目視の対象が画面に現れない。
-  - **PLAN 訂正（turn 11 / T8 実測）**: 完了基準の「全可視 role の CSS px と入力位置を検証」の
-    うち、**入力位置の照合は独立 runtime の 2 面だけ**で行う。比較デモは Scene を公開しないため
-    入力欄を突き合わせる矩形が無い。デモ面では代わりに「描いた宣言サイズの集合・字体・描画時の
-    倍率が独立 runtime と一致すること」を照合した（**7 画面**すべてで集合は一致。
-    turn 18 / F5 訂正: 旧「6 画面」は誤り。`matrix.json` のデモ面の `screen` は 7 種）。
-  - **PLAN 訂正（turn 11 / T8 実測）**: 拡大は **CSS viewport ÷ Z と devicePixelRatio × Z の
-    同値変換**（1 回の metrics override）で実施した。実ブラウザのズーム操作は headless Chromium
-    では実行できず（CDP にページズームの命令が無く `setPageScaleFactor` は再レイアウトしない）、
-    CSS の `zoom` は埋め込み側の指定で利用者のズームとは別物なので使わない。3 者は台帳で別記録。
-  - **PLAN 訂正（turn 11 / T8 実測）**: 修正前の代表画像は **378af26（T1 完了時点）の git
-    worktree を立てて撮影**した。現在の harness は `src/font-metrics.js` を import するので
-    修正前の木では動かず、計測は selector ごとの computed font-size と Canvas の font 文字列に
-    絞っている。engine と `public/` はこのマイルストーンで不変なので、生成済みの `engine.wasm`
-    と配信 manifest を複製した。
-  - **PLAN 訂正（turn 11 / T8 実測）**: 観測コードの `attribute()` に**装飾文字の表**を足した
-    （既存 suite と共通）。combobox の `▾` はどの widget の文字列にも無いため、720 CSS px の
-    条件で隣のボタンへ吸われ「button が 13px」として落ちた。文字列で対応付くときは従来どおり
-    （ツリーの開閉印は自分で `▾` を持つ）。
-
-- [x] T9: 独立配布と最終検査を通し検証手順を文書化する
-  - 完了基準: build:runtime/build:minimalの生成物を実ブラウザへ読み込み、ホスト16/20pxのDOM/Canvas、Hello World編集、日本語、dark切替とサイズ一致を確認する。全suiteは未実装skipなし、台帳の全対象roleに実測値・差・状態を持つ。`bun scripts/verify-font-parity.mjs` がクリーンなcontext/所有サーバーから非0検査を隠さず成功。README/配布/検証文書へ既存DOM基準・検証方法・限界を反映し、追従先の旧文言残存0件とdocs:checkを確認する。新依存・DSL/テーマのfont API・公開/デプロイなし。最終証跡と目視結果をまとめてverifyへ渡す。
-  - 対象: `scripts/verify-font-parity.mjs`、`scripts/test-font-parity-browser.mjs`、`tests/browser/font-parity.mjs`、`tests/browser/font-parity-harness.js`、`docs/renderer-font-parity.md`、`docs/testing.md`、`docs/runtime-distribution.md`、`docs/README.md`、必要なら `README.md`。
-  - 依存: T8
-  - 並列サブ作業: A: 文書の追従先確認・入口更新（対象: `docs/testing.md`、`docs/runtime-distribution.md`、`docs/README.md`、`README.md`）。B: 生成配布物のブラウザsuiteと最終runnerを完成（対象: `scripts/verify-font-parity.mjs`、`scripts/test-font-parity-browser.mjs`、`tests/browser/font-parity.mjs`、`tests/browser/font-parity-harness.js`）。親が `docs/renderer-font-parity.md` の最終証跡を統合して全検査・コミット。両作業はT8までの確定結果を共有する。
-  - **PLAN 訂正（turn 12 / T9 実測）**: 対象ファイルに新設 `tests/browser/font-parity-observe.js`
-    と `tests/browser/font-parity-dist-embed.html` を追加した。配布物のページは `src/` を 1 つも
-    読んではいけないので、観測関数を**何も import しない形**で `font-parity-observe.js` へ切り出し、
-    生成物の隣へ置いて `import("/observe.js")` で読む。`font-parity-harness.js` は開発サーバー上の
-    fixture 操作だけを持ち、移した関数を re-export する（suite 側の呼び出しは変えない）。
-    `font-parity-dist-embed.html` は `docs/runtime-distribution.md` の手順どおりの組み込みホスト。
-    `README.md` は更新不要だった（部品/API本数・フォント記載に今回の変更へ追従すべき旧文言が無い）。
-  - **PLAN 訂正（turn 12 / T9 実測）**: 完了基準の「全suiteは未実装skipなし」を確かめる既存検査
-    （`tests/font-parity-runner.test.js` の「未実装suiteは非0」）は、**全 suite が実装済みになると
-    題材が無くなる**。表を注入して拒否を確かめる形に作り直し、あわせて「`SUITES` に実行関数の
-    無い行が 0 件」を検査する（検査を緩めず、関数なしの新規登録はその場で落ちる）。
-  - **PLAN 訂正（turn 12 / T9 実測）**: T6 の `lifecycle` 倍率ケースを T9 で直した（T9 の対象
-    ファイル内）。**倍率上書きを消してしまう操作が 2 種類**ある。`locator.screenshot()` と、
-    **新しい CDP セッションの attach**（別セッションが入れた上書きが外れる）。後者は未知だったため
-    撮影が毎回 DPR を 1 へ戻しており、次の倍率で再描画が起きず 15 秒で時間切れになっていた
-    （turn 9・11 でたまたま通っていた既存の不安定さ。T8 の木でも再現）。撮影をこのケースが持つ
-    同じセッションに変え、通知はブラウザ自身の再描画を先に待ってから来ないときだけ合成する形に
-    した。どちらで動いたかは倍率ごとに台帳へ残す。
-
-- [x] F1: Canvas と DOM を役割単位で突き合わせ、DOM 側の役割一覧を閉じる（verify round 1）
-  - 背景: 現在の suite は DOM を `ROLE_CONTRACT` の selector 表と、Canvas を「kind ごとに許される役割の集合」（`CANVAS_KIND_CONTRACT` と `allowed.includes(role)`）と、それぞれ別々に `SIZE_CONTRACT` の数値へ照合している。同じ部品・同じ役割の DOM 実効 px と Canvas 描画 px を直接比べるのは distribution の Hello World だけ（baseline の `compare()` は記録のみ）。verify が変異 1 と 5 を同時に入れた木で `roles`（28 ケース）と `matrix`（168 ケース）を実行し、**両方とも passed** になることを実測した（受け入れ基準 1「役割ごとに一致」を検査が担保していない）。製品コードの現状値は目視とコード読みで正しい。直すのは検査。
-  - 完了基準: 下表のとおり。変異は 1 つずつ一時的に入れて該当 suite が非0になることを確かめ、確認後に戻して `git status --short` が空であることを確認する（変異そのものはコミットしない）。対応付けは部品の key と役割で行い、文字列や「同じフレームのどこかで使われた font」では行わない。DOM 側は selector の手書き表だけに頼らず、文字を描く全 kind の実際の文字ノード（子要素・疑似要素を含む）の実効サイズを測る（`observeDom` の文字ノード走査と baseline / distribution の `compare()` が再利用できる）。計測と描画の一致も部品単位で判定する。件数が変わるので台帳（`docs/renderer-font-parity.md`）の該当数値を更新する。
-
-    | #   | 一時的な変異                                                                                   | 期待                                 |
-    | --- | ---------------------------------------------------------------------------------------------- | ------------------------------------ |
-    | 1   | `src/canvas-renderer.js` の metric で見出しと値の役割を入れ替える（`"label"` ↔ `"metric"`）    | `roles` と `matrix` が非0            |
-    | 2   | `paintField` の checkbox / radio のキャプションを `"label"` で描く                             | `roles` が非0                        |
-    | 3   | `paintField` のラベルを `"body"`、値を `"label"` で描く（textfield / combobox / displayfield） | `roles` と `editing` が非0           |
-    | 4   | kanban-card の説明（`"label"`）と ID（`"meta"`）の役割を入れ替える                             | `roles` が非0                        |
-    | 5   | `src/runtime.css` の `.ui-empty` から `font-size` を削除する                                   | `roles` が非0                        |
-    | 6   | `.ui-fieldset` の `font-size` を `var(--ui-font-size-body)` にする                             | `roles` が非0                        |
-    | 7   | `.ui-row span` に `font-size: var(--ui-font-size-body)` を足す（子要素側の宣言）               | `roles` が非0                        |
-    | 8   | textarea の折返し計測（`ctx.font = this.fonts.font(valueRole, …)`）を `"label"` にする         | `roles` が非0                        |
-    | 9   | 変異なし                                                                                       | 全 suite が green、不一致 0 件のまま |
-
-  - 対象: `tests/browser/font-parity.mjs`、`tests/browser/font-parity-harness.js`、`tests/browser/font-parity-observe.js`、`docs/renderer-font-parity.md`。`src/` は変異の確認以外で変更しない。
-  - 依存: T9
-
-- [x] F2: 欠け・入力位置・編集操作の検査の穴を閉じる（verify round 1）
-  - 背景: 台帳が数値で主張しているのに gate が落とさない項目と、受け入れ基準 3 の代表画面のうち編集操作を実行していない画面がある。
-  - 完了基準: 下表のとおり。追加する操作は既存の `FIELD_OPERATIONS` と同じ手順（focus → 編集開始 → 入力 → 確定 → 再編集 → 取消、state / value / revision の照合）で、実キー入力を使う。対象の入力欄が画面に存在しない場合は、存在しないことを Scene から確かめたうえで理由を台帳へ残す（黙って省かない）。
-
-    | #   | 検査                                                                                                                                   | 期待                                                                                       |
-    | --- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-    | 1   | `font-parity-text.json` の `boundaryFits` / `boundaryOverflows`                                                                        | 前者は両面とも省略なし、後者は既存仕様どおり省略・クリップされることを assert する         |
-    | 2   | `matrix` の「枠外へ出た未省略の描画」（`matrixOverflow`）                                                                              | 独立 runtime の全ケースで 0 件を assert する（現在は記録のみ）                             |
-    | 3   | `matrix` の入力位置（`assertMatrixControls` の `checked`）                                                                             | 入力欄を持つ画面の独立 runtime ケースで 1 件以上を assert する                             |
-    | 4   | `matrix` の dark ケース                                                                                                                | テーマ切替後に Canvas が新しいフレームを描いたことを確かめてから測る（古い記録を使わない） |
-    | 5   | 編集操作中の `errors`                                                                                                                  | Rhai 拒否を意図したケース以外で空であることを assert する                                  |
-    | 6   | DOM の media 案内                                                                                                                      | Scene が空 / エラーの media では案内が表示されていることを assert する                     |
-    | 7   | 編集操作の追加: uivolve-forms の DOM 面、components のウィンドウ内の入力欄（DOM / Canvas）、uivolve-gallery の編集タブ（DOM / Canvas） | 既存 7 本と同じ照合で green                                                                |
-    | 8   | 既存の全 suite                                                                                                                         | green、件数を台帳へ反映                                                                    |
-
-  - 対象: `tests/browser/font-parity.mjs`、`tests/browser/font-parity-harness.js`、必要なら `tests/browser/font-parity-text.json`、`docs/renderer-font-parity.md`。
-  - 依存: F1
-  - **PLAN 訂正（turn 15 / F2 実測）**: 対象ファイルに `tests/browser/font-parity-observe.js` を
-    追加した。行 1 の「省略なし／省略される」を DOM 側で数値にするには、文字の送り幅と
-    **与えられた枠の幅**の両方が要るが、`textInk` は枠幅を返していなかった（`clientWidth` を
-    足した）。`font-parity-text.json` の変更は値の差し替えだけでなく**状態キーの改名**を
-    伴う（`fitsExactly` / `overflowsByOne` → `fitsInBox` / `overflowsBox`）。
-  - **PLAN 訂正（turn 15 / F2 実測）**: 行 1 の「後者は既存仕様どおり省略・クリップされる」は
-    **fixture がその条件を出していなかった**。`width: 220` の指定はこの画面のレイアウトでは
-    効かず（実測: 全 widget が 664 CSS px）、30 文字の `W` は 342px で枠に収まっていた。
-    `overflowsBox` を 200 文字へ伸ばして境界の「後」側を実際に描かせた。短い値へ戻すと
-    `roles` が非 0 になることを確認済み。
-  - **PLAN 訂正（turn 15 / F2 実測）**: 行 3 の「入力欄を持つ画面」は、画面名を書き下さず
-    **Scene の kind から判定**した（`src/widget-contract.js:2-12` の field kind 9 種。
-    `createControl` が input/select/textarea を作る集合＝`src/field-control.js:5-27`）。
-    実測では 7 画面すべてが入力欄を持ち、合計 288 件を照合した。0 件の画面は無かったが、
-    0 件になった場合の理由は `matrix.json` の `controlCoverage` に出す形にした。
-
-- [x] F3: Canvas の描画失敗で操作・effects・他の面を止めない（verify round 1）
-  - 背景: `CanvasRenderer.paint()` が毎フレーム `resolveFontMetrics(this.stage)` を呼び、解決できないと例外を投げる。`UiRuntime.render()` はそれを `dispatch()` / `compile()` の途中（state 更新の後、`runEffects` の前）で受けるため、verify のプローブ（`.gsd-lite/logs/renderer-font-size-parity/scratch/turn-013-probe.mjs`）で次を実測した。main の Canvas は computed style に依存せず、どれも起きない。
-    - Canvas ステージを文書へ入れる前に `load()` すると `ステージの font-family を解決できません` で reject し、`onLoad` と初期 effects が実行されない（画面と state は確定済み。DOM renderer は同条件で成功）。
-    - 表示中に Canvas ステージを文書から外して DOM 面のボタンを押すと、revision は 0→2 と進むのに `runEffects` が 0 回（正常時は 2 回）。面の順序が Canvas → DOM だと DOM 面の表示も古いまま。
-    - ランタイム CSS が無い場合も同じ経路で effects が落ちる。`display: none` のステージは問題なし。
-  - 完了基準: 下表のとおり。例外は面ごとの描画境界で `Error` 全般として受け、メッセージ文字列で分岐しない。T2 の「CSS 欠落や不正な解決値を静かに成功扱いしない」は保つ（行 3 は通知する）。宣言の無いサイズで文字を描かない。`lifecycle` suite に行 1〜5 を実ブラウザのケースとして足し、`tests/runtime.test.js` に「ある面の描画が失敗しても effects と他の面が実行される」単体試験を足す。未接続のステージの扱いを `docs/runtime-distribution.md` と台帳に書く。
-
-    | #   | 条件                                                                                          | `load()` / `dispatch()` | `onLoad`・effects | 同じ runtime の他の面   | Canvas 面                                                 | `onError`                              |
-    | --- | --------------------------------------------------------------------------------------------- | ----------------------- | ----------------- | ----------------------- | --------------------------------------------------------- | -------------------------------------- |
-    | 1   | Canvas ステージが文書に未接続のまま `load()`                                                  | resolve                 | 実行される        | 描画される              | そのフレームは描かない。接続後の再描画で最新 state を描く | 通知しない                             |
-    | 2   | 表示中に Canvas ステージを文書から外し、他の面を操作（面の順序 2 通り）                       | 成功、revision が進む   | 実行される        | 最新 state に更新される | 同上                                                      | 通知しない                             |
-    | 3   | ステージは接続済みだがランタイム CSS が無い / 役割サイズが px で解決できない                  | 成功、state 更新        | 実行される        | 最新 state に更新される | 描かない                                                  | 役割名と property 名を含むエラーを通知 |
-    | 4   | `display: none` のステージ                                                                    | 成功（現状どおり）      | 実行される        | 更新される              | 描画する                                                  | 通知しない                             |
-    | 5   | 行 1〜3 の状態で、Scene を伴わない再描画（focus / blur・画像の load・フォント完了・倍率変更） | —                       | —                 | —                       | 行 1〜3 と同じ。例外をイベントハンドラの外へ漏らさない    | 行 3 のときだけ通知                    |
-    | 6   | 通常の表示（既存の全 suite）                                                                  | 現状どおり              | 現状どおり        | 現状どおり              | 現状どおり                                                | 現状どおり                             |
-
-  - 対象: `src/canvas-renderer.js`、`src/runtime.js`、必要なら `src/font-metrics.js`、`tests/runtime.test.js`、`tests/browser/font-parity.mjs`、`tests/browser/font-parity-harness.js`、`docs/renderer-font-parity.md`、`docs/runtime-distribution.md`。
-  - 依存: F2
-  - **PLAN 訂正（turn 16 / F3 実測）**: 行 5 の `focus` / `blur` は、**未接続および
-    `display: none` のステージにはブラウザがイベントを配らない**（要素が焦点を持てない）。
-    行 1・2 のその 2 経路は「paint が呼ばれて描かなかった」ではなく「呼ばれなかった」ことの
-    確認になる。接続済みで役割サイズが解決できない行 3 では 4 経路すべてが paint に届き、
-    4 件とも通知されることを実測した。台帳の限界表に代用と実測の区別を明記した。
-  - **PLAN 訂正（turn 16 / F3 実測）**: 行 5 の「画像の load」は、新しい fixture を作らず
-    **T5 の `font-parity-surface.json` の読み込めない `src`** の `error` ハンドラで実測した
-    （`src/surfaces.js` が load / error を張るのは `image` だけなので、`video` / `iframe` は
-    この経路を持たない）。行 3 の「役割サイズが px で解決できない」は、ステージ自身へ
-    `--ui-font-size-body: 1.1em` を宣言する形で作った（stylesheet を外す経路とは別ケース）。
-  - **PLAN 訂正（turn 16 / F3 実測）**: `src/font-metrics.js` は変更不要だった（解決器は
-    そのままで、呼び出し側の `CanvasRenderer.resolveFonts()` が状態を `stage.isConnected` で
-    分ける）。行 6 の「通常の表示」は既存の全 suite がそのまま green で確認した。
-
-- [x] F4: ホストのタグセレクタ規則からフォーム部品の font を守る（verify round 1）
-  - 背景: reset を `:where(.uivolve-runtime) :where(button, input, select, textarea)`（詳細度 0,0,0）へ下げたため、ホストページの `button, input, select, textarea { font: italic 700 17px/2 serif }` のようなタグだけの規則（0,0,1）が reset に勝つようになった。verify のプローブ（同上）の実測: サイズは部品側の宣言で 12 / 13px のまま保たれるが、DOM 面の全フォーム部品が `italic` / `serif` になり、入力欄・選択欄は太さ 700 になる（Canvas は runtime の字体・normal・400 のまま）。main の reset（0,1,1）は同じ規則に勝ち、字体・斜体・太さはランタイムのものだった。サイズの修正と引き換えに、main が防いでいた範囲を失っている。「決めた事項 1」の機構はこの副作用を見落としていたので、このタスクで訂正する。
-  - 完了基準: 下表のとおり。対象は DOM 面の全フォーム部品（button / input / select / textarea。Grid 編集を含む）と Canvas の編集オーバーレイ（`.canvas-editor` の input / select / textarea）。守る範囲は「クラス・ID・`!important` を含まない規則（詳細度 0,0,n）」で、main の reset が勝っていた範囲と同じ。それより強いホスト規則と、ランタイム内部の class を名指しする規則は対象外として台帳の限界に書く。機構は任せるが、部品別の宣言（button 12/500、panel-toggle 12/600、close 20 など）が reset に負けないこと。`roles` / `editing` suite にホスト規則ありのケースを足して実測する。
-
-    | #   | ホストページの規則（ランタイムの stylesheet の前後どちらに置いても）                               | 期待（フォーム部品とオーバーレイの computed 値）                                        |
-    | --- | -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-    | 1   | `button, input, select, textarea { font: italic 700 17px/2 serif }`                                | font-family / font-style / font-weight / font-size / line-height が規則なしのときと同一 |
-    | 2   | 行 1 と同じ値を longhand（font-family / font-style / font-weight / font-size / line-height）で指定 | 同上                                                                                    |
-    | 3   | `html body button, html body input, html body select, html body textarea { … }`（0,0,3）           | 同上                                                                                    |
-    | 4   | 規則なし、ホスト font-size 16 / 20px（既存ケース）                                                 | 既存の期待どおり（回帰なし）。Canvas の描画サイズ・字体と一致                           |
-
-  - 対象: `src/runtime.css`、`tests/browser/font-parity.mjs`、`tests/browser/font-parity-harness.js`、`docs/renderer-font-parity.md`、`docs/runtime-distribution.md`。
-  - 依存: F3
-  - **PLAN 訂正（turn 17 / F4 実測）**: 対象ファイルに `tests/browser/font-parity-observe.js` を
-    追加した。既存の観測は `fontSize` / `fontWeight` / `fontFamily` しか読んでおらず、
-    完了基準が求める **font-style と line-height が measure 側に無かった**（新設
-    `formControlFonts` が `font: inherit` の設定する 7 プロパティを部品単位で返す）。
-  - **PLAN 訂正（turn 17 / F4 実測）**: 表の「期待（computed 値が規則なしのときと同一）」の
-    うち、**裸の `select` の line-height だけは誰も動かせない**。Blink が UA stylesheet で
-    固定するため、ホスト規則の有無にかかわらず `normal` のままになる（実測）。この 1 件は
-    「ランタイムが守った」証拠にならないので、ブラウザが固定するプロパティの一覧
-    （`HOST_RULE_IMMOVABLE`）として**過不足なく一致**する形で assert し、台帳の限界に書いた。
-  - **PLAN 訂正（turn 17 / F4 実測）**: 「roles / editing suite にホスト規則ありのケースを
-    足す」の内訳は **3 ケース**にした（`roles` に通常 field ＋ Canvas オーバーレイ、`editing`
-    に DOM と Canvas の Grid 列エディタ）。× 3 規則 × 配置 2 = 18 回の読み取り。あわせて
-    **ランタイム外の裸の 4 部品を対照群**として足した（規則が何にも一致しなくなった状態を
-    「部品がフォントを守った」と読めてしまうため。変異 3 でこの歯を確認した）。
-
-- [x] F5: 台帳と文書の事実誤り・古い記述・言い過ぎを直し、最終 gate を通す（verify round 1）
-  - 背景: verify が `docs/renderer-font-parity.md` の数値と主張を証跡 JSON・コードと照合した。現在の合計値（28 ケース / DOM 1243 / Canvas 1276 / 37 kind / 48 xtype / 168 ケースなど）は証跡と一致したが、下の項目が食い違っていた。行番号は 7b126a4 時点。F1〜F4 で変わった件数・挙動もここで最終値に揃える。
-  - 完了基準: 下の全項目を直し、`bun scripts/verify-font-parity.mjs` が green。直した旧文言が残っていないことを grep で確認する。
-    - 事実の誤り:
-      - L311「10 画面を 19 ケース」→ 13 fixture（8 画面ファイル）。
-      - L324「必須 kind（29 種）」→ T3 時点 36、現在 37。
-      - L640 の表見出し「送り幅（13px、body）」→ 4 行目の `日本語テキスト` は 12px / caption。
-      - L748「T2 の時点から残っていた fieldset の穴」→ T3。
-      - L764–775「合成される xtype 6 つ」→ 5 つ（`menuseparator` は画面定義に書ける）。
-      - L790 drag-ghost の観測ケース → 状態表が記録しているのは `kanban-drag-dom` だけ。Canvas 側の ghost も状態として記録するか、記述を合わせる。
-      - L924「6 画面すべてで集合は一致」→ 7 画面（PLAN の T8 訂正も同じ誤り）。
-      - L944 `.ui-grid-column` などの画面 → grid-lab のみ。orders は `.ui-row` / `.ui-grid-header` で、`.ui-row` が修正前後の表に無い。
-      - L502「`src/surfaces.js` は px の数値を 1 つも持ちません」→ `src/surfaces.js` に 12 / 14 / 16 がある（engine の補完値と文書 sprite の既存値）。持つ理由を書く。
-    - 古い記述:
-      - L84–89（suite を重ねると lifecycle が落ちる「既存の挙動」）は T9 で原因を特定・修正済み。現状に合わせる。
-      - L181 / L278（実ズームを T8 で記録する、という未来形）。
-      - L311–314 / L324–325 / L341 / L358 の T3 時点の件数（19 ケース / 664 / 36 kind / 39 件）に時点を明記する。
-      - L360（media 案内が Canvas 13px）は T5 で修正済み。
-      - L362 extra-button の太さの差（DOM 12px/400 対 Canvas 500 12px）は「T7 が表現差として扱う」とあるが T7 の表に無い。既存の表現差として一覧に入れる。
-      - L125 / L160–164 の `src/runtime.css` の行番号。
-    - 言い過ぎ:
-      - L457 / L557 / L826: 幅・DPR・テーマ・拡大を T8 へ送ったとあるが、matrix に無いもの（figure / document / media / dialog-icon、Grid 編集オーバーレイ、9px の役割）は light / host 16px / DPR 1 でしか測っていない。範囲を明記する。
-      - L429: uivolve-forms の textarea 操作は Canvas 面のみ（F2 で DOM 面を足したら最終値で書く）。
-      - L520 / L797「media 案内 46 件」→ 46 は検査した media 枠の数で、案内が出ているのは 28 件。「ダイアログアイコン 6 件」は文字 4 ＋ 標準 SVG 2。
-      - L798「遅延配信の前後 5 ケース」→ フォント 4 ＋ 倍率 1。
-      - L702 / L747「状態別 coverage」「状態 18 件すべて観測」→ 状態ごとの存在確認であり、部品 × 状態の格子ではないことを書く。
-      - L880–898 / L971–979: T8 の編集 journey の拡大ステップも合成した `change` を発火している。T8 の節と限界表に書く。
-      - L911「枠外へ出た未省略の描画 0 件」→ 独立 runtime のみ。
-      - L942 `.ui-button` が「全画面」→ 7 画面中 6。
-      - L1080「代表画像と目視結果（12 枚）」→ 表は 5 行、目視したのは 4 枚。
-      - L38「最終判定は上をまとめた 1 本」→ gate は vitest / test:rust / check / docs:check / build も実行する。
-      - L1057–1058「`src/runtime.css` は `font-size` を宣言していません」→ ステージ自身についてだけ成り立つ。
-      - `docs/runtime-distribution.md:97`「実測では…変わらない」→ 配布物で測ったのは Hello World の役割と編集欄。範囲を書く。
-      - `docs/testing.md:83`「Playwright実行スクリプトは2系統」→ `scripts/capture-retrospective.mjs` もある。
-    - 一覧の整理: 受け入れ基準 1 の「該当しない部品と既存の描画差の一覧」が各タスクの表に散らばり、解消済みの行と恒久の行が混ざっている。**現在の状態だけ**をまとめた 1 つの表を置く（文字を描かない kind、対象外、既存の表現差: Kanban ghost の ID、使用不可カレンダー日の濃さ、文字アイコンの行分割、extra-button の太さ、省略方式の違い など）。
-    - 限界への追記（verify が round 1 で確認した残留リスク。修正はしない）: (1) ホストの `* { font: inherit }` のような規則は SVG の `font-size` 属性より強く、sprite の文字サイズを変える。検査は属性値を読むので検出しない。main から同じ。(2) ホストが `canvas` に `max-width` などを指定すると bitmap が縮んで文字が小さく見える。検査は `canvas.style.width` を読むので検出しない。main から同じ。(3) figure / document の文字は DPR 2・拡大・dark で測っていない。(4) ブラウザの最小フォントサイズ設定の影響（9px の役割）は測っていない。
-    - 目視の記録: 表の各行に面（デモ / 独立）とテーマを書く。uivolve-forms の修正前後の組を足す。
-  - 対象: `docs/renderer-font-parity.md`、`docs/runtime-distribution.md`、`docs/testing.md`、`.gsd-lite/PLAN.md`（T8 訂正の「6 画面」）。
-  - 依存: F4
-  - **PLAN 訂正（turn 18 / F5 実測）**: `.gsd-lite/PLAN.md` の訂正対象に **T7 訂正の
-    「合成される6つの xtype」**を足した（→ 5 つ）。F5 は T8 の「6 画面」だけを挙げていたが、
-    同じ種類の誤りで、`XTYPE_SYNTHESIZED` の要素数が 5 であることを実測したため。
-  - **PLAN 訂正（turn 18 / F5 実測）**: 「L1080『代表画像と目視結果（12 枚）』→ 表は 5 行、
-    目視したのは 4 枚」のうち、**4 枚は再現できなかった**。表の 5 行が名指しする画像は
-    のべ 7 枚（`embed-16px-light` / `embed-20px-dark` / `minimal-dom-20px-light` /
-    `minimal-canvas-20px-light` / `minimal-dom-16px-light` / `minimal-canvas-16px-light` /
-    `minimal-canvas-16px-dark`）で、このターンで 7 枚すべてを開いて記述が合うことを
-    確かめた。見出しを「代表画像（12 枚）と目視結果（5 組・7 枚）」にし、残り 5 枚は
-    自動数値だけが根拠だと明記した。
-  - **PLAN 訂正（turn 18 / F5 実測）**: 「L790 drag-ghost の観測ケース」は**記述を合わせる**
-    方（もう一方の「Canvas 側の ghost も状態として記録する」ではない）を採った。F5 の対象
-    ファイルが文書だけで、記録を増やすには `tests/browser/font-parity.mjs` の
-    `STATE_CONTRACT` を変える必要があるため。Canvas の ghost は同じ `roles` suite で
-    サイズを検査済みで、未検査の範囲は増えていない。（turn 20 / F6 訂正: 旧「`kanban-card` の
-    kind として」は誤り。ghost の 2 件の描画は位置で対応付けられ、`roles-parity.json` の
-    実測ではポインタの下にあった `empty` と `kanban-lane` へ帰属して、その kind に許可された
-    役割の集合に入ることだけを見ている。ghost 専用の役割表は無い）
-  - **PLAN 訂正（turn 18 / F5 実測）**: 「L826 の言い過ぎ」を直すために、T8 の節へ
-    **「条件を動かして測った範囲」**を新設した（表 1 つ）。「範囲を明記する」を各タスクの
-    節に分散して書くと、`matrix` が何を測っていないかが 3 か所に散って読めないため。
-
-- [x] F6: 台帳の古い実測値・検査範囲の言い過ぎ・誤参照を直す（verify round 2）
-  - 背景: round 2 で最終 gate（14 手順）は green、round 1 のプローブは全条件で修正を確認、F1・F3・F4 の変異で該当 suite が非 0 になることも再確認した。**製品コードの挙動と検査の判定に指摘は無い**。残ったのは文書で、(A) F2〜F4 が証跡を動かしたのに台帳が古い値のまま（F5 の完了基準「F1〜F4 で変わった件数・挙動もここで最終値に揃える」の取りこぼし）、(B) F3〜F5 が書き足した文の言い過ぎ・誤り、(C) 字句。行番号は 8c8d76e 時点の `docs/renderer-font-parity.md`。
-  - 完了基準: 下の全項目を直し、`bun scripts/verify-font-parity.mjs` が green、直した旧文言が残っていないことを `git grep` で確認する。**製品の挙動と検査の判定は変えない**（`src/` はコメント 1 か所、`tests/` は証跡へ書き出す文字列 2 つだけ）。「要確認」と書いた項目は verify が自分で再確認していないサブエージェントの報告なので、証跡 JSON かコードで確かめ、該当すれば直し、該当しなければ PROGRESS に根拠を書く。
-    - (A) 古い実測値:
-      1. L1228–1229 の sha256（`index.js` `389f58ee2c10…` / `index.css` `7f0d87a3261a…`）は現在の `distribution.json` の `builds`（`ba581f54a994…` / `146fca46b9c1…`）と違う（`engine.wasm` `cac490437546…` だけ一致）。`src/` を変えるたびに変わる値なので**台帳へ写さず**、「値は `distribution.json` の `builds`。3 件とも両側で一致」と書く（このタスク自身のコメント修正でも `index.js` は変わる）。
-      2. L710「同じ文字列の `measureText` が **5 件**変化」→ `lifecycle.json` の `fonts-arrival.remeasured` は 4。現在値に直し、変わった理由を実測で確かめて 1 行書く（F2 が `overflowsBox` を伸ばした後に変わった可能性。推測のまま書かない）。同じ節の他の値も `lifecycle.json` と照合する。
-      3. `tests/browser/font-parity.mjs:1703` / `:1709` の `evidence` 文字列（「media 案内 46 件」「遅延配信の前後 5 ケース」）が `roles-coverage.json` の `states` に書き出され、台帳 L938–939 の記述と食い違う。L938–939 と同じ表現に揃える。
-      4. L953「`lifecycle` の 5 ケース」→ T6 の 5 ケース（suite は F3 の 6 ケースを足して 11）。
-    - (B) 言い過ぎ・誤り:
-      1. L949–951 と本ファイルの F5 訂正（drag-ghost）: Canvas の ghost は「`kanban-card` の kind として」検査されていない。描画は**位置で下にある kind へ帰属**し（`font-parity.mjs:902-903` のコメントどおり。`roles-parity.json` の `kanban-drag-canvas` では `empty` と `kanban-lane`）、その kind の許容役割の集合に入るかだけを見る。記述を実態に合わせ、まとめの限界表にも 1 行足す。検査は変えない。
-      2. L1518–1521: 「`div` / `span` で描かれる役割はタグだけのホスト規則ではサイズが変わりません」が成り立つのは**自分の `font-size` 宣言を持つ要素だけ**。宣言を持たず親から継承する子（`.ui-row span` / `.ui-grid-header span`、`src/runtime.css:705-712`）にはホストの `span { font-size: … }` が届く。F4 が測ったのはフォーム部品だけ・未実測・`main` でも同じ、と書く。「T5 の限界に既記」は誤参照（T5 の限界表に `* { font: inherit }` は無い）なので、まとめの限界表を指す。
-      3. L1563「部品単位で『省略されたか』が揃うことを assert する」→ assert しているのは幅境界 fixture の 2 部品（`boundaryFits` / `boundaryOverflows`）だけ（L350–356 の書き方が正しい）。
-      4. L498 / L1021 / L1023 / L1180 / L1578: 通常 field の編集オーバーレイ（`canvas-editor` 13px）は編集 journey の 6 段（light / dark / 390px / 200%、L1057–1062）で測っている。1 条件のままなのは Grid 編集の 12px オーバーレイだけ。5 か所の記述を揃える（要確認: `matrix.json` の journey）。
-      5. L1022 / L1578: `dialog-icon` の 30px は `matrix` の宣言サイズ集合に**記録され**デモ／独立の集合比較に入っている（L1025 が 30px を挙げている）。30px であることの assert は `surfaces` だけ。「行列に乗らない」ではなく「記録するが assert は `surfaces`」と書く（要確認）。
-      6. L1566「reset の詳細度（T2 で 0,1,0・F4 で確定）」→ T2 は 0,0,0、0,1,0 にしたのは F4。
-      7. L781–782 と `src/canvas-renderer.js` の `paint()` のコメント（「a frame that is not painted also does not clear the frame that is currently on screen」）: 成り立つのは Scene を伴わない再描画だけ。`render(scene)` は `paint()` の前に `syncSurface()` を呼ぶ（`src/canvas-renderer.js:476`）ので、Scene の寸法が変わるフレームでは bitmap が消える（未接続のステージは幅 240 でレイアウトされるので実際に変わる）。台帳とコメントを実態に合わせる。挙動は変えない。
-      8. まとめ節（L25 / L1541「この節だけを読めば分かります」）の限界表に、タスク節にだけ残っている現行の限界を足す: デモ面は Scene を公開しないので部品単位の突き合わせ・入力位置・枠外の検査が無い（L1178）／ Canvas 面の押下はページ内 dispatch（L495）／ datefield の文字入力は未実施（L496）／ 配布物で測ったのは Hello World だけ（T9 の限界）／ 18 状態は部品 × 状態の格子ではない（L882）／ 未接続・`display: none` のステージには focus / blur が配達されない（L811）。
-      9. 限界へ 1 行追加（round 2 のプローブ実測）: ランタイム CSS が無いまま `load()` すると、解決エラーの通知の直後に `compile()` の `onError(null)` が続き、次のフレーム（ResizeObserver）で再び通知される。最後に届くのは通知で、`load()` は resolve、`onLoad` 1 回、effects 1 回。
-    - (C) 字句（要確認を含む）: L23「T1〜T9・F1〜F5 の順」→ 実際の並び（T1–T6・F3・T7–T9・F1・F2・F4・まとめ）／ L1484 見出し「18 ケース」→ 3 ケース・18 回の読み取り ／ L1122「同じディレクトリの `matrix-…`」→ matrix の画像は `before-fix/` の親 ／ L1149「修正後の 64 枚のうち」→ `matrix-journey-canvas-zoom-200` は `matrix.json` の `images` 64 枚に入らない journey 画像 ／ L1019–1020 `matrix.json` の `roles` / `canvasKinds` はケースごとのフィールド ／ L566・L938「media 枠 46 件」の内訳（DOM の枠と Canvas の native overlay の合計か）／ L979 行列に乗らない kind の列挙漏れ（`fieldset` / `empty`）／ L315–325 の T3 kind 表に `displayfield` が無い ／ L324「drag ghost も同じ分岐」（ghost は別ブロック）。
-  - 対象: `docs/renderer-font-parity.md`、`tests/browser/font-parity.mjs`（`evidence` 文字列 2 つ）、`src/canvas-renderer.js`（コメント 1 か所）、`.gsd-lite/PLAN.md`（F5 訂正の drag-ghost の記述）。
-  - 依存: F5
+  - 並列サブ作業: なし（最終タスク。振り返りの提案どおり gate は前景で回し、サブエージェントを起動しない）
 
 ## 決めた事項
 
-1. DOMの部品別**宣言値**を基準として維持し、偶発的なreset継承は修正する。resetを `:where(.uivolve-runtime) :where(button, input, select, textarea)` とする計画。根拠: `src/runtime.css:11` のfont shorthandと同ファイル437/452/252/185行の明示指定、RESEARCHのspecificity解析。
-2. runtime内の非公開CSS propertiesは `--ui-font-size-meta`=9px、`--ui-font-size-label`=11px、`--ui-font-size-caption`=12px、`--ui-font-size-body`=13px、`--ui-font-size-close`=20px、`--ui-font-size-metric`=22px、`--ui-font-size-icon`=30pxとする。名前は今回確定する新設名。根拠となる既存値は `src/runtime.css:139,696,437,196,252,276,44`。文書14/16pxとfigureの任意fontSizeは既存spritesを維持（`src/surfaces.js:17,22,39`、`engine/src/figures.rs:266`）。公開設定APIにしない。
-3. Canvasは新設 `src/font-metrics.js` でCSS値とruntime字体を描画開始時に一度解決し、textと直接計測・surface/iconへ渡す。render以外のpaint経路も対象。現在の窓口は `CanvasRenderer.text(text, x, y, width, color = this.scene.theme.colors.text, size = 13, weight = 400, family = FONT, align = "left")`（`src/canvas-renderer.js:535`）。このシグネチャは現状の引用であり公開APIの約束ではない。計測専用箇所は同708/763/920行。不要な字体/太さ/行間の全面変更は行わない。
-4. Gridは通常値も編集中も12px、通常fieldは13px。Grid例外はconfig.gridEditorで識別する（`src/canvas-renderer.js:359,402`、`src/dom-renderer.js:181`）。通常値12pxの基準は `src/runtime.css:579-591`。native controlは既存createControl/syncControlを使い続ける（`src/field-control.js:5,96`）。
-5. document/figureは同じsprites・同じborder内側viewportで変換する。現状 `renderSvg(record, widget, theme)` はviewBox + xMidYMid meet（`src/surfaces.js:61,67-68`）、`paintSurface(ctx, widget, theme)` はwidget全体で倍率計算（同117/126-134行）、DOMは1px border（`src/runtime.css:464-475`）。実効pxはDOM computed font-size×SVG CTM倍率とCanvas font-size×ローカル倍率をCSS座標系で比べ、bitmap DPRを除く。
-6. bitmapのDPR倍率は既存 `src/canvas-renderer.js:469-479` を維持し、font-sizeへDPRを掛けない。フォント/DPR通知はUiRuntimeのscheduleRenderとdisposeに接続する方針（`src/runtime.js:126,245,386-405`）。一時のrenderer paintでも最新の解決値を用いる。
-7. 常設ブラウザ検査は既存Playwrightと実WASM harness方式を再利用する。対象OSは現在のLinux環境、Chromium、127.0.0.1の所有サーバー。ブラウザ経路はT1で実測確定し、snap失敗を成功に読み替えない。既存選択例は `scripts/test-transfer-browser.mjs:57-60`、最終runnerの失敗/中断伝播例は `scripts/verify-transfer.mjs`。製品コードへ検査専用公開APIを追加しない。
+1. **`Instance` の構造**（`engine/src/instance.rs`、新規。根拠: REQUIREMENTS R2、`lib.rs:362-378` の現行フィールド順）:
+   ```rust
+   pub(crate) struct Instance {
+       pub(crate) package: Package,
+       pub(crate) ui: Node,
+       pub(crate) functions: HashSet<String>,
+       pub(crate) engine: Engine,
+       pub(crate) extension_context: extensions::ExtensionContext,
+       pub(crate) ast: AST,
+       pub(crate) state: Dynamic,
+       pub(crate) http: http::Requests,
+       pub(crate) host: host::Requests,
+       pub(crate) storage: storage::Requests,
+       pub(crate) files: files::Requests,
+       pub(crate) rpc: rpc::Requests,
+   }
+   ```
+   `lib.rs` の `Runtime` は `root: Instance` / `dialogs: dialogs::Requests` / `pages: pages::Requests` / `pub revision: u32` の 4 フィールド（この順。`revision` は `pub` のまま = `abi.rs:115` が無改修で通る）。`functions` は `ast.iter_functions()` から再計算できるが**フィールドとして残す**（差分最小。RESEARCH §4）。`lib.rs` の `mod` 一覧には `mod instance;` を `mod http;`（`lib.rs:20`）の次に入れる
+2. **`Instance` のメソッド**（これ以外は Runtime に残す）:
+   - `pub(crate) fn load(package: Package, script: &str, descriptors: HashMap<String, Vec<u8>>, clock: Option<extensions::Clock>, register: impl FnOnce(&mut Engine), dialogs: &mut dialogs::Requests, pages: &pages::Requests) -> Result<Self, String>`: `lib.rs:409-569` の本文を**そのままの順序**で移す（`extension_context.enter(clock)?` が最初、version → state → webmcp → pages::validate → schema → 100 KB → normalize → validate → resolve → … → `init` → … → prepare 7 連 → `buffers::capacity` → commit 6 連）。`dialogs.register(&mut engine)` / `pages.register(&mut engine)` の位置（`lib.rs:450-453`）と `dialogs.prepare(&ast)` / `pages.prepare(...)`（`lib.rs:557-560`）/ `dialogs.commit(...)`（`:569`）は引数で受けた root 共通物に対して同じ位置で呼ぶ。`Runtime::load_with_clock` は `let mut dialogs = dialogs::Requests::default(); let pages = pages::Requests::default(); let root = Instance::load(…, &mut dialogs, &pages)?; Ok(Self { root, dialogs, pages, revision: 0 })` だけになる（`Requests::default()` は `#[derive(Default)]`（`dialogs.rs:119`）で副作用なし。`pages.rs:13` も同様か impl が確認）
+   - `pub(crate) fn clear_queues(&self)`: `http` → `host` → `storage` → `files` → `rpc` の順に `clear()`。7 本の `clear` はいずれも自分の `queue.borrow_mut().clear()` だけ（`http.rs:44` / `host.rs:105` / `storage.rs:87` / `files.rs:191` / `rpc.rs:106` / `pages.rs:50` / `dialogs.rs:219` を読んで確認済み）なので相対順序は観測不能。Runtime 側は各メソッドで `self.pages.clear(); self.root.clear_queues(); self.dialogs.clear();` の順に統一する（`dispatch` / `progress_host` / `complete_host` / `complete_rpc` / `complete_dialog` は現状と同順。`complete_http` / `complete_storage` は `pages.clear()` → `consume` → `clear_queues()` → `dialogs.clear()` と、`consume` の位置（`lib.rs:778,802`）を現状どおり `pages.clear()` の直後に保つ。`complete_file` のみ `pages.clear()` が 3 番目から 1 番目に動くが観測不能）
+   - `pub(crate) fn state_json(&self) -> Result<Value, String>`: `lib.rs:987-989` の本文。`Runtime::state_json` は `self.root.state_json()` に委譲
+3. **Runtime に残すメソッドの書き換え方**: `dispatch` / `progress_host` / `complete_*` / `take_effects` / `commit_state` / `layout` / `with_clock` は本文を保ち、Instance のフィールド参照を `self.root.<field>` に置き換えるだけ。`call_fn` は現行どおり `self.root.engine.call_fn(&mut Scope::new(), &self.root.ast, …)`（`call_fn_with_options` に変えない = RESEARCH §4）。`commit_state` は Runtime に残す（`prepare` 7 連の順序 `lib.rs:952-958` と「検証がすべて通ってから代入 `lib.rs:974-983`」を変えない = P4。RESEARCH §1.3 の推奨）。`take_effects` の連結順 `http → storage → files → rpc → dialogs → pages → host`（`lib.rs:912-927`）は**応答の effects 配列の順序そのもの**なので変えない。`dialogs.prepare(&self.root.ast)`（`lib.rs:957`）は root の AST を渡す
+4. **自由関数の可視性**: `lib.rs` の `validate` / `initialize_ui` / `validate_ui_state` / `check_state` / `validate_handlers`（`lib.rs:1144-1293`）は private のまま `instance.rs` から `use super::{…}` で呼ぶ（子モジュールは親の private 項目を参照できる）。`pub` に変えない
+5. **`abi.rs` は無改修**（REQUIREMENTS「差し替えのみ」の 0 件が成立するため。`git diff main --stat -- engine/src/abi.rs` 空が T2 の完了基準）
+6. **照合の固定値**（根拠: `scratch/turn-001-compare.mjs:9`、`tests/abi.test.js:14-28`）: `clock = {nowMs: 1759800000000, tzOffsetMinutes: 540}` を load / event / `*_result` / host_progress の全リクエストに付ける。画面の読み込みは `src/screen-catalog.js` の `SCREEN_CATALOG` / `screenFile` と `src/package-format.js` の `parsePackage(text, packageFormat(file))`。1 シーケンス = 新しい WASM インスタンス（`WebAssembly.instantiate(module_, {})`）。動的な id（dialog / http / storage / file / rpc / host の effect `id`）は **base の応答から取り、同じリクエストを candidate にも流す**（candidate で id が違えば effect の差分として表示される）
+7. **代表 payload（部品種別）**（根拠: `fields.rs:12-20,245-252`（入力 xtype と `event_value`）、`grid.rs:250-407`、`kanban.rs:106`、`navigation.rs:301-334`、`lib.rs:662-688`）。走査は `pkg.ui` の生ツリー（正規化前）で `handler` と `itemId` を持つノード:
+   | xtype（別名含む）                                              | payload                                                                            |
+   | -------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+   | button / splitbutton / xtype なし（menu item）/ その他         | `{}`                                                                               |
+   | textfield / textarea / textareafield / combobox / combo        | `{value: "x"}`（combobox は選択肢外でエラーなら、そのエラー応答を照合）            |
+   | numberfield / slider / sliderfield                             | `{value: 1}`                                                                       |
+   | checkbox / checkboxfield                                       | `{value: true}`                                                                    |
+   | panel（`collapsedBind` あり）                                  | `{action: "toggle"}`（無ければ `{}` でエラー応答を照合）                           |
+   | window / messagebox                                            | `{action: "close"}`                                                                |
+   | grid / gridpanel                                               | `{action: "sort", column: <node.columns[0].dataIndex>}`（columns が無ければ `{}`） |
+   | kanban / tree / treepanel / datepicker / pagingtoolbar         | `{}`（エラー応答の文字列一致を照合。id を要するため）                              |
+   | 各 event の後に `layout` 800 を 1 回流す（RESEARCH §3 と同形） |
+8. **追加シーケンス**（画面の基本列 22 本 + `tests/browser/font-parity-{edit,states,surface,text}.json|rhai` 4 本に加える。label は固定文字列で、T1 の 4 と変異 M2 / M3 の判定に使う）:
+   - `reload`: `dialogs` 画面の基本列を流した**同じインスタンス**で再 `load` → `showAlert` event → `layout` 800（P1: `dialogs::SEQUENCE` の採番継続）
+   - `dialog-confirm-ok`: `dialogs` → `showConfirm` → `:dialog:<id>:ok` → `layout` 800
+   - `dialog-prompt-input`: `dialogs` → `showPrompt` → `:dialog:<id>:input` `{value:"x"}`（Draft、revision +1 = P2）→ `:dialog:<id>:ok`
+   - `dialog-result-op`: `dialogs` → `showAlert` → `{op:"dialog_result", id, ok:true, data:null}`
+   - `http-result`: `http-grid` → `loadProducts` → `http_result {id, ok:true, data:[{"id":1,"name":"x","price":1}]}` → `http_result {id:<同じ id>}`（消費済み id のエラー）→ `loadProducts` → `http_result {ok:false, error:"boom"}`
+   - `storage-result`: `storage-lab` → `saveProfile` → `storage_result ok` → `restoreProfile` → `storage_result {ok:true, data:{…}}` → `removeProfile` → `storage_result ok`
+   - `file-result`: `file-lab` → `save` → `file_result ok` → `binaryRead` → `file_result {ok:true, buffer:<buffer_store した 4 byte>}` → `binaryRead` → `file_result {ok:false, error:"x", buffer:<id>}`（`abi.rs:70` のエラー）→ `list` → `file_result {ok:true, data:[]}`
+   - `rpc-result`: `rpc-lab` → `connect` → `rpc_result {ok:true, buffer:<4 byte>}`（デコード失敗ならそのエラーを照合）→ `connect` → `rpc_result {ok:false, error:"x"}`
+   - `host-result`: `worker-orders` → `load` の effects の host id に `host_result {ok:true, data:null, error:null}` → `refreshOrders` → `host_result ok` → `host_progress {id, data:{operation, transferred:0, total:null}}`（progressHandler 無しのエラー文字列を照合）
+   - `host-progress`（インライン fixture = `tests/abi.test.js:163-176` の定義と script）: `load` → `host_progress` 不正 3 種（`abi.test.js:178-182`）→ 正常 progress → `host_result` → 再 progress（消費済みエラー）
+   - `navigate`: `page-navigation` → `openDetails`（`navigate` effect）。インライン fixture: handler が `navigate("detail")` と `alert("x")` を同時に呼ぶ → `"Navigation cannot be combined with other effects in the same handler"`（`lib.rs:967-969` = P3）
+   - `rollback`: インライン fixture（`lib.rs:1734` と同じ `fail` handler: 代入後 `while true {}`）: `load` → `fail` event（operations 上限エラー）→ `layout` 800 → 正常 event（state が load 直後と同じ = P4）。もう 1 本 `throw "bad"` 版
+   - `failed-load-keeps-previous`: `abi.test.js:29-43` の定義で `load` → `add` → 不正 script で `load`（エラー）→ `add`（前の Runtime が残り count が進む）
+   - `theme`: `{op:"theme", theme:{version:1, mode:"dark"}}` → `layout` 800（`Scene.theme`）→ 不正 theme（エラー）→ `layout` 800
+   - `abi-errors`: 未 load で `{"op":"event","target":"x"}` / `{"op":"layout","width":800}`（`No screen loaded`）、`{}`、`{"op":"nope"}`、load 後に `layout 100`（幅エラー）、`event:unknown-target`（`{"op":"event","target":"nope"}` → `Unknown itemId: nope`。M3 の判定に使う）
+   - **訂正（turn 3 / 実測。実物を正とした 5 件。label と M1〜M3 の判定経路は不変）**:
+     1. `host-result`: `host_result` の `data` は `null` ではなく `{body: []}`。`null` だと `listed` が `r.data.body` で throw してロールバックし、続く `refreshOrders` が state 無変化で host effect を出さないため、progress が消費済み id に当たってしまう。順序も `load` → `host_result:load` → `refreshOrders` → `host_progress`（progressHandler 無しのエラー）→ `host_result:refresh` に変更（progress を生きた id に当てるため）
+     2. `file-result`: `list` の直前に `file_result:bytes:2`（`read_bytes` id の成功完了）を 1 歩追加。`busy()` を共有する `mkdir` / `list` / `save` は直前の state が `loading = true` のままだと state 無変化で effect を出さないので、`list` が自分の effect を出せない。この 1 歩は `abi.rs:70` の「失敗完了は pending id を消費しない」も同時に実証する
+     3. `navigate` のインライン fixture の handler / itemId 名は `go` ではなく `combine`（`go` は Rhai の予約語）
+     4. `failed-load-keeps-previous` の不正 script は `fn init(s){throw "failed";s} fn add(s,e){s}`（`abi.test.js:107` の形）。`add` を欠いた形は handler 検証（`add references undefined handler: add`）で先に落ちて init throw 経路に届かない
+     5. `theme`: 先に `load` を 1 歩置く（load 前の `layout` は `No screen loaded` になる）
+9. **変異表**（`build-engine-variant.mjs` の `MUTATIONS` 定数。`from` は**ちょうど 1 回**出現すること。refactor で動いたら `from` だけ直し、ここに訂正行を書く）:
+
+   | 名前                       | ファイル            | from → to（意図）                                                                                                                         | 期待する差分                                         |
+   | -------------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+   | M1 `layout-x-offset`       | `engine/src/lib.rs` | `layout` の root `arrange(...)` 呼び出しの x `16.0` → `17.0`（RESEARCH §3 と同じ変異。`from` は `arrange(` 直後の数行を含めて一意にする） | `layout:*` の `data.widgets[*].x`。基本列で 137 以上 |
+   | M2 `dialog-draft-revision` | `engine/src/lib.rs` | `dialogs::Event::Draft` 分岐の `self.revision += 1;` を削除（`from` は `Draft => {` を含めて一意にする）                                  | `dialog-prompt-input` の `data.revision`             |
+   | M3 `unknown-item-message`  | `engine/src/lib.rs` | `"Unknown itemId: {target}"` → `"Unknown item: {target}"`                                                                                 | `abi-errors` の `event:unknown-target` の `error`    |
+
+   **訂正（turn 3 / 実測）**: 確定した `from`（いずれも `lib.rs` にちょうど 1 回）と実測差分数は次のとおり。M1 の実測は基本列 137 以上ではなく **全列で 165**。
+   - M1: `"        arrange(\n            &self.ui,\n            &state,\n            16.0,\n"`（`arrange(` 単独は `:1445` 等にもあるので `&self.ui` 前置で一意化）→ `diffs = 165`
+   - M2: `"                dialogs::Event::Draft => {\n                    self.revision += 1;\n"`（`self.revision += 1;` 単独は `:983` にもある）→ `diffs = 2`
+   - M3: `'"Unknown itemId: {target}"'` → `diffs = 1`
+   - **T2 への申し送り**: M1 / M2 の `from` は `self.ui` / `self.revision` を含むので、`self.root.ui` への差し替えで M1 は必ず動く（M2 の `revision` は Runtime に残るので動かない見込み）。動いたら `from` だけ直してここに訂正行を追記する
+   - **訂正（turn 4 / T2 後。申し送りのとおり M1 だけ動いた）**: M1 の `from` / `to` の 2 行目を `&self.ui,` → `&self.root.ui,` に直した（`from` = `"        arrange(\n            &self.root.ui,\n            &state,\n            16.0,\n"`）。M2（`self.revision` は Runtime 残留）・M3 は無変更。リファクタ後のソースで再ビルドした実測差分数は M1 `165` / M2 `2` / M3 `1` で turn 3 と同一、3 本すべて exit 1
+
+10. **`docs/components-plan.md` の節構成**: 1. 状態（定型文）/ 2. 目的と前提（ExtJS のカスタムコンポーネント相当、エンジン内合成 = DECISIONS B 案と却下案 3 つの要約）/ 3. 使い方（`components` 宣言 名前 → `url`、`xtype` に宣言名、`config`（固定値または親 state への `bind`）、`listeners`（子の `emit` 名 → 親 handler）、子 Rhai の `emit(name, payload)` と任意の `config(state, config)`、`state.config` 注入。YAML 例 1 つ）/ 4. Instance 木の構造（`Runtime { root, components: HashMap<itemId, Instance> }`、Scene 1 つ、target / key の `"<itemId>/<子itemId>"` 接頭辞）/ 5. 設計決定（8 論点の表 + 注記 2 件）/ 6. 段階計画（1・2 完了、3〜6）/ 7. 本マイルストーンで確定した構造（Instance 12 フィールド表、Runtime 4 フィールド表、Instance のメソッド 3 本、root 共通物を Runtime に残す理由）/ 8. 残課題（`safe_key` 区切り文字、`http` effect の `kind`、`SEQUENCE` などの thread_local の扱い = RESEARCH §1.2）
+11. **スクリプトの置き場と名前**: `scripts/compare-engine-behavior.mjs` / `scripts/build-engine-variant.mjs` / `scripts/verify-instance-refactor.mjs`。`package.json` の scripts には**足さない**（`verify:transfer` は入っているが、本件は PR 用の一時的な照合で、定常運用の入口にしない。`docs/testing.md` に入口を書く）。スクラッチと証跡は `target/engine-compare/`（gitignore 済み）
+12. **テストファイルを足さない**: 受け入れ基準 1 の「既存テストファイルの変更 0」に加え、新規の `tests/*.test.js` も作らない（照合は Node スクリプトと変異表で歯を確かめる。Vitest に載せると各実行で base ビルドが要る）
+
+## 落とし穴の対応（RESEARCH §5 → 担当タスク）
+
+| #   | 担当         | 完了基準での検証                                                                                  |
+| --- | ------------ | ------------------------------------------------------------------------------------------------- |
+| P1  | T1 / T2      | `reload` シーケンス（決めた事項 8）が diffs 0                                                     |
+| P2  | T1 / T2      | `dialog-prompt-input` の `data.revision` 一致。M2 で非 0                                          |
+| P3  | T2           | エラー文字列集合の一致（T2-6）、`navigate` + `alert` のエラー応答一致。M3 で非 0                  |
+| P4  | T2           | `lib.rs` テスト 2 本無改修 green、`rollback` シーケンス diffs 0、`commit_state` を Runtime に残す |
+| P5  | T1           | 判定にハッシュを使わない（T1-1）                                                                  |
+| P6  | T1           | 固定 clock、同一 WASM 同士 diffs 0（T1-4）                                                        |
+| P7  | T1 / T2 / T4 | 変異 M1〜M3 が exit 1（T1-4、T2-5、T4-1）                                                         |
+| P8  | T1           | `--base` / `--candidate` 両方必須（T1-1）                                                         |
+| P9  | T1           | descriptor 投入、`okResponses` / `errorResponses` の記録と T2 での一致                            |
+| P10 | T3           | struct 行数と表の行数一致（T3-3）                                                                 |
+| P11 | T2           | `abi.rs` 無改修（T2-2、T2-8）                                                                     |
+| P12 | T1 / T4      | `git worktree list` 1 行（T1-5、T4-5）                                                            |
+| P13 | 恒常         | PROGRESS 冒頭の恒常注意に記載済み。各ターンの「次への注意」には写さない                           |
+| P14 | T1           | 変異コピーに `public/themes/` を含める（T1-3）                                                    |
+
+並行性: 単一スレッド WASM・同期 Rhai で並行性は無い（RESEARCH §5 末尾）。境界値: `layout 100`（幅エラー）、`file_result` の `ok:false` + buffer、消費済み id の再完了、`host_progress` 不正 3 種、runaway handler（operations 上限）を `abi-errors` / `file-result` / `http-result` / `host-progress` / `rollback` が担う（決めた事項 8）。異常系: エラー応答も文字列一致で照合する（RESEARCH §2）。
 
 ## メモ
 
-### 粒度とゴール逆算
-
-受け入れ基準をCSS継承、通常描画、編集、SVG/特殊文字、font/DPR購読、状態coverage、行列/目視、配布へ細分化し、同じファイル群の修正と対応検査を統合した9タスク。ブラウザ準備は独立した停止単位とし、全roleの状態coverageと画面行列も各1ターンに分ける。先頭未完了を依存順で実施する。
-
-| REQUIREMENTS受け入れ基準                  | 完了を担うタスク                     |
-| ----------------------------------------- | ------------------------------------ |
-| 1 全共通部品・役割別実効px・対象外の理由  | T1台帳、T2/T3/T4/T5実測、T7全件照合  |
-| 2 フォント後の実ブラウザ比較と画像目視    | T1入口、T6読込、T8目視               |
-| 3 代表画面・通常/focus/編集確定取消・同期 | T4操作、T7一時状態、T8代表画面       |
-| 4 日本語/英数字/空/長文・欠け/重なり      | T3計測、T4入力、T5特殊描画、T8画像   |
-| 5 desktop/390px・100/200%・DPR1/2         | T5SVG換算、T6DPR通知、T8倍率別記録   |
-| 6 theme/render・編集focus・実IME限界      | T4composition、T6競合、T8目視/限界   |
-| 7 適切な回帰・build/check                 | 各修正タスクのsuite、T9最終検査/配布 |
-
-### RESEARCHの再利用設計の採否
-
-| 盗める点                                   | 採否と理由                                                                        |
-| ------------------------------------------ | --------------------------------------------------------------------------------- |
-| runtimeに閉じたCSSと役割サイズ             | 採用、T2の単一サイズ源。デモCSSだけの修正は却下、独立面に届かない                 |
-| text窓口と直接計測の接続                   | 採用、T3。サイズ数字のコピー検査は却下、実行時の継承と描画を検出できない          |
-| createControl/syncControlとcomposing guard | 採用、T4。入力作り直しは却下、選択とIME下書きを失う                               |
-| documentSprites/SVG/Canvas共有記述         | 採用、T5。両側で別の折返し表を作らない                                            |
-| figuresのWASM生成fontSize                  | 採用、T5/T7。DSL省略値をブラウザで独自補完しない                                  |
-| widget-contractの分類、extrasの展開        | 採用、T7。ただし操作kind分類のみでは全文字roleを列挙できないため生成Sceneとも照合 |
-| runtimeのCSS・ResizeObserver・render       | 採用、T6/T9。font/DPR通知を補いdisposeで解除、既存レイアウト/状態経路を維持       |
-| capture-retrospectiveの元fillTextへの委譲  | 採用、T1観測。既存撮影画像を今回の合格証拠とする案は却下                          |
-| 実WASM browser harnessと状態回帰           | 採用、T1/T4/T6。mockだけのCSS合格は却下                                           |
-| 既存build/check/testとPlaywright           | 採用、T9。新依存は不要                                                            |
-
-### 落とし穴の対応（RESEARCHの列挙順）
-
-| 落とし穴                     | 機械確認/目視の担当                    |
-| ---------------------------- | -------------------------------------- |
-| CSS宣言だけで一致判定        | T1実効観測、T2host16/20、T7全role      |
-| DOM親とstageの継承差         | T2parent別、T4Grid/dialog editor       |
-| DPR二重拡大                  | T6bitmap/transform/DPR往復、T8行列     |
-| zoom後に旧bitmapを維持       | T6DPRのみ変化、T8実ズームと代用区別    |
-| font後にfallback描画が残る   | T6遅延/失敗/dispose競合                |
-| measureTextとdraw fontの相違 | T3幅境界/寄せ/日本語/空/長文           |
-| SVG属性だけの比較            | T5CTMとborder内側倍率、T8幅行列        |
-| native editorのサイズ跳ね    | T4通常/編集/確定/取消/拒否             |
-| IME/selection/focus消失      | T4composing + theme/resize、T6font競合 |
-| 字体/太さ/行高による欠け     | T3計測、T5複数行、T8目視               |
-| 一時状態のcoverage漏れ       | T7全状態と理由付き台帳                 |
-
-並行性はT6のfont完了対dispose/render、T4/T6のcomposing対theme/resizeで担保する。境界値はT3の空/幅閾値、T5のviewport/大きな文字、T8の幅/倍率。異常系はT1起動/cleanup、T4Rhai拒否、T5media error、T6font失敗。例外は特定のエラー文字列/コードだけで捕捉せず、操作境界でその失敗系全体を処理し、元の失敗をcleanup失敗で隠さない。
-
-### 直近2件の振り返りからの採否
-
-- opfs-file-transfer: PATH入口、実行環境プローブ、整形→起動、cleanupの元エラー保持、PROGRESSのturn一意性/昇順は採用（T1/全ターン）。サーバー/Rhai fixtureの複雑作業分離の考えはT1と後続検査の分割へ反映。Content-Type既定値表は今回の文字契約に無関係のため不採用。ループ/スキル改修とusage計測追加はスコープ外で不採用。
-- development-retrospective-blog: ブラウザ経路/日本語字体の事前共有、scratch構文確認と実fixture文字列の照合、整形→build→撮影、やり直しを検証再実行/ツール指定修正に分ける記録は採用（T1/T8/全ターン）。スキル入口自体の改修とループ計測は不採用、今回のスコープ外。
-- researchのブラウザ未実測を継承し、T1成功まで実効pxや画像確認済みとは書かない。実ブラウザ起動不能は実装ターンの停止条件であり、要件内の実行手順を定められる計画作成自体の停止条件ではない。
-
-### verify round 1 の記録（turn 13）
-
-判定は差し戻し（F1〜F5）。round 2 以降はこの格子の再確認と修正差分の回帰だけを行い、新しいクラスは探さない。
-
-- 最終 gate: `bun scripts/verify-font-parity.mjs` を clean な木から実行し 14 手順とも成功（vitest 630 件、roles 28 ケース、editing 16、surfaces 18、lifecycle 5、matrix 168、distribution 8。件数は turn 12 と同じ）。所要はおよそ 70 秒で、PROGRESS turn 12 の「およそ 20 分」は実際と違う（前回の gate ログも vitest 開始から完了まで約 1 分）。前景のまま実行できる。
-- 目視: 修正前後の components、狭幅 dark の grid-lab、絵文字アイコンのダイアログを確認し、両面の文字サイズ差の解消と新たな欠け・重なりが無いことを確かめた。
-- 堅牢性の格子（実ブラウザ、`scratch/turn-013-probe.mjs`）:
-
-  | 入力経路                  | 試した条件                                                                      | 結果                          |
-  | ------------------------- | ------------------------------------------------------------------------------- | ----------------------------- |
-  | ステージの状態            | 未接続のまま load / 表示中に外す（面の順序 2 通り）/ `display: none` / CSS 無し | `display: none` 以外は F3     |
-  | ホスト CSS                | font-size 16 / 20px の継承（既存 suite）/ タグセレクタの `font` 規則            | 継承は合格、タグ規則は F4     |
-  | ホスト CSS（main と同じ） | `* { font: inherit }` と SVG 属性、`canvas` への寸法指定                        | 残留リスク（F5 で限界に記載） |
-  | 文字の内容                | 日本語・英数字・空・長文・絵文字・等幅（既存 suite の fixture）                 | 合格（境界の assert は F2）   |
-  | フォント・倍率            | 遅延読込・読込失敗・dispose 中の完了・DPR 1→2→1→2.5→1（既存 lifecycle）         | 合格                          |
-  | 検査そのもの              | 変異（metric の役割入替 ＋ `.ui-empty` の宣言削除）で roles / matrix を実行     | 両方 passed のまま → F1       |
-
-- セキュリティ: `src/` は秘密情報・外部入力の評価・新しい依存なし。検査スクリプトは `shell: true` を使わず、サーバーは 127.0.0.1 に限定、`package.json` と lockfile は不変、`src/` は `tests/` を import しない。残留リスク（修正不要、CLI を手で使う場合のみ）: runner のサーバー起動失敗時に `bunx vp dev` の process group が残る、SIGINT は suite の切れ目まで待つ、`--evidence` に repo 外のパスを渡せる（distribution が `<evidence>/dist-host` を削除する）、`--browser-endpoint` の URL をログに出す。
-- 並列レビュー: テスト妥当性と文書照合を読み取り専用のサブエージェント 2 本に分け、製品コードの差分・プローブ・変異の実行・判定は親が行った。
-
-### verify round 2 の記録（turn 19）
-
-判定は差し戻し（F6、文書のみ）。round 1 の格子の再確認と F1〜F5 の差分の回帰だけを行い、新しいクラスは探していない。
-
-- 最終 gate: `bun scripts/verify-font-parity.mjs` を clean な木から実行し 14 手順とも成功（vitest 631 件、docs:check 470 リンク、roles 28 ケース・1254 スロット、editing 16、surfaces 18、lifecycle 11、matrix 168、distribution 8。件数は turn 18 と同じ）。
-- round 1 の格子の再確認（実ブラウザ、`scratch/turn-019-probe.mjs`）:
-
-  | 入力経路       | 試した条件                                                               | 結果                                                                                          |
-  | -------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
-  | ステージの状態 | 未接続のまま load（Canvas / DOM）                                        | 合格。load resolve、`onLoad` 1、effects 1、通知 0、接続後に Canvas が描画                     |
-  | ステージの状態 | 表示中に外す / `display: none` / CSS を外す（面の順序 2 通りずつ）       | 合格。revision 0→2、effects 2、DOM 面は両方の順序で最新 state。CSS 無しだけ通知 3 件          |
-  | ステージの状態 | CSS が無いまま load（F3 の差分の回帰として追加）                         | 合格。load resolve、`onLoad` 1、effects 1。通知 → `null` → 再通知の順（F6 (B)9 で限界に記載） |
-  | ホスト CSS     | `button, input, select, textarea { font: italic 700 17px/2 serif }`      | 合格。全フォーム部品が normal・400〜600・ランタイムの字体、サイズ 12 / 13px                   |
-  | 検査そのもの   | metric の役割入替 → `roles` / `matrix`、`.ui-empty` の宣言削除 → `roles` | 合格。3 本とも非 0（matrix は 168 件、`.ui-empty` は parity 3 件）                            |
-  | 検査そのもの   | reset を 0,0,0 へ戻す → `roles`                                          | 合格。非 0・host-rule 54 件（台帳の値と一致）                                                 |
-  | 検査そのもの   | F3 の 2 か所を戻す → `tests/runtime.test.js` / `lifecycle`               | 合格。単体試験 FAIL、`lifecycle` 非 0・27 件（台帳の値と一致）                                |
-
-  変異は入れるたびに `git restore` で戻し、最後に `git status --short` が空であることを確認した。reset の 0,0,0 だけは `.ui-empty` の宣言削除を入れたまま実行した（`.ui-empty` 単独の非 0 は先に確認済み。問題一覧は host-rule 54 件と parity 3 件に分かれて出る）。
-
-- 製品コードの差分（F3・F4）: 指摘なし。`this.fonts` を読むのは `paint()` の呼び出し木の中だけで、描かなかったフレームの後に別経路が null を踏むことはない。`font-size` の直値は `src/runtime.css` に 0 件、Canvas の `ctx.font` は役割経由（sprite の Scene 値を除く）。
-- 目視: 修正後の uivolve-forms（独立・light）と components（デモ・dark）を開き、両面の文字サイズが揃い新たな欠け・重なりが無いことを確かめた。
-- セキュリティ: F1〜F5 の差分に秘密情報・外部入力の評価・`shell: true`・新しい依存なし（`package.json`・lockfile・`engine/`・`public/` は main から不変）。`onError` に載る CSS の取得値はデモでは `textContent` で表示される。round 1 の残留リスク 4 件は変化なし。
-- 文書: F5 の一覧は docs 内では全項目が直っていた。指摘は F6 のとおり。**同型の指摘を round 1 で拾えなかった理由**: (A) は round 1 の後に F2〜F4 が証跡を動かして生じた食い違い、(B) の大半は F3〜F5 が round 1 の後に書き足した文、(A)3 は round 1 が台帳の行だけを挙げて同じ文言の出どころ（検査が証跡へ書く文字列）まで追わなかったため。
-- 並列レビュー: 文書と証跡 JSON の照合を読み取り専用のサブエージェント 1 本に任せ、F6 に載せる項目は親が該当行・証跡を読み直した（読み直していないものは「要確認」と明記）。gate・プローブ・変異・判定は親が行った。
-- round 3 の範囲: F6 の各項目の照合、最終 gate、木のクリーン確認だけ。文書の新しい指摘は「受け入れ基準の達成や検査の範囲を誤って伝えるもの」に限って差し戻し、字句は VERIFICATION.md の残留に書いて合格にする。
+- **ゴール逆算**: 受け入れ基準 1 = T2-3 / T2-8 / T3-6 / T4-3、2 = T1 / T2-4 / T4-1、3 = T2-2 / T2-3、4 = T2-2 / T2-3、5 = T3-3 / T4-4、6 = T2-7。RESEARCH §6 の提案 4 件は、再 load・dialog 完了・部品種別 payload を決めた事項 7〜8 に、`safe_key` と `http` の `kind` の注記を T3-2 に採用した（REQUIREMENTS.md は書き換えない）
+- **タスク数 4**: REQUIREMENTS が「文書 1 本 + 純リファクタ + 照合」で小さく、各タスクが 1 ターンで実装 + テスト + コミットまで収まる。8 タスクへ増やさない（テンプレートの方針）
+- **T2 の進め方**: 先に `instance.rs` に struct と `load` を切り出して `cargo test` を通し、次に `dispatch` 以降の `self.x` → `self.root.x` を機械的に置換する。借用エラーは `let root = &mut self.root;` の導入ではなく直接のフィールド参照で解く（`self.root.http.commit(names, &self.root.package.requests)` は disjoint fields で通る）。`self.state_json()?` を呼ぶ箇所（`dispatch:621`、`commit_state:940`、`layout:995`）は `self.root.state_json()?` に置き換え、呼び出し回数・位置を変えない（P4）
+- **RESEARCH「盗める点」の採否**:
+  | 盗める点                                                                     | 採否                                               | 理由                                                                                       |
+  | ---------------------------------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+  | `tests/abi.test.js:14-28` の `raw()` と `:82` の 2 インスタンス起動          | 採用                                               | 照合スクリプトの WASM 呼び出しの形                                                         |
+  | `scratch/turn-001-compare.mjs`（固定 clock・descriptor 投入・ok/error 集計） | 採用（差分表示を JSON 経路に変更、シーケンス追加） | 実測済みで 230 応答 0 差分を再現できる                                                     |
+  | `scripts/verify-transfer.mjs` の手順配列と exit code                         | 採用（所要の出力を追加）                           | 最終判定の形。振り返り提案「所要を出す」                                                   |
+  | `dynamic_ui.rs` の「テンプレート（`package.ui`）/ 確定ツリー（`ui`）」の対   | 採用                                               | Instance が同じ対を持つ。段階 3 で子も同じ関数を使える                                     |
+  | `clear()` 7 連の切り出し                                                     | 採用（`Instance::clear_queues` = 5 キューのみ）    | 重複削減。順序は観測不能と確認済み                                                         |
+  | `commit_state` を Instance 側へ移し root 共通物を引数で渡す                  | 却下                                               | `prepare` の順序と借用を変えないため Runtime に残す（RESEARCH §1.3 推奨）。段階 3 で再検討 |
+  | `functions` を `ast.iter_functions()` から再計算                             | 却下                                               | 差分最小。フィールド維持                                                                   |
+  | Rhai `call_fn_with_options` / `Engine::new_raw` + 共有パッケージ             | 却下                                               | 挙動不変（最上位文の評価・上限の扱いが変わり得る）                                         |
+  | `dialogs::SEQUENCE` などの thread_local の移動                               | 却下                                               | P1。文書の残課題に記す                                                                     |
+  | WASM のバイト比較                                                            | 却下                                               | 同一ソースでも sha256 が違う（RESEARCH §3）                                                |
+- **直近 2 件の振り返りの「次回への提案」の採否**:
+  - 採用: 変異表を検査タスクの完了基準に入れる（T1 / T2 / T4 の M1〜M3）。並列サブ作業を最終タスクに置かず gate は前景（T4）。台帳規約（生の値は証跡 JSON を指す。T3-6、T4-3）。runner が手順別所要と合計を出す（T4-1）。恒常の注意と次のタスク固有の注意の分離（PROGRESS 冒頭に既存）。「既存画面で条件が揃わない」対策としてインライン fixture を最初から計画に入れる（決めた事項 8）。検査ファイルを役割で分ける（compare / build-variant / runner の 3 本）。`gsd-lite-loop.sh --where` を入口にする（本ターンで実施）
+  - 対象外（理由）: 実ブラウザの起動プローブ（本マイルストーンはブラウザ不要）、Codex sandbox（全フェーズ Claude）、lean-ctx フックの root 修正（ループ・環境の改修はスコープ外。恒常注意で回避）、verify の「要確認」付与（verify 側の運用）、`origin` の扱い（discuss で解決済み、DECISIONS）
+- **impl への注意**: `bun run build:wasm` は `public/engine.wasm` を上書きする。base は必ず `target/engine-compare/base-35120e0.wasm`（別名）に置く。`.gsd-lite/` `scripts/` `tests/` 配下の `cat` / `grep` はフックに拒否されるので Read ツールと `git grep` を使う（恒常注意）。変異ビルドは作業ツリーを触らない設計（コピー先で置換）なので `git status` が汚れたら設計違反

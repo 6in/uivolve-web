@@ -1,4 +1,4 @@
-use rhai::{Dynamic, Engine, Scope, AST};
+use rhai::{Dynamic, Engine, Scope};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -18,6 +18,7 @@ pub use files::FileBytes;
 mod grid;
 mod host;
 mod http;
+mod instance;
 mod kanban;
 mod layouts;
 mod metadata;
@@ -360,18 +361,7 @@ pub struct Modal {
 }
 
 pub struct Runtime {
-    package: Package,
-    ui: Node,
-    functions: HashSet<String>,
-    engine: Engine,
-    extension_context: extensions::ExtensionContext,
-    ast: AST,
-    state: Dynamic,
-    http: http::Requests,
-    host: host::Requests,
-    storage: storage::Requests,
-    files: files::Requests,
-    rpc: rpc::Requests,
+    root: instance::Instance,
     dialogs: dialogs::Requests,
     pages: pages::Requests,
     pub revision: u32,
@@ -400,186 +390,25 @@ impl Runtime {
     }
 
     pub fn load_with_clock(
-        mut package: Package,
+        package: Package,
         script: &str,
         descriptors: HashMap<String, Vec<u8>>,
         clock: Option<extensions::Clock>,
         register: impl FnOnce(&mut Engine),
     ) -> Result<Self, String> {
-        let extension_context = extensions::ExtensionContext::default();
-        let _clock_guard = extension_context.enter(clock)?;
-        if package.version != 1 {
-            return Err("Unsupported package version (expected 1)".into());
-        }
-        if !package.state.is_object() {
-            return Err("Initial state must be an object".into());
-        }
-        package.webmcp.validate()?;
-        pages::Requests::validate(&package.pages)?;
-        if let Some(schema) = &package.state_schema {
-            schema.definition()?;
-            schema.validate(&package.state)?;
-        }
-        if script.len() > 100_000 {
-            return Err("Script exceeds 100 KB".into());
-        }
-        fields::normalize(&mut package.ui, "root");
-        validate(&package.ui, &mut HashSet::new(), &mut 0, 0)?;
-        let initial_ui = dynamic_ui::resolve(&package.ui, &package.state)?;
-        initialize_ui(&initial_ui, &mut package.state);
-        if let Some(schema) = &package.state_schema {
-            schema.bindings(&initial_ui)?;
-            schema.validate(&package.state)?;
-        }
-        if package.ui.xtype == "window" {
-            return Err("A window must be inside a container or panel".into());
-        }
-        let mut engine = Engine::new();
-        extensions::register_with_context(&mut engine, &extension_context);
-        let mut http = http::Requests::default();
-        http.register(&mut engine);
-        let mut host = host::Requests::default();
-        host.register(&mut engine);
-        let mut storage = storage::Requests::default();
-        storage.register(&mut engine);
-        let mut files = files::Requests::default();
-        files.register(&mut engine);
-        let mut rpc = rpc::Requests::default();
-        rpc.initialize(&package.rpc, descriptors)?;
-        rpc.register(&mut engine);
         let mut dialogs = dialogs::Requests::default();
-        dialogs.register(&mut engine);
         let pages = pages::Requests::default();
-        pages.register(&mut engine);
-        register(&mut engine);
-        engine.set_max_operations(50_000);
-        engine.set_max_call_levels(32);
-        engine.set_max_expr_depths(64, 32);
-        engine.set_max_array_size(10_000);
-        engine.set_max_map_size(32_000);
-        engine.set_max_string_size(100_000);
-        let ast = engine
-            .compile(script)
-            .map_err(|e| format!("{}: {e}", package.script))?;
-        let functions: HashSet<String> = ast.iter_functions().map(|f| f.name.to_owned()).collect();
-        if !functions.contains("init") {
-            return Err("Script must define init(state)".into());
-        }
-        validate_handlers(&initial_ui, &functions)?;
-        host::Requests::validate(&package.operations, &functions)?;
-        if package.requests.len() > 8 {
-            return Err("At most 8 HTTP request definitions".into());
-        }
-        for (name, request) in &package.requests {
-            if name.is_empty()
-                || name.len() > 80
-                || request.url.is_empty()
-                || request.url.len() > 2048
-            {
-                return Err("HTTP request needs a name and a URL of at most 2048 bytes".into());
-            }
-            if !functions.contains(&request.handler) {
-                return Err(format!(
-                    "HTTP request {name}: undefined handler {}",
-                    request.handler
-                ));
-            }
-        }
-        if package.storage.len() > 8 {
-            return Err("At most 8 storage definitions".into());
-        }
-        if !package.storage.is_empty() && !storage::safe_key(&package.id) {
-            return Err(
-                "Storage requires a page id with 1–80 ASCII letters, digits, - or _".into(),
-            );
-        }
-        for (name, definition) in &package.storage {
-            if !storage::safe_key(name) || !storage::safe_key(&definition.key) {
-                return Err(
-                    "Storage names and keys require 1–80 ASCII letters, digits, - or _".into(),
-                );
-            }
-            if !functions.contains(&definition.handler) {
-                return Err(format!(
-                    "Storage request {name}: undefined handler {}",
-                    definition.handler
-                ));
-            }
-        }
-        if package.files.len() > 8 {
-            return Err("At most 8 file volumes".into());
-        }
-        if !package.files.is_empty() && !storage::safe_key(&package.id) {
-            return Err("Files require a safe page id".into());
-        }
-        for (name, definition) in &package.files {
-            if !storage::safe_key(name) {
-                return Err("Invalid file volume name".into());
-            }
-            if !functions.contains(&definition.handler) {
-                return Err(format!(
-                    "File volume {name}: undefined handler {}",
-                    definition.handler
-                ));
-            }
-        }
-        for (name, definition) in &package.rpc {
-            if !functions.contains(&definition.handler) {
-                return Err(format!(
-                    "RPC {name}: undefined handler {}",
-                    definition.handler
-                ));
-            }
-        }
-        let state = rhai::serde::to_dynamic(&package.state).map_err(|e| e.to_string())?;
-        let state: Dynamic = engine
-            .call_fn(&mut Scope::new(), &ast, "init", (state,))
-            .map_err(|e| format!("{} / init: {e}", package.script))?;
-        check_state(&state)?;
-        let mut initial: Value = rhai::serde::from_dynamic(&state).map_err(|e| e.to_string())?;
-        let ui = dynamic_ui::resolve(&package.ui, &initial)?;
-        validate_handlers(&ui, &functions)?;
-        dynamic_ui::initialize_added(&initial_ui, &ui, &mut initial);
-        let ui = dynamic_ui::resolve(&package.ui, &initial)?;
-        validate_handlers(&ui, &functions)?;
-        validate_ui_state(&ui, &initial)?;
-        if let Some(schema) = &package.state_schema {
-            schema.bindings(&ui)?;
-            schema.validate(&initial)?;
-        }
-        let state = rhai::serde::to_dynamic(initial).map_err(|e| e.to_string())?;
-        check_state(&state)?;
-        let names = http.prepare(&package.requests)?;
-        let host_intents = host.prepare(&package.operations)?;
-        let intents = storage.prepare(&package.storage)?;
-        let file_intents = files.prepare(&package.files)?;
-        let rpc_intents = rpc.prepare()?;
-        let dialog_intents = dialogs.prepare(&ast)?;
-        if !pages.prepare(&package.pages)?.is_empty() {
-            return Err("navigate is only available in event handlers, not init".into());
-        }
-        let (file_bytes, file_count) = files::Requests::size(&file_intents);
-        let (rpc_bytes, rpc_count) = rpc::Requests::size(&rpc_intents);
-        buffers::capacity(file_bytes + rpc_bytes, file_count + rpc_count)?;
-        http.commit(names, &package.requests);
-        host.commit(host_intents);
-        storage.commit(intents, &package.storage);
-        files.commit(file_intents);
-        rpc.commit(rpc_intents, &package.rpc);
-        dialogs.commit(dialog_intents);
-        Ok(Self {
+        let root = instance::Instance::load(
             package,
-            ui,
-            functions,
-            engine,
-            extension_context,
-            ast,
-            state,
-            http,
-            host,
-            storage,
-            files,
-            rpc,
+            script,
+            descriptors,
+            clock,
+            register,
+            &mut dialogs,
+            &pages,
+        )?;
+        Ok(Self {
+            root,
             dialogs,
             pages,
             revision: 0,
@@ -591,17 +420,13 @@ impl Runtime {
         clock: Option<extensions::Clock>,
         execute: impl FnOnce(&mut Self) -> Result<T, String>,
     ) -> Result<T, String> {
-        let _clock_guard = self.extension_context.enter(clock)?;
+        let _clock_guard = self.root.extension_context.enter(clock)?;
         execute(self)
     }
 
     pub fn dispatch(&mut self, target: &str, mut payload: Value) -> Result<(), String> {
         self.pages.clear();
-        self.http.clear();
-        self.host.clear();
-        self.storage.clear();
-        self.files.clear();
-        self.rpc.clear();
+        self.root.clear_queues();
         self.dialogs.clear();
         if self.dialogs.active().is_some() {
             return match self.dialogs.event(target, &payload)? {
@@ -618,14 +443,14 @@ impl Runtime {
         if target.starts_with(":dialog:") {
             return Ok(());
         }
-        let mut state = self.state_json()?;
+        let mut state = self.root.state_json()?;
         let mut path = Vec::new();
-        if !find_path(&self.ui, target, &mut path) {
+        if !find_path(&self.root.ui, target, &mut path) {
             return Err(format!("Unknown itemId: {target}"));
         }
         let node = *path.last().unwrap();
         let mut windows = Vec::new();
-        collect_windows(&self.ui, &state, &mut windows);
+        collect_windows(&self.root.ui, &state, &mut windows);
         let scope = path.iter().rev().find(|n| n.xtype == "window");
         if windows
             .last()
@@ -650,7 +475,7 @@ impl Runtime {
         if fields::input(node) && node.read_only {
             return Ok(());
         }
-        navigation::close_other_menus(&self.ui, &mut state, &path);
+        navigation::close_other_menus(&self.root.ui, &mut state, &path);
         if node.xtype == "kanban" {
             kanban::event(node, &mut state, &mut payload)?;
         } else if extras::event_component(node) {
@@ -706,12 +531,18 @@ impl Runtime {
             let event = rhai::serde::to_dynamic(json!({ "target": target, "action": action, "value": event_value.unwrap_or_else(|| payload.get("value").cloned().unwrap_or(Value::Null)), "id": payload.get("id").cloned().unwrap_or(Value::Null), "column": payload.get("column").cloned().unwrap_or(Value::Null), "oldValue": payload.get("oldValue").cloned().unwrap_or(Value::Null), "beforeId": payload.get("beforeId").cloned().unwrap_or(Value::Null) }))
                 .map_err(|e| e.to_string())?;
             next = self
+                .root
                 .engine
-                .call_fn(&mut Scope::new(), &self.ast, &node.handler, (next, event))
+                .call_fn(
+                    &mut Scope::new(),
+                    &self.root.ast,
+                    &node.handler,
+                    (next, event),
+                )
                 .map_err(|e| {
                     format!(
                         "{} / {} / {}: {e}",
-                        self.package.script, target, node.handler
+                        self.root.package.script, target, node.handler
                     )
                 })?;
         }
@@ -719,31 +550,28 @@ impl Runtime {
     }
 
     pub fn progress_host(&mut self, id: u64, response: Value) -> Result<(), String> {
-        let name = self.host.progress(id, &response)?;
-        let handler = self.package.operations[&name].options["progressHandler"]
+        let name = self.root.host.progress(id, &response)?;
+        let handler = self.root.package.operations[&name].options["progressHandler"]
             .as_str()
             .ok_or("Host operation has no progress handler")?
             .to_string();
         self.pages.clear();
-        self.http.clear();
-        self.host.clear();
-        self.storage.clear();
-        self.files.clear();
-        self.rpc.clear();
+        self.root.clear_queues();
         self.dialogs.clear();
         let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
         let next = self
+            .root
             .engine
             .call_fn(
                 &mut Scope::new(),
-                &self.ast,
+                &self.root.ast,
                 &handler,
-                (self.state.clone(), response),
+                (self.root.state.clone(), response),
             )
             .map_err(|e| {
                 format!(
                     "{} / host progress {} / {}: {e}",
-                    self.package.script, name, handler
+                    self.root.package.script, name, handler
                 )
             })?;
         self.commit_state(next)
@@ -751,77 +579,78 @@ impl Runtime {
 
     pub fn complete_host(&mut self, id: u64, response: Value) -> Result<(), String> {
         host::validate_result(&response)?;
-        let name = self.host.consume(id)?;
+        let name = self.root.host.consume(id)?;
         self.pages.clear();
-        self.http.clear();
-        self.host.clear();
-        self.storage.clear();
-        self.files.clear();
-        self.rpc.clear();
+        self.root.clear_queues();
         self.dialogs.clear();
-        let handler = &self.package.operations[&name].handler;
+        let handler = &self.root.package.operations[&name].handler;
         let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
         let next = self
+            .root
             .engine
             .call_fn(
                 &mut Scope::new(),
-                &self.ast,
+                &self.root.ast,
                 handler,
-                (self.state.clone(), response),
+                (self.root.state.clone(), response),
             )
-            .map_err(|e| format!("{} / host {} / {}: {e}", self.package.script, name, handler))?;
+            .map_err(|e| {
+                format!(
+                    "{} / host {} / {}: {e}",
+                    self.root.package.script, name, handler
+                )
+            })?;
         self.commit_state(next)
     }
 
     pub fn complete_http(&mut self, id: u64, response: Value) -> Result<(), String> {
         self.pages.clear();
-        let name = self.http.consume(id)?;
-        self.http.clear();
-        self.host.clear();
-        self.storage.clear();
-        self.files.clear();
-        self.rpc.clear();
+        let name = self.root.http.consume(id)?;
+        self.root.clear_queues();
         self.dialogs.clear();
-        let handler = &self.package.requests[&name].handler;
+        let handler = &self.root.package.requests[&name].handler;
         let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
         // Use current state, including edits made while the HTTP request was in flight.
         let next = self
+            .root
             .engine
             .call_fn(
                 &mut Scope::new(),
-                &self.ast,
+                &self.root.ast,
                 handler,
-                (self.state.clone(), response),
+                (self.root.state.clone(), response),
             )
-            .map_err(|e| format!("{} / HTTP {} / {}: {e}", self.package.script, name, handler))?;
+            .map_err(|e| {
+                format!(
+                    "{} / HTTP {} / {}: {e}",
+                    self.root.package.script, name, handler
+                )
+            })?;
         self.commit_state(next)
     }
 
     pub fn complete_storage(&mut self, id: u64, mut response: Value) -> Result<(), String> {
         self.pages.clear();
-        let (name, operation) = self.storage.consume(id)?;
-        self.http.clear();
-        self.host.clear();
-        self.storage.clear();
-        self.files.clear();
-        self.rpc.clear();
+        let (name, operation) = self.root.storage.consume(id)?;
+        self.root.clear_queues();
         self.dialogs.clear();
         response["operation"] = serde_json::to_value(operation).map_err(|e| e.to_string())?;
         response["request"] = json!(name);
-        let handler = &self.package.storage[&name].handler;
+        let handler = &self.root.package.storage[&name].handler;
         let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
         let next = self
+            .root
             .engine
             .call_fn(
                 &mut Scope::new(),
-                &self.ast,
+                &self.root.ast,
                 handler,
-                (self.state.clone(), response),
+                (self.root.state.clone(), response),
             )
             .map_err(|e| {
                 format!(
                     "{} / storage {} / {}: {e}",
-                    self.package.script, name, handler
+                    self.root.package.script, name, handler
                 )
             })?;
         self.commit_state(next)
@@ -833,27 +662,29 @@ impl Runtime {
         response: Value,
         buffer: Option<u32>,
     ) -> Result<(), String> {
-        self.http.clear();
-        self.host.clear();
         self.pages.clear();
-        self.storage.clear();
-        self.files.clear();
-        self.rpc.clear();
+        self.root.clear_queues();
         self.dialogs.clear();
         let mut response: rhai::Map = rhai::serde::to_dynamic(response)
             .map_err(|e| e.to_string())?
             .cast();
-        let name = self.files.consume(id, &mut response, buffer)?;
-        let handler = &self.package.files[&name].handler;
+        let name = self.root.files.consume(id, &mut response, buffer)?;
+        let handler = &self.root.package.files[&name].handler;
         let next = self
+            .root
             .engine
             .call_fn(
                 &mut Scope::new(),
-                &self.ast,
+                &self.root.ast,
                 handler,
-                (self.state.clone(), Dynamic::from_map(response)),
+                (self.root.state.clone(), Dynamic::from_map(response)),
             )
-            .map_err(|e| format!("{} / file {} / {}: {e}", self.package.script, name, handler))?;
+            .map_err(|e| {
+                format!(
+                    "{} / file {} / {}: {e}",
+                    self.root.package.script, name, handler
+                )
+            })?;
         self.commit_state(next)
     }
 
@@ -864,66 +695,67 @@ impl Runtime {
         buffer: Option<u32>,
     ) -> Result<(), String> {
         self.pages.clear();
-        self.http.clear();
-        self.host.clear();
-        self.storage.clear();
-        self.files.clear();
-        self.rpc.clear();
+        self.root.clear_queues();
         self.dialogs.clear();
-        let name = self.rpc.consume(id, &mut response, buffer)?;
-        let handler = &self.package.rpc[&name].handler;
+        let name = self.root.rpc.consume(id, &mut response, buffer)?;
+        let handler = &self.root.package.rpc[&name].handler;
         let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
         let next = self
+            .root
             .engine
             .call_fn(
                 &mut Scope::new(),
-                &self.ast,
+                &self.root.ast,
                 handler,
-                (self.state.clone(), response),
+                (self.root.state.clone(), response),
             )
-            .map_err(|e| format!("{} / RPC {} / {}: {e}", self.package.script, name, handler))?;
+            .map_err(|e| {
+                format!(
+                    "{} / RPC {} / {}: {e}",
+                    self.root.package.script, name, handler
+                )
+            })?;
         self.commit_state(next)
     }
     pub fn complete_dialog(&mut self, id: u64, mut response: Value) -> Result<(), String> {
         self.pages.clear();
-        self.http.clear();
-        self.host.clear();
-        self.storage.clear();
-        self.files.clear();
-        self.rpc.clear();
+        self.root.clear_queues();
         self.dialogs.clear();
         let handler = self.dialogs.consume(id, &mut response)?;
         let next = if handler.is_empty() {
-            self.state.clone()
+            self.root.state.clone()
         } else {
             let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
-            self.engine
+            self.root
+                .engine
                 .call_fn(
                     &mut Scope::new(),
-                    &self.ast,
+                    &self.root.ast,
                     &handler,
-                    (self.state.clone(), response),
+                    (self.root.state.clone(), response),
                 )
-                .map_err(|e| format!("{} / dialog / {}: {e}", self.package.script, handler))?
+                .map_err(|e| format!("{} / dialog / {}: {e}", self.root.package.script, handler))?
         };
         self.commit_state(next)
     }
     pub fn take_effects(&mut self) -> Vec<Value> {
-        self.http
+        self.root
+            .http
             .take()
             .into_iter()
             .map(|effect| serde_json::to_value(effect).unwrap())
             .chain(
-                self.storage
+                self.root
+                    .storage
                     .take()
                     .into_iter()
                     .map(|effect| serde_json::to_value(effect).unwrap()),
             )
-            .chain(self.files.take())
-            .chain(self.rpc.take())
+            .chain(self.root.files.take())
+            .chain(self.root.rpc.take())
             .chain(self.dialogs.take())
             .chain(self.pages.take())
-            .chain(self.host.take())
+            .chain(self.root.host.take())
             .collect()
     }
 
@@ -934,28 +766,28 @@ impl Runtime {
             return Err("Handler must return a state object".into());
         }
         check_state(&next)?;
-        let ui = dynamic_ui::resolve(&self.package.ui, &candidate)?;
-        validate_handlers(&ui, &self.functions)?;
-        dynamic_ui::initialize_added(&self.ui, &ui, &mut candidate);
-        grid::reconcile(&ui, &self.state_json()?, &mut candidate);
+        let ui = dynamic_ui::resolve(&self.root.package.ui, &candidate)?;
+        validate_handlers(&ui, &self.root.functions)?;
+        dynamic_ui::initialize_added(&self.root.ui, &ui, &mut candidate);
+        grid::reconcile(&ui, &self.root.state_json()?, &mut candidate);
         // Built-in defaults/reconciliation can also touch bindings. Resolve the final state,
         // so the committed component tree always describes exactly the committed data.
-        let ui = dynamic_ui::resolve(&self.package.ui, &candidate)?;
-        validate_handlers(&ui, &self.functions)?;
+        let ui = dynamic_ui::resolve(&self.root.package.ui, &candidate)?;
+        validate_handlers(&ui, &self.root.functions)?;
         validate_ui_state(&ui, &candidate)?;
-        if let Some(schema) = &self.package.state_schema {
+        if let Some(schema) = &self.root.package.state_schema {
             schema.bindings(&ui)?;
             schema.validate(&candidate)?;
         }
         next = rhai::serde::to_dynamic(candidate).map_err(|e| e.to_string())?;
         check_state(&next)?;
-        let names = self.http.prepare(&self.package.requests)?;
-        let host_intents = self.host.prepare(&self.package.operations)?;
-        let intents = self.storage.prepare(&self.package.storage)?;
-        let file_intents = self.files.prepare(&self.package.files)?;
-        let rpc_intents = self.rpc.prepare()?;
-        let dialog_intents = self.dialogs.prepare(&self.ast)?;
-        let page_intents = self.pages.prepare(&self.package.pages)?;
+        let names = self.root.http.prepare(&self.root.package.requests)?;
+        let host_intents = self.root.host.prepare(&self.root.package.operations)?;
+        let intents = self.root.storage.prepare(&self.root.package.storage)?;
+        let file_intents = self.root.files.prepare(&self.root.package.files)?;
+        let rpc_intents = self.root.rpc.prepare()?;
+        let dialog_intents = self.dialogs.prepare(&self.root.ast)?;
+        let page_intents = self.pages.prepare(&self.root.package.pages)?;
         if !page_intents.is_empty()
             && (!names.is_empty()
                 || !intents.is_empty()
@@ -971,13 +803,15 @@ impl Runtime {
         let (file_bytes, file_count) = files::Requests::size(&file_intents);
         let (rpc_bytes, rpc_count) = rpc::Requests::size(&rpc_intents);
         buffers::capacity(file_bytes + rpc_bytes, file_count + rpc_count)?;
-        self.state = next;
-        self.ui = ui;
-        self.http.commit(names, &self.package.requests);
-        self.host.commit(host_intents);
-        self.storage.commit(intents, &self.package.storage);
-        self.files.commit(file_intents);
-        self.rpc.commit(rpc_intents, &self.package.rpc);
+        self.root.state = next;
+        self.root.ui = ui;
+        self.root.http.commit(names, &self.root.package.requests);
+        self.root.host.commit(host_intents);
+        self.root
+            .storage
+            .commit(intents, &self.root.package.storage);
+        self.root.files.commit(file_intents);
+        self.root.rpc.commit(rpc_intents, &self.root.package.rpc);
         self.dialogs.commit(dialog_intents);
         self.pages.commit(page_intents);
         self.revision += 1;
@@ -985,33 +819,36 @@ impl Runtime {
     }
 
     pub fn state_json(&self) -> Result<Value, String> {
-        rhai::serde::from_dynamic(&self.state).map_err(|e| e.to_string())
+        self.root.state_json()
     }
 
     pub fn layout(&self, width: f64) -> Result<Scene, String> {
         if !width.is_finite() || !(240.0..=4096.0).contains(&width) {
             return Err("Viewport width must be between 240 and 4096".into());
         }
-        let state = self.state_json()?;
+        let state = self.root.state_json()?;
         let mut widgets = Vec::new();
         let mut windows = Vec::new();
-        collect_windows(&self.ui, &state, &mut windows);
+        collect_windows(&self.root.ui, &state, &mut windows);
         let mut height = windows
             .iter()
-            .fold(measure(&self.ui, &state, width - 32.0) + 32.0, |h, n| {
-                h.max(
-                    (content_height(
-                        n,
-                        &state,
-                        n.width.unwrap_or(window_width()).min(width - 32.0) - 28.0,
-                    ) + 56.0)
-                        .max(n.height.unwrap_or(0.0))
-                        + 32.0,
-                )
-            })
+            .fold(
+                measure(&self.root.ui, &state, width - 32.0) + 32.0,
+                |h, n| {
+                    h.max(
+                        (content_height(
+                            n,
+                            &state,
+                            n.width.unwrap_or(window_width()).min(width - 32.0) - 28.0,
+                        ) + 56.0)
+                            .max(n.height.unwrap_or(0.0))
+                            + 32.0,
+                    )
+                },
+            )
             .max(if windows.is_empty() { 0.0 } else { 320.0 });
         arrange(
-            &self.ui,
+            &self.root.ui,
             &state,
             16.0,
             16.0,
@@ -1067,7 +904,7 @@ impl Runtime {
                 &mut widgets,
             );
             let mut path = Vec::new();
-            find_path(&self.ui, &node.item_id, &mut path);
+            find_path(&self.root.ui, &node.item_id, &mut path);
             let disabled = path
                 .iter()
                 .any(|n| n.disabled || flag(&state, &n.disabled_bind));
@@ -1119,7 +956,7 @@ impl Runtime {
             .map(|w| json!({"target":w.target,"layer":w.layer}));
         for widget in &mut widgets {
             let mut path = Vec::new();
-            if find_path(&self.ui, &widget.target, &mut path) {
+            if find_path(&self.root.ui, &widget.target, &mut path) {
                 let metadata = &path.last().unwrap().webmcp;
                 if !metadata.is_empty() {
                     widget.config["webmcp"] =
@@ -1128,8 +965,8 @@ impl Runtime {
             }
         }
         Ok(Scene {
-            webmcp: self.package.webmcp.clone(),
-            state_schema: self.package.state_schema.clone(),
+            webmcp: self.root.package.webmcp.clone(),
+            state_schema: self.root.package.state_schema.clone(),
             theme: theme::current(),
             width,
             height,
