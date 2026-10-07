@@ -562,9 +562,12 @@ impl Runtime {
         execute(self)
     }
 
-    pub fn dispatch(&mut self, target: &str, mut payload: Value) -> Result<(), String> {
+    pub fn dispatch(&mut self, target: &str, payload: Value) -> Result<(), String> {
         self.pages.clear();
         self.root.clear_queues();
+        for instance in self.components.values() {
+            instance.clear_queues();
+        }
         self.dialogs.clear();
         if self.dialogs.active().is_some() {
             return match self.dialogs.event(target, &payload)? {
@@ -581,110 +584,56 @@ impl Runtime {
         if target.starts_with(":dialog:") {
             return Ok(());
         }
-        let mut state = self.root.state_json()?;
-        let mut path = Vec::new();
-        if !find_path(&self.root.ui, target, &mut path) {
-            return Err(format!("Unknown itemId: {target}"));
-        }
-        let node = *path.last().unwrap();
-        let mut windows = Vec::new();
-        collect_windows(&self.root.ui, &state, &mut windows);
-        let scope = path.iter().rev().find(|n| n.xtype == "window");
-        if windows
-            .last()
-            .is_some_and(|w| scope.map(|n| n.item_id.as_str()) != Some(w.item_id.as_str()))
-            || path.iter().any(|n| {
-                (!n.disabled_bind.is_empty() && flag(&state, &n.disabled_bind))
-                    || n.disabled
-                    || (n.xtype == "window" && !flag(&state, &n.visible_bind))
-                    || (n.item_id != target && is_panel(n) && flag(&state, &n.collapsed_bind))
-            })
-            || navigation::hidden(&path, &state)
-            || extras::hidden(&path, &state)
-            || layouts::hidden(&path, &state)
-        {
+        let Some((key, target)) = self.route(target)? else {
             return Ok(());
-        }
-        let action = payload
-            .get("action")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_owned();
-        if fields::input(node) && node.read_only {
-            return Ok(());
-        }
-        navigation::close_other_menus(&self.root.ui, &mut state, &path);
-        if node.xtype == "kanban" {
-            kanban::event(node, &mut state, &mut payload)?;
-        } else if extras::event_component(node) {
-            extras::event(node, &path, &mut state, &mut payload)?;
-        } else if grid::advanced(node) {
-            grid::event(node, &mut state, &mut payload)?;
-        } else if navigation::component(node) {
-            navigation::event(node, &mut state, &payload)?;
-        } else if node.layout == "card" && action == "card" {
-            layouts::event(node, &mut state, &payload)?;
-        } else if is_panel(node) {
-            if action != "toggle" || node.collapsed_bind.is_empty() {
-                return Err("Panel event requires action: toggle and collapsedBind".into());
-            }
-            let collapsed = !flag(&state, &node.collapsed_bind);
-            state
-                .as_object_mut()
-                .unwrap()
-                .insert(node.collapsed_bind.clone(), json!(collapsed));
-            extras::accordion(&path, &mut state);
-        } else if node.xtype == "window" {
-            if !node.closable {
-                return Err("Window cannot be closed".into());
-            }
-            if action != "close" {
-                return Err("Window event requires action: close".into());
-            }
-            state
-                .as_object_mut()
-                .unwrap()
-                .insert(node.visible_bind.clone(), json!(false));
-        } else if node.layout == "card" {
-            return Err("Card event requires action: card".into());
-        } else if !fields::input(node) && !["button", "grid"].contains(&node.xtype.as_str()) {
-            return Err("This component does not accept events".into());
-        }
-        let event_value = if fields::input(node) {
-            Some(fields::event_value(
-                node,
-                payload.get("value").unwrap_or(&Value::Null),
-            )?)
-        } else {
-            None
         };
-        if let Some(value) = &event_value {
-            state
-                .as_object_mut()
-                .ok_or("State must be an object")?
-                .insert(node.bind.clone(), value.clone());
+        if key.is_empty() {
+            return match self.root.run_event(&target, payload)? {
+                Some(next) => self.commit_state(next),
+                None => Ok(()),
+            };
         }
-        let mut next = rhai::serde::to_dynamic(state).map_err(|e| e.to_string())?;
-        if !node.handler.is_empty() {
-            let event = rhai::serde::to_dynamic(json!({ "target": target, "action": action, "value": event_value.unwrap_or_else(|| payload.get("value").cloned().unwrap_or(Value::Null)), "id": payload.get("id").cloned().unwrap_or(Value::Null), "column": payload.get("column").cloned().unwrap_or(Value::Null), "oldValue": payload.get("oldValue").cloned().unwrap_or(Value::Null), "beforeId": payload.get("beforeId").cloned().unwrap_or(Value::Null) }))
-                .map_err(|e| e.to_string())?;
-            next = self
-                .root
-                .engine
-                .call_fn(
-                    &mut Scope::new(),
-                    &self.root.ast,
-                    &node.handler,
-                    (next, event),
-                )
-                .map_err(|e| {
-                    format!(
-                        "{} / {} / {}: {e}",
-                        self.root.package.script, target, node.handler
-                    )
-                })?;
+        let next = self.components[&key]
+            .run_event(&target, payload)
+            .map_err(|e| format!("Component {key}: {e}"))?;
+        match next {
+            Some(next) => self.commit_all(self.root.state.clone(), vec![(key, next)]),
+            None => Ok(()),
         }
-        self.commit_state(next)
+    }
+
+    /// The instance an event belongs to and the itemId inside it. Each `/` of a target names a
+    /// component node of the instance resolved so far. `None` means the event is dropped,
+    /// because a component on the way is hidden or sits under a disabled part of its parent.
+    fn route(&self, target: &str) -> Result<Option<(String, String)>, String> {
+        let mut instance = &self.root;
+        let mut key = String::new();
+        let mut rest = target;
+        while let Some((head, tail)) = rest.split_once('/') {
+            let state = instance.state_json()?;
+            let mut path = Vec::new();
+            if !find_path(&instance.ui, head, &mut path) {
+                return Err(unknown_item(target));
+            }
+            let node = *path.last().unwrap();
+            if node.port_kind != "component" {
+                return Err(unknown_item(target));
+            }
+            if instance.blocked(&path, &state, head) || hidden_component(node, &state) {
+                return Ok(None);
+            }
+            key = if key.is_empty() {
+                head.to_owned()
+            } else {
+                format!("{key}/{head}")
+            };
+            instance = self
+                .components
+                .get(&key)
+                .ok_or_else(|| unknown_item(target))?;
+            rest = tail;
+        }
+        Ok(Some((key, rest.to_owned())))
     }
 
     pub fn progress_host(&mut self, id: u64, response: Value) -> Result<(), String> {
@@ -897,28 +846,31 @@ impl Runtime {
             .collect()
     }
 
-    fn commit_state(&mut self, mut next: Dynamic) -> Result<(), String> {
-        // Commit only after successful execution and serialization. Failed handlers preserve the old state.
-        let mut candidate: Value = rhai::serde::from_dynamic(&next).map_err(|e| e.to_string())?;
-        if !candidate.is_object() {
-            return Err("Handler must return a state object".into());
+    fn commit_state(&mut self, next: Dynamic) -> Result<(), String> {
+        self.commit_all(next, vec![])
+    }
+
+    /// Commit one event across the instances it moved: everything is checked before anything is
+    /// moved, so a failure anywhere leaves the whole screen — root and children — untouched.
+    fn commit_all(
+        &mut self,
+        root_next: Dynamic,
+        children: Vec<(String, Dynamic)>,
+    ) -> Result<(), String> {
+        let (next, ui) = self.root.prepare_commit(root_next)?;
+        let mut children: Vec<(String, Dynamic)> = children;
+        children.sort_by(|(a, _), (b, _)| a.cmp(b));
+        let mut prepared = Vec::new();
+        for (key, child_next) in children {
+            let instance = self
+                .components
+                .get(&key)
+                .ok_or_else(|| unknown_item(&key))?;
+            let (state, child_ui) = instance
+                .prepare_commit(child_next)
+                .map_err(|e| format!("Component {key}: {e}"))?;
+            prepared.push((key, state, child_ui));
         }
-        check_state(&next)?;
-        let ui = dynamic_ui::resolve(&self.root.package.ui, &candidate, &self.root.declared)?;
-        validate_handlers(&ui, &self.root.functions)?;
-        dynamic_ui::initialize_added(&self.root.ui, &ui, &mut candidate);
-        grid::reconcile(&ui, &self.root.state_json()?, &mut candidate);
-        // Built-in defaults/reconciliation can also touch bindings. Resolve the final state,
-        // so the committed component tree always describes exactly the committed data.
-        let ui = dynamic_ui::resolve(&self.root.package.ui, &candidate, &self.root.declared)?;
-        validate_handlers(&ui, &self.root.functions)?;
-        validate_ui_state(&ui, &candidate)?;
-        if let Some(schema) = &self.root.package.state_schema {
-            schema.bindings(&ui)?;
-            schema.validate(&candidate)?;
-        }
-        next = rhai::serde::to_dynamic(candidate).map_err(|e| e.to_string())?;
-        check_state(&next)?;
         let names = self.root.http.prepare(&self.root.package.requests)?;
         let host_intents = self.root.host.prepare(&self.root.package.operations)?;
         let intents = self.root.storage.prepare(&self.root.package.storage)?;
@@ -941,8 +893,7 @@ impl Runtime {
         let (file_bytes, file_count) = files::Requests::size(&file_intents);
         let (rpc_bytes, rpc_count) = rpc::Requests::size(&rpc_intents);
         buffers::capacity(file_bytes + rpc_bytes, file_count + rpc_count)?;
-        self.root.state = next;
-        self.root.ui = ui;
+        self.root.apply(next, ui);
         self.root.http.commit(names, &self.root.package.requests);
         self.root.host.commit(host_intents);
         self.root
@@ -952,6 +903,12 @@ impl Runtime {
         self.root.rpc.commit(rpc_intents, &self.root.package.rpc);
         self.dialogs.commit(dialog_intents);
         self.pages.commit(page_intents);
+        for (key, state, ui) in prepared {
+            self.components
+                .get_mut(&key)
+                .expect("a component prepared above")
+                .apply(state, ui);
+        }
         self.revision += 1;
         Ok(())
     }
@@ -1128,6 +1085,157 @@ impl Runtime {
             dialog: self.dialogs.snapshot(),
         })
     }
+}
+
+/// What one instance does with an event of its own: resolve the target in its component tree,
+/// drop the event when the tree hides it, apply the built-in behaviour and call the handler.
+/// It stays next to the layout because every helper it needs describes a component tree.
+impl instance::Instance {
+    /// `Ok(None)` when the event is dropped, `Ok(Some(next))` when a handler (or a built-in
+    /// binding) produced a candidate state. Nothing is committed here.
+    fn run_event(&self, target: &str, mut payload: Value) -> Result<Option<Dynamic>, String> {
+        let mut state = self.state_json()?;
+        let mut path = Vec::new();
+        if !find_path(&self.ui, target, &mut path) {
+            return Err(unknown_item(target));
+        }
+        let node = *path.last().unwrap();
+        if self.blocked(&path, &state, target) {
+            return Ok(None);
+        }
+        let action = payload
+            .get("action")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned();
+        if fields::input(node) && node.read_only {
+            return Ok(None);
+        }
+        navigation::close_other_menus(&self.ui, &mut state, &path);
+        if node.xtype == "kanban" {
+            kanban::event(node, &mut state, &mut payload)?;
+        } else if extras::event_component(node) {
+            extras::event(node, &path, &mut state, &mut payload)?;
+        } else if grid::advanced(node) {
+            grid::event(node, &mut state, &mut payload)?;
+        } else if navigation::component(node) {
+            navigation::event(node, &mut state, &payload)?;
+        } else if node.layout == "card" && action == "card" {
+            layouts::event(node, &mut state, &payload)?;
+        } else if is_panel(node) {
+            if action != "toggle" || node.collapsed_bind.is_empty() {
+                return Err("Panel event requires action: toggle and collapsedBind".into());
+            }
+            let collapsed = !flag(&state, &node.collapsed_bind);
+            state
+                .as_object_mut()
+                .unwrap()
+                .insert(node.collapsed_bind.clone(), json!(collapsed));
+            extras::accordion(&path, &mut state);
+        } else if node.xtype == "window" {
+            if !node.closable {
+                return Err("Window cannot be closed".into());
+            }
+            if action != "close" {
+                return Err("Window event requires action: close".into());
+            }
+            state
+                .as_object_mut()
+                .unwrap()
+                .insert(node.visible_bind.clone(), json!(false));
+        } else if node.layout == "card" {
+            return Err("Card event requires action: card".into());
+        } else if !fields::input(node) && !["button", "grid"].contains(&node.xtype.as_str()) {
+            return Err("This component does not accept events".into());
+        }
+        let event_value = if fields::input(node) {
+            Some(fields::event_value(
+                node,
+                payload.get("value").unwrap_or(&Value::Null),
+            )?)
+        } else {
+            None
+        };
+        if let Some(value) = &event_value {
+            state
+                .as_object_mut()
+                .ok_or("State must be an object")?
+                .insert(node.bind.clone(), value.clone());
+        }
+        let mut next = rhai::serde::to_dynamic(state).map_err(|e| e.to_string())?;
+        if !node.handler.is_empty() {
+            let event = rhai::serde::to_dynamic(json!({ "target": target, "action": action, "value": event_value.unwrap_or_else(|| payload.get("value").cloned().unwrap_or(Value::Null)), "id": payload.get("id").cloned().unwrap_or(Value::Null), "column": payload.get("column").cloned().unwrap_or(Value::Null), "oldValue": payload.get("oldValue").cloned().unwrap_or(Value::Null), "beforeId": payload.get("beforeId").cloned().unwrap_or(Value::Null) }))
+                .map_err(|e| e.to_string())?;
+            next = self
+                .engine
+                .call_fn(&mut Scope::new(), &self.ast, &node.handler, (next, event))
+                .map_err(|e| {
+                    format!(
+                        "{} / {} / {}: {e}",
+                        self.package.script, target, node.handler
+                    )
+                })?;
+        }
+        Ok(Some(next))
+    }
+
+    /// Whether the tree between the root of this instance and `target` swallows the event: a
+    /// window above it, something disabled or collapsed, or a hidden tab, card or menu.
+    fn blocked(&self, path: &[&Node], state: &Value, target: &str) -> bool {
+        let mut windows = Vec::new();
+        collect_windows(&self.ui, state, &mut windows);
+        let scope = path.iter().rev().find(|n| n.xtype == "window");
+        windows
+            .last()
+            .is_some_and(|w| scope.map(|n| n.item_id.as_str()) != Some(w.item_id.as_str()))
+            || path.iter().any(|n| {
+                (!n.disabled_bind.is_empty() && flag(state, &n.disabled_bind))
+                    || n.disabled
+                    || (n.xtype == "window" && !flag(state, &n.visible_bind))
+                    || (n.item_id != target && is_panel(n) && flag(state, &n.collapsed_bind))
+            })
+            || navigation::hidden(path, state)
+            || extras::hidden(path, state)
+            || layouts::hidden(path, state)
+    }
+
+    /// Everything `commit_all` checks before any instance of a screen is moved: the candidate
+    /// state and the component tree it resolves to. Returns them for `apply`.
+    fn prepare_commit(&self, next: Dynamic) -> Result<(Dynamic, Node), String> {
+        // Commit only after successful execution and serialization. Failed handlers preserve the old state.
+        let mut candidate: Value = rhai::serde::from_dynamic(&next).map_err(|e| e.to_string())?;
+        if !candidate.is_object() {
+            return Err("Handler must return a state object".into());
+        }
+        check_state(&next)?;
+        let ui = dynamic_ui::resolve(&self.package.ui, &candidate, &self.declared)?;
+        validate_handlers(&ui, &self.functions)?;
+        dynamic_ui::initialize_added(&self.ui, &ui, &mut candidate);
+        grid::reconcile(&ui, &self.state_json()?, &mut candidate);
+        // Built-in defaults/reconciliation can also touch bindings. Resolve the final state,
+        // so the committed component tree always describes exactly the committed data.
+        let ui = dynamic_ui::resolve(&self.package.ui, &candidate, &self.declared)?;
+        validate_handlers(&ui, &self.functions)?;
+        validate_ui_state(&ui, &candidate)?;
+        if let Some(schema) = &self.package.state_schema {
+            schema.bindings(&ui)?;
+            schema.validate(&candidate)?;
+        }
+        let next = rhai::serde::to_dynamic(candidate).map_err(|e| e.to_string())?;
+        check_state(&next)?;
+        Ok((next, ui))
+    }
+
+    /// Move this instance onto what `prepare_commit` checked. Infallible on purpose: once any
+    /// instance of a screen is moved, none of them may fail any more.
+    fn apply(&mut self, state: Dynamic, ui: Node) {
+        self.state = state;
+        self.ui = ui;
+    }
+}
+
+fn unknown_item(target: &str) -> String {
+    format!("Unknown itemId: {target}")
 }
 
 fn initialize_ui(ui: &Node, state: &mut Value) {

@@ -107,7 +107,7 @@ bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-ef582d
   - 依存: T4
   - 並列サブ作業: なし
 
-- [ ] T6: dispatch のルーティングと Instance ごとの確定（R4 前半 / P2）
+- [x] T6: dispatch のルーティングと Instance ごとの確定（R4 前半 / P2）
   - 完了基準:
     - `Runtime::dispatch`（`lib.rs:427-550`）の「`find_path` から `call_fn` まで」を `impl instance::Instance` ブロックとして **`lib.rs` 内に**移動する（`"Unknown itemId: {target}"` が `lib.rs` に 1 回だけ残り、M3 `build-engine-variant.mjs:27` が壊れない）: `fn run_event(&self, target: &str, payload: Value) -> Result<Option<Dynamic>, String>`（`None` = 捨てた）と、捨てる条件のブロック（`lib.rs:452-469`）を `fn blocked(&self, path: &[&Node], state: &Value, target: &str) -> bool` に分ける。本文は移動のみで順序を変えない
     - `Runtime::route(&self, target) -> Result<Option<(String, String)>, String>`: `target` を最初の `/` で分け、前半を現在の Instance の ui で `find_path`（無ければ `Unknown itemId: {target}`（全体の文字列））、ノードが component でなければ同じエラー、`blocked` または component の `visibleBind` が false なら `Ok(None)`、該当子 Instance へ後半を渡して繰り返す。`/` が無ければ `(現在の Instance のキー, target)`

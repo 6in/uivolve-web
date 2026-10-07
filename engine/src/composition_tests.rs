@@ -1138,3 +1138,211 @@ fn a_composed_screen_lays_out_at_every_viewport_width() {
     // The scope of a finished layout is closed, so no instance tree outlives its pass.
     assert!(composition::with_component("b", |_, _| ()).is_none());
 }
+
+// --- routing an event to the instance that owns it ---
+
+const PANEL_SCRIPT: &str = "fn init(s) { s }
+fn select(s, e) { s.selected = e.id; s }
+fn press(s, e) { s.count += 1; s }
+fn refuse(s, e) { throw \"the child refused\"; }";
+
+/// `panel.json` — a child holding the three outcomes an event can have: a grid selection and a
+/// button that move its own state, and a handler that fails.
+fn panel_part() -> Package {
+    part(
+        "panel",
+        json!({
+            "selected": 0, "count": 0,
+            "rows": [{"id": 1, "number": "SO-001"}, {"id": 2, "number": "SO-002"}],
+        }),
+        json!({}),
+        json!([
+            {
+                "xtype": "grid", "itemId": "orders", "bind": "rows",
+                "selectedBind": "selected", "handler": "select",
+                "columns": [{"text": "番号", "dataIndex": "number"}],
+            },
+            {"xtype": "button", "itemId": "button", "text": "押す", "handler": "press"},
+            {"xtype": "button", "itemId": "boom", "text": "失敗", "handler": "refuse"},
+        ]),
+    )
+}
+
+/// `middle.json` of the dispatch fixtures — one more level between the root and the panel.
+fn middle_panel() -> Package {
+    part(
+        "middle",
+        json!({}),
+        json!({"part": {"url": "panel.json"}}),
+        json!([component("part", "c", json!({}))]),
+    )
+}
+
+/// A screen declaring both dispatch fixtures, with a root binding of its own.
+fn acting(items: Value) -> Package {
+    part(
+        "parent",
+        json!({"ready": false}),
+        json!({"part": {"url": "panel.json"}, "mid": {"url": "middle.json"}}),
+        items,
+    )
+}
+
+fn panel_bundle() -> HashMap<String, (Package, String)> {
+    bundle(vec![
+        ("panel.json", panel_part(), PANEL_SCRIPT),
+        ("middle.json", middle_panel(), CHILD_SCRIPT),
+    ])
+}
+
+/// A root-side checkbox, so a test can move the root state without a handler of its own.
+fn flag_field() -> Value {
+    json!({"xtype": "checkbox", "itemId": "flag", "bind": "ready", "fieldLabel": "表示"})
+}
+
+fn child_state(runtime: &Runtime, path: &str) -> Value {
+    runtime.components[path]
+        .state_json()
+        .expect("a child state")
+}
+
+fn dispatch_error(runtime: &mut Runtime, target: &str, payload: Value) -> String {
+    runtime
+        .dispatch(target, payload)
+        .err()
+        .expect("expected a dispatch error")
+}
+
+#[test]
+fn an_event_prefixed_with_a_component_moves_that_instance_alone() {
+    let mut runtime = compose(
+        acting(json!([flag_field(), component("part", "a", json!({}))])),
+        panel_bundle(),
+    )
+    .expect("a composed screen");
+    runtime
+        .dispatch("a/orders", json!({"id": 2}))
+        .expect("the grid event of the child");
+    assert_eq!(child_state(&runtime, "a")["selected"], json!(2));
+    // One event is one revision, whichever instance it moved.
+    assert_eq!(runtime.revision, 1);
+    assert_eq!(
+        runtime.state_json().expect("root state"),
+        json!({"ready": false})
+    );
+    // A root event afterwards still moves the root and leaves the child where it is.
+    runtime
+        .dispatch("flag", json!({"value": true}))
+        .expect("the root checkbox");
+    assert_eq!(
+        runtime.state_json().expect("root state"),
+        json!({"ready": true})
+    );
+    assert_eq!(child_state(&runtime, "a")["selected"], json!(2));
+    assert_eq!(runtime.revision, 2);
+}
+
+#[test]
+fn an_event_for_a_child_under_a_disabled_parent_is_dropped() {
+    let mut runtime = compose(
+        acting(json!([{
+            "xtype": "panel", "itemId": "wrap", "title": "受注", "disabled": true,
+            "items": [component("part", "a", json!({}))],
+        }])),
+        panel_bundle(),
+    )
+    .expect("a composed screen");
+    runtime
+        .dispatch("a/button", json!({}))
+        .expect("a dropped event");
+    assert_eq!(child_state(&runtime, "a")["count"], json!(0));
+    assert_eq!(runtime.revision, 0);
+}
+
+#[test]
+fn an_event_for_a_component_the_parent_hides_is_dropped() {
+    let mut runtime = compose(
+        acting(json!([
+            flag_field(),
+            {"xtype": "part", "itemId": "a", "config": {}, "visibleBind": "ready"},
+        ])),
+        panel_bundle(),
+    )
+    .expect("a composed screen");
+    runtime
+        .dispatch("a/button", json!({}))
+        .expect("a dropped event");
+    assert_eq!(child_state(&runtime, "a")["count"], json!(0));
+    assert_eq!(runtime.revision, 0);
+    // Shown by the parent, the very same event arrives.
+    runtime
+        .dispatch("flag", json!({"value": true}))
+        .expect("the root checkbox");
+    runtime
+        .dispatch("a/button", json!({}))
+        .expect("the button of the child");
+    assert_eq!(child_state(&runtime, "a")["count"], json!(1));
+    assert_eq!(runtime.revision, 2);
+}
+
+#[test]
+fn an_event_reaches_a_component_three_levels_down() {
+    let mut runtime = compose(
+        acting(json!([component("mid", "a", json!({}))])),
+        panel_bundle(),
+    )
+    .expect("a composed screen");
+    assert_eq!(runtime.components.keys().collect::<Vec<_>>(), ["a", "a/c"]);
+    runtime
+        .dispatch("a/c/button", json!({}))
+        .expect("the button of the grandchild");
+    assert_eq!(child_state(&runtime, "a/c")["count"], json!(1));
+    assert_eq!(runtime.revision, 1);
+}
+
+#[test]
+fn an_event_with_no_instance_to_route_it_to_is_an_unknown_item_id() {
+    let mut runtime = compose(
+        acting(json!([flag_field(), component("part", "a", json!({}))])),
+        panel_bundle(),
+    )
+    .expect("a composed screen");
+    // Unknown inside the child: the child names its own itemId, the path says where.
+    assert_eq!(
+        dispatch_error(&mut runtime, "a/nope", json!({})),
+        "Component a: Unknown itemId: nope"
+    );
+    // Unknown, or not a component, on the way down: the route names the whole target.
+    assert_eq!(
+        dispatch_error(&mut runtime, "nope/x", json!({})),
+        "Unknown itemId: nope/x"
+    );
+    assert_eq!(
+        dispatch_error(&mut runtime, "flag/x", json!({})),
+        "Unknown itemId: flag/x"
+    );
+    assert_eq!(runtime.revision, 0);
+}
+
+#[test]
+fn a_failing_child_handler_leaves_the_whole_screen_where_it_was() {
+    let mut runtime = compose(
+        acting(json!([flag_field(), component("part", "a", json!({}))])),
+        panel_bundle(),
+    )
+    .expect("a composed screen");
+    runtime
+        .dispatch("flag", json!({"value": true}))
+        .expect("the root checkbox");
+    let root = runtime.state_json().expect("root state");
+    let child = child_state(&runtime, "a");
+    let error = dispatch_error(&mut runtime, "a/boom", json!({}));
+    assert!(
+        error.starts_with("Component a: panel.rhai / boom / refuse:"),
+        "{error}"
+    );
+    assert!(error.contains("the child refused"), "{error}");
+    assert_eq!(runtime.state_json().expect("root state"), root);
+    assert_eq!(child_state(&runtime, "a"), child);
+    assert_eq!(runtime.revision, 1);
+}
