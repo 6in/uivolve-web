@@ -1,17 +1,19 @@
 use super::{
-    buffers, check_state, dialogs, dynamic_ui, extensions, fields, files, host, http,
+    buffers, check_state, composition, dialogs, dynamic_ui, extensions, fields, files, host, http,
     initialize_ui, pages, rpc, storage, validate, validate_handlers, validate_ui_state, Node,
     Package,
 };
 use rhai::{Dynamic, Engine, Scope, AST};
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// One loaded screen package: its own script engine, resolved component tree, state and
 /// request queues. The queues shared across a whole screen (dialogs, pages) stay on `Runtime`.
 pub(crate) struct Instance {
     pub(crate) package: Package,
     pub(crate) ui: Node,
+    /// Component names this package declares, i.e. the extra xtypes its template may use.
+    pub(crate) declared: BTreeSet<String>,
     pub(crate) functions: HashSet<String>,
     pub(crate) engine: Engine,
     pub(crate) extension_context: extensions::ExtensionContext,
@@ -44,6 +46,7 @@ impl Instance {
         }
         package.webmcp.validate()?;
         pages::Requests::validate(&package.pages)?;
+        let declared = composition::validate_declarations(&package)?;
         if let Some(schema) = &package.state_schema {
             schema.definition()?;
             schema.validate(&package.state)?;
@@ -51,9 +54,10 @@ impl Instance {
         if script.len() > 100_000 {
             return Err("Script exceeds 100 KB".into());
         }
+        composition::prepare_template(&mut package.ui, &declared)?;
         fields::normalize(&mut package.ui, "root");
-        validate(&package.ui, &mut HashSet::new(), &mut 0, 0)?;
-        let initial_ui = dynamic_ui::resolve(&package.ui, &package.state)?;
+        validate(&package.ui, &mut HashSet::new(), &mut 0, 0, &declared, "")?;
+        let initial_ui = dynamic_ui::resolve(&package.ui, &package.state, &declared)?;
         initialize_ui(&initial_ui, &mut package.state);
         if let Some(schema) = &package.state_schema {
             schema.bindings(&initial_ui)?;
@@ -163,10 +167,10 @@ impl Instance {
             .map_err(|e| format!("{} / init: {e}", package.script))?;
         check_state(&state)?;
         let mut initial: Value = rhai::serde::from_dynamic(&state).map_err(|e| e.to_string())?;
-        let ui = dynamic_ui::resolve(&package.ui, &initial)?;
+        let ui = dynamic_ui::resolve(&package.ui, &initial, &declared)?;
         validate_handlers(&ui, &functions)?;
         dynamic_ui::initialize_added(&initial_ui, &ui, &mut initial);
-        let ui = dynamic_ui::resolve(&package.ui, &initial)?;
+        let ui = dynamic_ui::resolve(&package.ui, &initial, &declared)?;
         validate_handlers(&ui, &functions)?;
         validate_ui_state(&ui, &initial)?;
         if let Some(schema) = &package.state_schema {
@@ -196,6 +200,7 @@ impl Instance {
         Ok(Self {
             package,
             ui,
+            declared,
             functions,
             engine,
             extension_context,

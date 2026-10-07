@@ -1,12 +1,15 @@
 use rhai::{Dynamic, Engine, Scope};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 mod abi;
 pub use abi::{input_alloc, input_free, request, response_len};
 mod theme;
 use theme::Theme;
 mod buffers;
+mod composition;
+#[cfg(test)]
+mod composition_tests;
 mod dialogs;
 mod dynamic_ui;
 pub mod extensions;
@@ -50,6 +53,8 @@ pub struct Package {
     pub files: HashMap<String, files::Definition>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub rpc: HashMap<String, rpc::Definition>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub components: BTreeMap<String, composition::Declaration>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state_schema: Option<state_schema::Schema>,
     #[serde(default, skip_serializing_if = "metadata::Metadata::is_empty")]
@@ -65,6 +70,12 @@ pub struct Node {
     pub xtype: String,
     #[serde(default)]
     pub item_id: String,
+    /// Configuration a component node hands to its child package (`composition`).
+    #[serde(default)]
+    pub config: Value,
+    /// Emit name -> parent handler, for component nodes (`composition`).
+    #[serde(default)]
+    pub listeners: BTreeMap<String, String>,
     #[serde(default)]
     pub text: String,
     #[serde(default)]
@@ -407,6 +418,11 @@ impl Runtime {
             &mut dialogs,
             &pages,
         )?;
+        // Declarations are validated with the rest of the package; bundling them into an
+        // instance tree arrives with `load_with_components`.
+        if !root.package.components.is_empty() {
+            return Err("Component packages were not bundled".into());
+        }
         Ok(Self {
             root,
             dialogs,
@@ -766,13 +782,13 @@ impl Runtime {
             return Err("Handler must return a state object".into());
         }
         check_state(&next)?;
-        let ui = dynamic_ui::resolve(&self.root.package.ui, &candidate)?;
+        let ui = dynamic_ui::resolve(&self.root.package.ui, &candidate, &self.root.declared)?;
         validate_handlers(&ui, &self.root.functions)?;
         dynamic_ui::initialize_added(&self.root.ui, &ui, &mut candidate);
         grid::reconcile(&ui, &self.root.state_json()?, &mut candidate);
         // Built-in defaults/reconciliation can also touch bindings. Resolve the final state,
         // so the committed component tree always describes exactly the committed data.
-        let ui = dynamic_ui::resolve(&self.root.package.ui, &candidate)?;
+        let ui = dynamic_ui::resolve(&self.root.package.ui, &candidate, &self.root.declared)?;
         validate_handlers(&ui, &self.root.functions)?;
         validate_ui_state(&ui, &candidate)?;
         if let Some(schema) = &self.root.package.state_schema {
@@ -1006,69 +1022,73 @@ fn check_state(state: &Dynamic) -> Result<(), String> {
     Ok(())
 }
 
+/// Every xtype `validate` accepts. A declared component name must not shadow one of these.
+const XTYPES: [&str; 48] = [
+    "container",
+    "panel",
+    "window",
+    "label",
+    "metric",
+    "textfield",
+    "textarea",
+    "numberfield",
+    "datefield",
+    "checkbox",
+    "radio",
+    "combobox",
+    "listbox",
+    "displayfield",
+    "slider",
+    "progressbar",
+    "fieldset",
+    "button",
+    "grid",
+    "kanban",
+    "tabpanel",
+    "treepanel",
+    "menu",
+    "menuseparator",
+    "toolbar",
+    "tbfill",
+    "tbseparator",
+    "tbspacer",
+    "tbtext",
+    "radiogroup",
+    "checkboxgroup",
+    "datepicker",
+    "pagingtoolbar",
+    "dialogbutton",
+    "toast",
+    "component",
+    "markdown",
+    "diffeditor",
+    "chatpanel",
+    "terminal",
+    "image",
+    "video",
+    "iframe",
+    "chart",
+    "draw",
+    "gitgraph",
+    "networkgraph",
+    "mermaid",
+];
+
 fn validate(
     node: &Node,
     ids: &mut HashSet<String>,
     count: &mut usize,
     depth: usize,
+    declared: &BTreeSet<String>,
+    parent: &str,
 ) -> Result<(), String> {
     node.webmcp.validate()?;
     *count += 1;
     if *count > 200 || depth > 20 {
         return Err("UI exceeds 200 nodes or 20 nesting levels".into());
     }
-    if ![
-        "container",
-        "panel",
-        "window",
-        "label",
-        "metric",
-        "textfield",
-        "textarea",
-        "numberfield",
-        "datefield",
-        "checkbox",
-        "radio",
-        "combobox",
-        "listbox",
-        "displayfield",
-        "slider",
-        "progressbar",
-        "fieldset",
-        "button",
-        "grid",
-        "kanban",
-        "tabpanel",
-        "treepanel",
-        "menu",
-        "menuseparator",
-        "toolbar",
-        "tbfill",
-        "tbseparator",
-        "tbspacer",
-        "tbtext",
-        "radiogroup",
-        "checkboxgroup",
-        "datepicker",
-        "pagingtoolbar",
-        "dialogbutton",
-        "toast",
-        "component",
-        "markdown",
-        "diffeditor",
-        "chatpanel",
-        "terminal",
-        "image",
-        "video",
-        "iframe",
-        "chart",
-        "draw",
-        "gitgraph",
-        "networkgraph",
-        "mermaid",
-    ]
-    .contains(&node.xtype.as_str())
-    {
+    let component = declared.contains(&node.xtype);
+    if !component && !XTYPES.contains(&node.xtype.as_str()) {
         return Err(format!("Unknown xtype: {}", node.xtype));
     }
     if !node.flex.is_finite() || node.flex <= 0.0 {
@@ -1079,6 +1099,13 @@ fn validate(
     }
     if node.item_id.contains(':') {
         return Err("itemId must not contain ':' (reserved for internal widget keys)".into());
+    }
+    if node.item_id.contains('/') {
+        return Err("itemId must not contain '/' (reserved for component paths)".into());
+    }
+    // A component node carries no widget attributes, so none of the checks below apply to it.
+    if component {
+        return composition::validate_node(node, parent);
     }
     dynamic_ui::validate(node)?;
     if ["textfield", "button", "grid"].contains(&node.xtype.as_str()) && node.item_id.is_empty() {
@@ -1122,7 +1149,7 @@ fn validate(
         return Err("grid requires columns with positive flex".into());
     }
     for child in &node.items {
-        validate(child, ids, count, depth + 1)?;
+        validate(child, ids, count, depth + 1, declared, &node.xtype)?;
     }
     Ok(())
 }
@@ -1133,6 +1160,14 @@ fn validate_handlers(node: &Node, functions: &HashSet<String>) -> Result<(), Str
             "{} references undefined handler: {}",
             node.item_id, node.handler
         ));
+    }
+    for (event, handler) in &node.listeners {
+        if !functions.contains(handler) {
+            return Err(format!(
+                "{}: listener {event} references undefined handler: {handler}",
+                node.item_id
+            ));
+        }
     }
     for child in &node.items {
         validate_handlers(child, functions)?;
