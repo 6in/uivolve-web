@@ -54,7 +54,7 @@ bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-35120e
     - B: `build-engine-variant.mjs`（worktree ビルド・変異コピービルド・target-dir 共有・後始末）（対象: `scripts/build-engine-variant.mjs`）
     - 親が両方を結合して 4 の実測を前景で回す（各ビルド約 30 秒、2 回目以降は約 10 秒）
 
-- [ ] T2: `Runtime` → `Instance` の挙動不変リファクタ
+- [x] T2: `Runtime` → `Instance` の挙動不変リファクタ
   - 完了基準:
     1. `engine/src/instance.rs` 新設。「決めた事項 1〜5」の構造どおり（`Instance` の 12 フィールドを `lib.rs:363-374` の順で、`Instance::load` / `clear_queues` / `state_json` を持つ）。`lib.rs` の `Runtime` は `root: Instance` / `dialogs` / `pages` / `pub revision` の 4 フィールド
     2. `Runtime` の公開シグネチャ（`load` / `load_with_extensions` / `load_with_descriptors` / `load_with_clock` / `with_clock` / `dispatch` / `progress_host` / `complete_host` / `complete_http` / `complete_storage` / `complete_file` / `complete_rpc` / `complete_dialog` / `take_effects` / `state_json` / `layout`、`lib.rs:381-991`）は 1 字も変えない。`abi.rs` は**無改修**（`git diff main --stat -- engine/src/abi.rs` が空。`revision` が `pub` のまま Runtime に残るため差し替えも不要 = REQUIREMENTS「差し替えのみ」の 0 件）
@@ -169,6 +169,7 @@ bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-35120e
    - M2: `"                dialogs::Event::Draft => {\n                    self.revision += 1;\n"`（`self.revision += 1;` 単独は `:983` にもある）→ `diffs = 2`
    - M3: `'"Unknown itemId: {target}"'` → `diffs = 1`
    - **T2 への申し送り**: M1 / M2 の `from` は `self.ui` / `self.revision` を含むので、`self.root.ui` への差し替えで M1 は必ず動く（M2 の `revision` は Runtime に残るので動かない見込み）。動いたら `from` だけ直してここに訂正行を追記する
+   - **訂正（turn 4 / T2 後。申し送りのとおり M1 だけ動いた）**: M1 の `from` / `to` の 2 行目を `&self.ui,` → `&self.root.ui,` に直した（`from` = `"        arrange(\n            &self.root.ui,\n            &state,\n            16.0,\n"`）。M2（`self.revision` は Runtime 残留）・M3 は無変更。リファクタ後のソースで再ビルドした実測差分数は M1 `165` / M2 `2` / M3 `1` で turn 3 と同一、3 本すべて exit 1
 
 10. **`docs/components-plan.md` の節構成**: 1. 状態（定型文）/ 2. 目的と前提（ExtJS のカスタムコンポーネント相当、エンジン内合成 = DECISIONS B 案と却下案 3 つの要約）/ 3. 使い方（`components` 宣言 名前 → `url`、`xtype` に宣言名、`config`（固定値または親 state への `bind`）、`listeners`（子の `emit` 名 → 親 handler）、子 Rhai の `emit(name, payload)` と任意の `config(state, config)`、`state.config` 注入。YAML 例 1 つ）/ 4. Instance 木の構造（`Runtime { root, components: HashMap<itemId, Instance> }`、Scene 1 つ、target / key の `"<itemId>/<子itemId>"` 接頭辞）/ 5. 設計決定（8 論点の表 + 注記 2 件）/ 6. 段階計画（1・2 完了、3〜6）/ 7. 本マイルストーンで確定した構造（Instance 12 フィールド表、Runtime 4 フィールド表、Instance のメソッド 3 本、root 共通物を Runtime に残す理由）/ 8. 残課題（`safe_key` 区切り文字、`http` effect の `kind`、`SEQUENCE` などの thread_local の扱い = RESEARCH §1.2）
 11. **スクリプトの置き場と名前**: `scripts/compare-engine-behavior.mjs` / `scripts/build-engine-variant.mjs` / `scripts/verify-instance-refactor.mjs`。`package.json` の scripts には**足さない**（`verify:transfer` は入っているが、本件は PR 用の一時的な照合で、定常運用の入口にしない。`docs/testing.md` に入口を書く）。スクラッチと証跡は `target/engine-compare/`（gitignore 済み）

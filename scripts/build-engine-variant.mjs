@@ -10,8 +10,8 @@ export const MUTATIONS = [
   {
     name: "layout-x-offset",
     file: "engine/src/lib.rs",
-    from: "        arrange(\n            &self.ui,\n            &state,\n            16.0,\n",
-    to: "        arrange(\n            &self.ui,\n            &state,\n            17.0,\n",
+    from: "        arrange(\n            &self.root.ui,\n            &state,\n            16.0,\n",
+    to: "        arrange(\n            &self.root.ui,\n            &state,\n            17.0,\n",
     diff: "layout:* の data.widgets[*].x",
   },
   {
