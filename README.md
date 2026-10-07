@@ -96,6 +96,7 @@ Rust / WASM エンジン
 画面処理はRust/WASM内で実行する。JavaScriptはHTTP取得、YAMLのJSON変換、ブラウザ保存API、WASMメモリとの受け渡し、DOM更新・Canvas API呼び出しを担当する。Canvasの描画命令発行はこの段階ではJavaScript側のバックエンドにある。
 
 - `engine/src/lib.rs`: DSL・Runtime・共通検証・基本部品の計測と配置。
+- `engine/src/instance.rs`: 1画面パッケージの実行単位（package・確定UIツリー・Rhai Engine/AST・state・各依頼キュー）。
 - `engine/src/abi.rs`: UTF-8 JSON ABI、公開WASM関数、Runtime・応答バッファの管理。
 - `engine/src/fields.rs`: uivolveの部品設定、初期値、入力値の検証とスナップショット。
 - `src/engine.js`: WASM呼び出し。スクリプトをJavaScriptへ変換・evalしない。
