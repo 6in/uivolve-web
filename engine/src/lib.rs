@@ -562,12 +562,19 @@ impl Runtime {
         execute(self)
     }
 
-    pub fn dispatch(&mut self, target: &str, payload: Value) -> Result<(), String> {
-        self.pages.clear();
+    /// Drop whatever the instances of the screen queued for a previous event. Every entry point
+    /// that runs a handler starts from here, so an `emit` a failed child left behind never
+    /// reaches the next event or completion.
+    fn clear_queues(&self) {
         self.root.clear_queues();
         for instance in self.components.values() {
             instance.clear_queues();
         }
+    }
+
+    pub fn dispatch(&mut self, target: &str, payload: Value) -> Result<(), String> {
+        self.pages.clear();
+        self.clear_queues();
         self.dialogs.clear();
         if self.dialogs.active().is_some() {
             return match self.dialogs.event(target, &payload)? {
@@ -728,6 +735,8 @@ impl Runtime {
         if child.functions.contains("config") {
             let event =
                 rhai::serde::to_dynamic(json!({"config": config})).map_err(|e| e.to_string())?;
+            // Only what this `config` call queues may count as an emit from a configuration.
+            child.emits.clear();
             next = child
                 .engine
                 .call_fn(&mut Scope::new(), &child.ast, "config", (next, event))
@@ -801,7 +810,7 @@ impl Runtime {
             .ok_or("Host operation has no progress handler")?
             .to_string();
         self.pages.clear();
-        self.root.clear_queues();
+        self.clear_queues();
         self.dialogs.clear();
         let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
         let next = self
@@ -826,7 +835,7 @@ impl Runtime {
         host::validate_result(&response)?;
         let name = self.root.host.consume(id)?;
         self.pages.clear();
-        self.root.clear_queues();
+        self.clear_queues();
         self.dialogs.clear();
         let handler = &self.root.package.operations[&name].handler;
         let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
@@ -851,7 +860,7 @@ impl Runtime {
     pub fn complete_http(&mut self, id: u64, response: Value) -> Result<(), String> {
         self.pages.clear();
         let name = self.root.http.consume(id)?;
-        self.root.clear_queues();
+        self.clear_queues();
         self.dialogs.clear();
         let handler = &self.root.package.requests[&name].handler;
         let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
@@ -877,7 +886,7 @@ impl Runtime {
     pub fn complete_storage(&mut self, id: u64, mut response: Value) -> Result<(), String> {
         self.pages.clear();
         let (name, operation) = self.root.storage.consume(id)?;
-        self.root.clear_queues();
+        self.clear_queues();
         self.dialogs.clear();
         response["operation"] = serde_json::to_value(operation).map_err(|e| e.to_string())?;
         response["request"] = json!(name);
@@ -908,7 +917,7 @@ impl Runtime {
         buffer: Option<u32>,
     ) -> Result<(), String> {
         self.pages.clear();
-        self.root.clear_queues();
+        self.clear_queues();
         self.dialogs.clear();
         let mut response: rhai::Map = rhai::serde::to_dynamic(response)
             .map_err(|e| e.to_string())?
@@ -940,7 +949,7 @@ impl Runtime {
         buffer: Option<u32>,
     ) -> Result<(), String> {
         self.pages.clear();
-        self.root.clear_queues();
+        self.clear_queues();
         self.dialogs.clear();
         let name = self.root.rpc.consume(id, &mut response, buffer)?;
         let handler = &self.root.package.rpc[&name].handler;
@@ -964,7 +973,7 @@ impl Runtime {
     }
     pub fn complete_dialog(&mut self, id: u64, mut response: Value) -> Result<(), String> {
         self.pages.clear();
-        self.root.clear_queues();
+        self.clear_queues();
         self.dialogs.clear();
         let handler = self.dialogs.consume(id, &mut response)?;
         let next = if handler.is_empty() {

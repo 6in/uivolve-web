@@ -85,6 +85,8 @@ componentノードに書けるのは`xtype`・`itemId`・`config`・`listeners`�
 
 `revision`は動いたInstanceの数に関係なく**1つだけ**進む。検証のどこかで失敗すれば親子ともapplyせず、`revision`も動かない（「失敗したら何も変わらない」が画面全体で成り立つ）。applyは失敗しない処理だけを残してあるので、1つでも動き始めたら途中で止まることはない。
 
+失敗したイベントで子が積んだ`emit`は捨てられ、次のイベントや完了処理（`http_result`等）に持ち越さない。
+
 emitは**上方向のみ**、configは**下方向のみ**に連鎖する。emitの歩みはrootで終わり、rootは`emit`を持たない。configの歩みは各Instanceを1度しか訪れず、`config`handlerからのemitは拒否される。したがって親子のピンポンは構造的に起きない。
 
 ## Sceneとeventの接頭辞

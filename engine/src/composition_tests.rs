@@ -1630,6 +1630,131 @@ fn a_child_that_refuses_a_configuration_leaves_the_whole_screen_where_it_was() {
     assert_eq!(runtime.revision, 0);
 }
 
+/// The same child, announcing something and then failing: one variant throws, the other is
+/// refused by the stub of an effect function. Either way the announcement has no event left.
+const STALE_SCRIPTS: [(&str, &str); 2] = [
+    (
+        "throw",
+        "fn init(s) { s }
+fn config(s, e) { s.configs += 1; s.seen = e.config.query; s }
+fn select(s, e) { s }
+fn whisper(s, e) { emit(\"unheard\", #{\"id\": 0}); throw \"the child refused\"; }",
+    ),
+    (
+        "stub",
+        "fn init(s) { s }
+fn config(s, e) { s.configs += 1; s.seen = e.config.query; s }
+fn select(s, e) { s }
+fn whisper(s, e) { emit(\"unheard\", #{\"id\": 0}); Fn(\"http_get\").call(\"x\"); s }",
+    ),
+];
+
+/// A root holding an HTTP request of its own, so a completion can arrive after a failed event.
+const REQUESTING_SCRIPT: &str = "fn init(s) { s }
+fn fetch(s, e) { http_get(\"ping\"); s }
+fn pong(s, r) { s.query = \"山田\"; s }";
+
+fn requesting(items: Value) -> Package {
+    serde_json::from_value(json!({
+        "version": 1, "id": "parent", "title": "parent", "script": "parent.rhai",
+        "state": {"query": "", "notice": ""},
+        "components": {"stale": {"url": "stale.json"}},
+        "requests": {"ping": {"url": "x.json", "handler": "pong"}},
+        "ui": {"xtype": "container", "items": items},
+    }))
+    .expect("the requesting screen")
+}
+
+#[test]
+fn a_stale_announcement_does_not_poison_a_later_completion() {
+    for (label, script) in STALE_SCRIPTS {
+        let mut runtime = compose_script(
+            requesting(json!([
+                {"xtype": "button", "itemId": "fetch", "text": "取得", "handler": "fetch"},
+                component("stale", "a", json!({"query": {"bind": "query"}})),
+            ])),
+            REQUESTING_SCRIPT,
+            bundle(vec![("stale.json", emitting("stale"), script)]),
+        )
+        .expect("a composed screen");
+        runtime
+            .dispatch("fetch", json!({}))
+            .expect("the root button");
+        let id = runtime.take_effects()[0]["id"]
+            .as_u64()
+            .expect("an http request id");
+        // The child announces and then fails, so the event — announcement included — rolls back.
+        assert!(runtime.dispatch("a/shout", json!({})).is_err(), "{label}");
+        assert_eq!(runtime.revision, 1, "{label}");
+        // The completion moves the key the configuration binds to: the child is reconfigured,
+        // and what the failed event queued is no longer there to be taken for a config emit.
+        runtime
+            .complete_http(id, json!({"ok": true, "data": {}}))
+            .unwrap_or_else(|e| panic!("{label}: {e}"));
+        assert_eq!(runtime.revision, 2, "{label}");
+        assert_eq!(
+            runtime.state_json().expect("root state")["query"],
+            json!("山田"),
+            "{label}"
+        );
+        let child = child_state(&runtime, "a");
+        assert_eq!(child["config"], json!({"query": "山田"}), "{label}");
+        assert_eq!(child["configs"], json!(1), "{label}");
+        assert_eq!(child["seen"], json!("山田"), "{label}");
+    }
+}
+
+/// A middle that hands what it was configured with down to its own child.
+const CHAIN_SCRIPT: &str = "fn init(s) { s }
+fn config(s, e) { s.relayed = e.config.query; s }";
+
+/// `chain.json` — holds a `report` as `c`, bound to the key its own `config` handler writes.
+fn chain_part() -> Package {
+    part(
+        "chain",
+        json!({"relayed": ""}),
+        json!({"report": {"url": "report.json"}}),
+        json!([component(
+            "report",
+            "c",
+            json!({"query": {"bind": "relayed"}})
+        )]),
+    )
+}
+
+#[test]
+fn a_configuration_travels_down_three_levels_at_run_time() {
+    let mut runtime = compose_script(
+        part(
+            "parent",
+            json!({"query": "", "notice": ""}),
+            json!({"chain": {"url": "chain.json"}}),
+            json!([
+                filter_field(),
+                component("chain", "a", json!({"query": {"bind": "query"}})),
+            ]),
+        ),
+        PARENT_SCRIPT,
+        bundle(vec![
+            ("chain.json", chain_part(), CHAIN_SCRIPT),
+            ("report.json", emitting("report"), REPORT_SCRIPT),
+        ]),
+    )
+    .expect("a composed screen");
+    assert_eq!(runtime.components.keys().collect::<Vec<_>>(), ["a", "a/c"]);
+    runtime
+        .dispatch("filter", json!({"value": "山田"}))
+        .expect("the root textfield");
+    // The middle wrote what it was handed into its own state, which the grandchild binds to.
+    assert_eq!(child_state(&runtime, "a")["relayed"], json!("山田"));
+    let leaf = child_state(&runtime, "a/c");
+    assert_eq!(leaf["config"], json!({"query": "山田"}));
+    assert_eq!(leaf["configs"], json!(1));
+    assert_eq!(leaf["seen"], json!("山田"));
+    // Three instances moved, one revision.
+    assert_eq!(runtime.revision, 1);
+}
+
 #[test]
 fn a_child_cannot_announce_anything_while_it_is_being_reconfigured() {
     let mut runtime = reporting_screen(json!([

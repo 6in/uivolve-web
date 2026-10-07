@@ -187,10 +187,10 @@ bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-ef582d
   - 依存: T11
   - 並列サブ作業: なし
 
-- [ ] F1: 子 Instance の emit キューの残留（完了経路での誤拒否。verify round 1 の差し戻し）
+- [x] F1: 子 Instance の emit キューの残留（完了経路での誤拒否。verify round 1 の差し戻し）
   - 背景: `dispatch` だけが子の `clear_queues()` を回し、`progress_host` / `complete_host` / `complete_http` / `complete_storage` / `complete_file` / `complete_rpc` / `complete_dialog` は `self.root.clear_queues()` のみ。子 handler が `emit` した後に失敗（throw / stub 拒否 / 非 object 戻り）すると emit がキューに残り、次の完了処理（`http_result` 等）で root の bind 先キーが変わって `reconfigure` が走ると `child.emits.take()` が残留分を拾い `Component {path}: emit is not available in config` で応答全体を失う（id は消費済みで再送できない）。`.gsd-lite/logs/component-composition/scratch/turn-015-stale-emit.mjs` が ABI で再現する（VERIFICATION.md 指摘 1）
   - 完了基準:
-    - `Runtime` に `fn clear_queues(&self)`（root と `components` 全部の `clear_queues()`）を置き、上記 8 関数と `dispatch` の計 9 か所の `self.root.clear_queues()`（`dispatch` は子ループごと）をそれに置き換える。各関数内での呼び出し位置・順序は変えない
+    - `Runtime` に `fn clear_queues(&self)`（root と `components` 全部の `clear_queues()`）を置き、上記 7 関数と `dispatch` の計 8 か所の `self.root.clear_queues()`（`dispatch` は子ループごと）をそれに置き換える。各関数内での呼び出し位置・順序は変えない
     - `reconfigure` が `config` handler を呼ぶ**前**に `child.emits.clear()` を行う（「config 中の emit」の判定が、その config 呼び出しで積まれた分だけを見るようにする。二重防御）
     - 期待結果（本タスクの表。テストの期待値はこの表を参照する）:
       | 条件                                                                                                                          | 結果                                                                                                                                       |
