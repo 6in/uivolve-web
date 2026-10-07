@@ -34,6 +34,7 @@ componentノードに書けるのは`xtype`・`itemId`・`config`・`listeners`�
 - 置けるのは`container`・`panel`・`fieldset`・`window`の`items`だけ。それ以外は`Component {xtype}: components are supported only in the items of a container, panel, fieldset or window`。`toolbar` / `menu` / `tabpanel`直下、`tbar` / `bbar` / `buttons` / `menu`の中、`columns[].editor`の中は同じエラーで拒否する。
 - `flex`と`width`は親レイアウトでの配置に使う。子の高さは子の確定UIツリーを測って親レイアウトへ返すので、親のvbox / hboxに自然に積める。
 - `visibleBind`は親が子に対して持てる唯一のbindで、親stateの最上位キーのみ（`Component {itemId}: visibleBind must be a top-level state key`）。**キーが`true`のときだけ**配置・測定し、偽のときは高さ0で描かずイベントも届かない。未指定なら常に配置する。
+- `layout: accordion`の親の`items`に置いたcomponentノードは折りたたみの対象にならない。accordionには置かない。
 
 ## `config`
 
@@ -116,6 +117,7 @@ Instanceごとの既存上限はそのまま。1画面分の予算を部品が�
 - 2MBはJS側とRust側の2段構え。JS側は子を同梱した後のバイト数を数え、超えたら`リクエストが2 MBを超えています（同梱後 {総バイト数} バイト。最大の子: {URL} {バイト数} バイト）`で、どの子が大きいかまで出す。Rust側は入力長だけを見て`Request exceeds 2 MB`を返す。Instance数・入れ子の深さ・循環参照も同じ2段構えで、JS側は取得中に日本語（`コンポーネントの数が8を超えています（rootを含む）: {URL}`、`コンポーネントの入れ子が3段を超えています: {URL}`、`コンポーネント {名前} の循環参照: {URL}`）、Rust側はload時に英語（上記と`Component {path}: circular reference to {url}`）で拒否する。
 - `itemId`は`/`を予約する。componentノードでも通常のウィジェットでも使えない。接頭辞付きパスとの区別がつかなくなるため。
 - 宣言していないxtypeを置いた、または同梱されていないURLを宣言したときは`Component {path}: {xtype} is not declared`、`Component {path}: package {url} was not bundled`。
+- JSローダーは**宣言単位**で循環・深さを検査し、uiに置かれていない宣言も取得・検査する。Rustは**配置単位**で検査する。したがってraw ABIでは通る「置かれていない自己参照の宣言」は、ローダーでは拒否される。
 
 ## 拒否
 
@@ -157,7 +159,7 @@ load時の走査はrhaiの`internals` featureで公開される`AST::walk`と`Ex
 - 子の非同期効果。effectと`*_result` opに`instance`を持たせ、完了を正しいInstanceへ返す。storage / filesのscope区切り文字も同時に決める。
 - 子の`window`。画面全体のモーダル層を親子で共有する方式。
 - 配信キャッシュ。子を含む画面のマニフェストと`network-first` / 復元。
-- WebMCPの合成。子の`webmcp`を画面1登録へまとめる方式。
+- WebMCPの合成。子の`webmcp`を画面1登録へまとめる方式。子ノードの`webmcp`は検証されるが登録されない（段階6）。
 - `with_clock`は`ExtensionContext`を画面で1つ共有する前提に乗っている。rootから入った時計が子にも効くのはこの共有によるので、Instanceごとの文脈へ分ける変更は入れない。
 - 計画で置いたemitの連鎖深さ上限4は、入れ子の深さが3の木では使われない。最も深い子からrootまでが2段で、そこで打ち切られる。深さを広げるときに改めて考える。
 

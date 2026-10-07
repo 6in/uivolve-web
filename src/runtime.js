@@ -45,6 +45,10 @@ function resolveComponents(screen, source, bundled, clock) {
   const resolved = {};
   const visit = (definition, base) => {
     for (const [name, declaration] of Object.entries(definition.components ?? {})) {
+      if (typeof declaration?.url !== "string")
+        throw new Error(
+          `コンポーネント ${name} の宣言が不正です（url を文字列で指定してください）`,
+        );
       const href = new URL(declaration.url, base).href;
       declaration.url = href;
       if (resolved[href]) continue;

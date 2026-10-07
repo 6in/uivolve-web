@@ -206,7 +206,7 @@ bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-ef582d
   - 依存: T12
   - 並列サブ作業: なし
 
-- [ ] F2: 宣言の形の検査（JS）と文書・テストの軽微な追従（verify round 1 の差し戻し。軽微な指摘を 1 つにまとめる）
+- [x] F2: 宣言の形の検査（JS）と文書・テストの軽微な追従（verify round 1 の差し戻し。軽微な指摘を 1 つにまとめる）
   - 完了基準:
     - `src/application-loader.js` の `#components` と `src/runtime.js` の `resolveComponents`: `declaration` が object でない、または `declaration.url` が string でないとき、取得・URL 解決の前に `コンポーネント <name> の宣言が不正です（url を文字列で指定してください）` を throw する（現状は `<base>/undefined` を取りに行く、または `TypeError` が出る）
     - 期待結果（本タスクの表）:

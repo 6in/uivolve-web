@@ -138,7 +138,11 @@ export class ApplicationLoader {
     if (!Object.keys(screen.components ?? {}).length) return packages;
     const visit = async (parent, base, depth, stack) => {
       for (const [name, declaration] of Object.entries(parent.components ?? {})) {
-        const child = httpUrl(declaration?.url, base);
+        if (typeof declaration?.url !== "string")
+          throw new Error(
+            `コンポーネント ${name} の宣言が不正です（url を文字列で指定してください）`,
+          );
+        const child = httpUrl(declaration.url, base);
         declaration.url = child.href;
         if (stack.includes(child.href))
           throw new Error(`コンポーネント ${name} の循環参照: ${child.href}`);

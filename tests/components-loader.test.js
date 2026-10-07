@@ -212,6 +212,17 @@ describe("ApplicationLoader の components 取得", () => {
     );
   });
 
+  it("refuses a declaration without a string url before fetching anything", async () => {
+    for (const declaration of [{}, null, { url: 5 }]) {
+      const f = fixture([["parent.json", screen("parent", { components: { a: declaration } })]]);
+      await expect(f.loader.fetch(href("parent.json"))).rejects.toThrow(
+        "コンポーネント a の宣言が不正です（url を文字列で指定してください）",
+      );
+      // Only the parent's own body and script were read; no child URL was guessed at.
+      expect([...f.reads.keys()].sort()).toEqual([href("parent.json"), href("parent.rhai")]);
+    }
+  });
+
   it("applies the existing Rhai size limit to a child script", async () => {
     const f = fixture([
       ["parent.json", screen("parent", { components: { a: { url: "a.json" } } })],
@@ -405,6 +416,22 @@ describe("WasmEngine / UiRuntime の components", () => {
     expect(Object.keys(runtime.components)).toEqual([CARD_URL]);
     expect(runtime.components[CARD_URL].screen.ui.items[0].today).toBe("2026-10-04");
     expect(runtime.screen.components.card.url).toBe(CARD_URL);
+  });
+
+  it("refuses a declaration without a string url and keeps the loaded screen", async () => {
+    const runtime = await host({ clockProvider: fixedClock });
+    runtime.compile(definition, script, SOURCE);
+    const before = runtime.engine.layout(400);
+    for (const declaration of [{}, null, { url: 5 }]) {
+      const screen = { ...parent("card.json"), components: { a: declaration } };
+      expect(() =>
+        runtime.compile(screen, ROOT_SCRIPT, SOURCE, {
+          components: { [CARD_URL]: { screen: card(), script: CARD_SCRIPT } },
+        }),
+      ).toThrow("コンポーネント a の宣言が不正です（url を文字列で指定してください）");
+      expect(runtime.screen.id).toBe("home");
+      expect(runtime.engine.layout(400)).toEqual(before);
+    }
   });
 
   it("reuses the children of the previous load when compile is called without components", async () => {

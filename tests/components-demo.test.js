@@ -205,14 +205,23 @@ describe("UiRuntime 経由の受注ダッシュボード", () => {
   }
 
   it("hands the same composed scene to the dom and the canvas renderer", async () => {
-    const runtime = await host();
+    // Both surfaces are the same width so the two scenes are comparable widget for widget.
+    const runtime = await host({
+      surfaces: [
+        { element: stage(400), renderer: "dom" },
+        { element: stage(400), renderer: "canvas", canvas: {} },
+      ],
+    });
     await runtime.load("screens/order-dashboard.json");
     expect(runtime.screen.id).toBe("order-dashboard");
     expect(runtime.surfaces.map((s) => s.renderer)).toEqual(["dom", "canvas"]);
+    const scenes = [];
     for (const surface of runtime.surfaces) {
       const calls = surface.adapter.render.mock.calls;
       expect(calls.length, surface.renderer).toBeGreaterThan(0);
-      const keys = calls.at(-1)[0].widgets.map((w) => w.key);
+      const { widgets } = calls.at(-1)[0];
+      scenes.push(widgets);
+      const keys = widgets.map((w) => w.key);
       expect(
         keys.some((k) => k.startsWith("open/")),
         `${surface.renderer}: ${keys}`,
@@ -222,5 +231,6 @@ describe("UiRuntime 経由の受注ダッシュボード", () => {
         `${surface.renderer}: ${keys}`,
       ).toBe(true);
     }
+    expect(scenes[1]).toEqual(scenes[0]);
   });
 });
