@@ -187,6 +187,42 @@ bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-ef582d
   - 依存: T11
   - 並列サブ作業: なし
 
+- [ ] F1: 子 Instance の emit キューの残留（完了経路での誤拒否。verify round 1 の差し戻し）
+  - 背景: `dispatch` だけが子の `clear_queues()` を回し、`progress_host` / `complete_host` / `complete_http` / `complete_storage` / `complete_file` / `complete_rpc` / `complete_dialog` は `self.root.clear_queues()` のみ。子 handler が `emit` した後に失敗（throw / stub 拒否 / 非 object 戻り）すると emit がキューに残り、次の完了処理（`http_result` 等）で root の bind 先キーが変わって `reconfigure` が走ると `child.emits.take()` が残留分を拾い `Component {path}: emit is not available in config` で応答全体を失う（id は消費済みで再送できない）。`.gsd-lite/logs/component-composition/scratch/turn-015-stale-emit.mjs` が ABI で再現する（VERIFICATION.md 指摘 1）
+  - 完了基準:
+    - `Runtime` に `fn clear_queues(&self)`（root と `components` 全部の `clear_queues()`）を置き、上記 8 関数と `dispatch` の計 9 か所の `self.root.clear_queues()`（`dispatch` は子ループごと）をそれに置き換える。各関数内での呼び出し位置・順序は変えない
+    - `reconfigure` が `config` handler を呼ぶ**前**に `child.emits.clear()` を行う（「config 中の emit」の判定が、その config 呼び出しで積まれた分だけを見るようにする。二重防御）
+    - 期待結果（本タスクの表。テストの期待値はこの表を参照する）:
+      | 条件                                                                                                                          | 結果                                                                                                                                       |
+      | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+      | root の http 要求が進行中に、子（`config` 定義あり、bind 付き config）の handler が `emit` 後に throw → root へ `http_result` | `complete_http` が `Ok`、revision 1 → 2、root の bind 先キーが新値、その子の `state.config` も新値、子の `config` 呼び出し回数 +1          |
+      | 同じ列で子 handler が `emit` 後に `Fn("http_get").call("x")` で stub 拒否される                                               | 同上                                                                                                                                       |
+      | 子の `config` handler 自身が `emit` する                                                                                      | 従来どおり `Component {path}: emit is not available in config`、親子とも不変、revision 不変（既存テスト `a_child_cannot_announce_…` 維持） |
+      | root の handler が bind 先キーを変え、middle の `config` が自分の子（leaf）へ bind している自分の state キーを書き換える      | leaf の `config` が 1 回呼ばれ leaf の `state.config` が新値、middle・leaf の state とも確定、revision +1（1 イベントで 1 つだけ）         |
+    - `engine/src/composition_tests.rs` に 2 本: `a_stale_announcement_does_not_poison_a_later_completion`（表 1〜2 行目。root は `requests: { ping: { url, handler: "pong" } }` を持ち `pong` が bind 先キーを変える。`dispatch("fetch")` → `take_effects()[0]["id"]` → `dispatch("a/<button>")` が `Err` → `complete_http(id, json!({"ok": true, "data": {}}))`。`lib.rs` の既存テスト `host_progress_and_cancel_roll_back_without_consuming_completion` の呼び方に倣う）/ `a_configuration_travels_down_three_levels_at_run_time`（表 4 行目。`RELAY_SCRIPT` 相当の middle に `config(s, e)` を足して自分の子への bind キーを書き換える）
+    - `docs/components.md` の「トランザクション順序」節に 1 文: 失敗したイベントで子が積んだ `emit` は捨てられ、次のイベント・完了処理に持ち越さない
+    - 検査: `bun run build:wasm` → `bunx vp test run` → `bun run test:rust` → `bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-ef582d5.wasm --candidate public/engine.wasm` 差分 0 → `bun scripts/probe-composition.mjs --candidate public/engine.wasm` exit 0 → `bun run check` → `bun run docs:check`。`git diff main -- engine/src` で削除のみの文字列リテラル 0 件、M1〜M5 の `from` が各 1 回（`.gsd-lite/logs/component-composition/scratch/turn-015-strings.mjs` を再実行）。`bun .gsd-lite/logs/component-composition/scratch/turn-015-stale-emit.mjs` の 4 変種がすべて `http_result true`
+  - 対象: `engine/src/lib.rs`, `engine/src/composition_tests.rs`, `docs/components.md`
+  - 依存: T12
+  - 並列サブ作業: なし
+
+- [ ] F2: 宣言の形の検査（JS）と文書・テストの軽微な追従（verify round 1 の差し戻し。軽微な指摘を 1 つにまとめる）
+  - 完了基準:
+    - `src/application-loader.js` の `#components` と `src/runtime.js` の `resolveComponents`: `declaration` が object でない、または `declaration.url` が string でないとき、取得・URL 解決の前に `コンポーネント <name> の宣言が不正です（url を文字列で指定してください）` を throw する（現状は `<base>/undefined` を取りに行く、または `TypeError` が出る）
+    - 期待結果（本タスクの表）:
+      | 条件                                                                                                           | 結果                                                                                            |
+      | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+      | `components: { a: {} }` / `{ a: null }` / `{ a: { url: 5 } }` の親を `ApplicationLoader.fetch`（network-only） | throw `コンポーネント a の宣言が不正です（url を文字列で指定してください）`、子 URL の取得 0 回 |
+      | 同じ 3 形の `screen` を `UiRuntime.compile` に直接渡す                                                         | 同じ文言で throw、前画面（`runtime.screen.id` / `layout`）は不変                                |
+      | 両 surface を同じ幅（400）にして `UiRuntime.load("screens/order-dashboard.json")`                              | dom / canvas の最後の `render` 引数の `widgets` が `toEqual`、かつ `open/` と `shipped/` を含む |
+    - `tests/components-loader.test.js` に上の表 1〜2 行目を 1 本ずつ（ローダー節とランタイム節。`reads` Map で子の取得 0 回を確かめる）
+    - `tests/components-demo.test.js` の `hands the same composed scene to the dom and the canvas renderer`: 2 つの stage を同じ幅にし、表 3 行目の `toEqual` を足す（名前どおり「同じ Scene」を確かめる。既存の `open/` / `shipped/` の assert は残す）
+    - `docs/components.md` に 3 文を足す: (i) 「制限」節 — JS ローダーは**宣言単位**で循環・深さを検査し、ui に置かれていない宣言も取得・検査する。Rust は**配置単位**。したがって raw ABI では通る「置かれていない自己参照の宣言」はローダーでは拒否される (ii) 「段階 4 以降の課題」節 — 子ノードの `webmcp` は検証されるが登録されない（WebMCP 合成は段階 6） (iii) 「componentノードの許可属性」節 — `layout: accordion` の親の `items` に置いた component ノードは折りたたみの対象にならない（accordion には置かない）
+    - `bunx vp test run tests/components-loader.test.js tests/components-demo.test.js` green、`bun run check` green、`bun run docs:check` green。Rust は触らない（`build:wasm` 不要）
+  - 対象: `src/application-loader.js`, `src/runtime.js`, `tests/components-loader.test.js`, `tests/components-demo.test.js`, `docs/components.md`
+  - 依存: F1
+  - 並列サブ作業: なし
+
 ## 決めた事項
 
 1. ABI `load` の同梱形は `request.components = { "<絶対 URL>": { "package": <Package JSON>, "script": "<Rhai>" } }`（`descriptors` と同じ別キー。`abi.rs:30-38` の隣）。JS が `screen.components[name].url` を絶対 `href` に書き換えてから送り、Rust は `url` を不透明なキーとして引く。同じ子を 2 か所に置いても本体は 1 つ、Instance は 2 つ（RESEARCH §2 / §7）
