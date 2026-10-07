@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "id": "order-list",
+  "title": "受注一覧（部品）",
+  "script": "order-list.rhai",
+  "state": {
+    "orders": [
+      { "id": 1, "number": "SO-001", "customer": "山田商事", "amount": 128000, "status": "受注" },
+      { "id": 2, "number": "SO-002", "customer": "鈴木工業", "amount": 86400, "status": "出荷済" },
+      {
+        "id": 3,
+        "number": "SO-003",
+        "customer": "田中デザイン",
+        "amount": 246000,
+        "status": "受注"
+      },
+      { "id": 4, "number": "SO-004", "customer": "森田製作所", "amount": 54000, "status": "出荷済" }
+    ],
+    "config": { "status": "", "query": "" },
+    "selected": 0
+  },
+  "ui": {
+    "xtype": "container",
+    "layout": "vbox",
+    "items": [
+      { "xtype": "metric", "text": "表示件数", "bind": "count", "variant": "blue" },
+      {
+        "xtype": "grid",
+        "itemId": "orders",
+        "bind": "visible",
+        "selectedBind": "selected",
+        "handler": "select",
+        "columns": [
+          { "text": "受注番号", "dataIndex": "number", "flex": 1 },
+          { "text": "顧客名", "dataIndex": "customer", "flex": 1.5 },
+          { "text": "金額", "dataIndex": "amountLabel", "flex": 1.15 }
+        ]
+      }
+    ]
+  }
+}

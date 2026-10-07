@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "id": "order-dashboard",
+  "title": "受注ダッシュボード",
+  "script": "order-dashboard.rhai",
+  "components": { "orderList": { "url": "parts/order-list.json" } },
+  "state": {
+    "query": "",
+    "notice": "部品の一覧から受注を選んでください。"
+  },
+  "ui": {
+    "xtype": "container",
+    "layout": "vbox",
+    "items": [
+      {
+        "xtype": "textfield",
+        "itemId": "filter",
+        "text": "受注番号・顧客名で絞り込み",
+        "bind": "query",
+        "handler": "filterChanged"
+      },
+      {
+        "xtype": "container",
+        "layout": "hbox",
+        "items": [
+          {
+            "xtype": "orderList",
+            "itemId": "open",
+            "config": { "status": "受注", "query": { "bind": "query" } },
+            "listeners": { "selected": "onSelected" }
+          },
+          {
+            "xtype": "orderList",
+            "itemId": "shipped",
+            "config": { "status": "出荷済", "query": { "bind": "query" } },
+            "listeners": { "selected": "onSelected" }
+          }
+        ]
+      },
+      { "xtype": "label", "bind": "notice", "variant": "muted" }
+    ]
+  }
+}
