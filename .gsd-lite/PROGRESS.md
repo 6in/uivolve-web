@@ -81,3 +81,10 @@
 - やり直し: 0 回
 - 判定の根拠: 差し戻し 0 件。レビューが挙げた「`rpc-result` 列が `complete_rpc` の handler 経路に届かない」「`handlerNodes` が `menu` / `bbar` / `tbar` / `buttons` を走査しない」は、PLAN 決めた事項 8 が「デコード失敗ならそのエラーを照合」と明示して受け入れた形で、要件に堅牢性・網羅性の基準が無く、dispatch 経路は他の 137 handler で差分 0 のため残留リスクとした（verify が要件を追加しない）
 - 次への注意: reflect は PR #1 のマージを待たない（マージは人間 / CI）。振り返りの材料: (a) 照合列の設計時に「handler が実際に Rhai まで届くか」を base の応答で 1 度確かめる手順を T1 の完了基準に入れると、RPC の decode 失敗のような空振りを plan 段階で拾える。(b) サブエージェントのレビューは観点を絞るほど速い（セキュリティ 2.5 分 vs 汎用コードレビュー 8 分）。(c) 恒常注意の「`.gsd-lite/` の `cat` 拒否」は verify でも再現。(d) Read ツールの読了済み判定が親子で共有されるので、サブエージェント起動後に同じファイルを親が読むときは `git show` を使う
+
+## turn 8 — reflect — component-instance-refactor
+
+- やったこと: 振り返りを .gsd-lite/reflect/20261007-1205-component-instance-refactor.md に作成（提案 11 件）。計測は turns.jsonl を `jq` で集計（7 試行・92.1 分・52.98 USD・リトライ 0・権限拒否 0・BLOCKED 0・差し戻し 0）。前回の提案 11 件の反映を確認（守られた 7 / 該当なし 2 / 守られなかった 1 = lean-ctx フック root / 入口誤り 0）。PR #1 は OPEN・CI `build` は IN_PROGRESS（マージは人間 / CI）
+- 想定外: `cat .gsd-lite/logs/.../turns.jsonl` が lean-ctx フックに拒否（root が別プロジェクト）。`jq` と Read で読んだ（恒常注意どおり。Minus に 1 件として記録）
+- やり直し: 0 回
+- 次への注意: 次の plan は「照合列を PLAN に固定する前に base WASM へ 1 度流す」「research / plan もコミット前に `bunx vp fmt <path>`」「サブエージェント依頼文に `git checkout` 系の禁止を固定」を採否表で扱う。lean-ctx フック root の修正はマイルストーンの外（ループ運用側）で起票する
