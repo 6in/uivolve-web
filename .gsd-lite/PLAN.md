@@ -24,17 +24,18 @@ bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-35120e
 
 ## 追従先チェックリスト
 
-| 変更の種類                                   | 直す場所                                                                                                                                                                                                                                                                  | 確かめ方                                                                                                                                                                |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `engine/src/instance.rs` を足す              | `lib.rs` の `mod` 一覧（`lib.rs:5-28`）、`docs/architecture.md:25-55` の責務表（`場所 \| 担当` 2 列）、`README.md:98-99`（ルート README の engine ファイル箇条書き）、`docs/architecture.md:59-61`（「Runtime は…保持する」「成功した Runtime だけをスロットへ」の 1 文追従） | `git grep -n "instance.rs" -- README.md docs/architecture.md engine/src/lib.rs` が 3 ファイルとも 1 行以上                                                              |
-| 文書 `docs/components-plan.md` を足す        | `docs/README.md:11-42` の表（`やりたいこと \| 読む文書` 2 列。検討書は「計画」「検討」と明記して契約と区別）                                                                                                                                                              | `git grep -n "components-plan.md" -- docs/README.md` が 1 行。`bun run docs:check` green                                                                                 |
-| `scripts/` に恒久スクリプトを足す            | `docs/testing.md:83` の恒久スクリプト段落（Playwright 3 本の件数は変えず、**別の文**で照合スクリプト 3 本（compare / build-engine-variant / verify-instance-refactor）の用途と入口を足す）                                                                                   | `git grep -n -E "compare-engine-behavior|verify-instance-refactor|build-engine-variant" -- docs/testing.md` が 3 名とも 1 行以上。`3本` の記述は Playwright 用のまま   |
-| `Runtime` の公開 API 名を使う文書            | `docs/native-extensions.md:83-91`（`load_with_extensions` / `load_with_clock`）、`docs/date-functions.md:59`（`load_with_clock` / `with_clock`）、`docs/component-development.md:39`（`Runtime::load` / `Runtime::dispatch`）、`docs/dialogs.md:106`（`lib.rs` の記述）    | 公開シグネチャは維持するので**変更しない**。`git diff main --stat -- docs/native-extensions.md docs/date-functions.md docs/component-development.md docs/dialogs.md` が空 |
-| エラー文字列（`lib.rs` の `Err(` 41 か所）   | 移す先の `instance.rs`。文字列は 1 字も変えない                                                                                                                                                                                                                            | main の `lib.rs` と HEAD の `lib.rs`+`instance.rs` から `"..."` リテラルを抽出した集合が一致（T2 の完了基準。`git grep -c "Err(" -- engine/src/lib.rs` は main で 41）    |
+| 変更の種類                                 | 直す場所                                                                                                                                                                                                                                                                      | 確かめ方                                                                                                                                                                  |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `engine/src/instance.rs` を足す            | `lib.rs` の `mod` 一覧（`lib.rs:5-28`）、`docs/architecture.md:25-55` の責務表（`場所 \| 担当` 2 列）、`README.md:98-99`（ルート README の engine ファイル箇条書き）、`docs/architecture.md:59-61`（「Runtime は…保持する」「成功した Runtime だけをスロットへ」の 1 文追従） | `git grep -n "instance.rs" -- README.md docs/architecture.md engine/src/lib.rs` が 3 ファイルとも 1 行以上                                                                |
+| 文書 `docs/components-plan.md` を足す      | `docs/README.md:11-42` の表（`やりたいこと \| 読む文書` 2 列。検討書は「計画」「検討」と明記して契約と区別）                                                                                                                                                                  | `git grep -n "components-plan.md" -- docs/README.md` が 1 行。`bun run docs:check` green                                                                                  |
+| `scripts/` に恒久スクリプトを足す          | `docs/testing.md:83` の恒久スクリプト段落（Playwright 3 本の件数は変えず、**別の文**で照合スクリプト 3 本（compare / build-engine-variant / verify-instance-refactor）の用途と入口を足す）                                                                                    | `git grep -n -E "compare-engine-behavior                                                                                                                                  | verify-instance-refactor | build-engine-variant" -- docs/testing.md` が 3 名とも 1 行以上。`3本` の記述は Playwright 用のまま |
+| `Runtime` の公開 API 名を使う文書          | `docs/native-extensions.md:83-91`（`load_with_extensions` / `load_with_clock`）、`docs/date-functions.md:59`（`load_with_clock` / `with_clock`）、`docs/component-development.md:39`（`Runtime::load` / `Runtime::dispatch`）、`docs/dialogs.md:106`（`lib.rs` の記述）       | 公開シグネチャは維持するので**変更しない**。`git diff main --stat -- docs/native-extensions.md docs/date-functions.md docs/component-development.md docs/dialogs.md` が空 |
+| エラー文字列（`lib.rs` の `Err(` 41 か所） | 移す先の `instance.rs`。文字列は 1 字も変えない                                                                                                                                                                                                                               | main の `lib.rs` と HEAD の `lib.rs`+`instance.rs` から `"..."` リテラルを抽出した集合が一致（T2 の完了基準。`git grep -c "Err(" -- engine/src/lib.rs` は main で 41）    |
 
 ## Tasks
 
-- [ ] T1: 挙動照合スクリプトと WASM 変種ビルドスクリプト（受け入れ基準 2 の道具。変異表つき）
+- [x] T1: 挙動照合スクリプトと WASM 変種ビルドスクリプト（受け入れ基準 2 の道具。変異表つき）
+  - **訂正（turn 3 / 実測）**: `steps = 346` / `okResponses = 325` / `errorResponses = 21` / `sequences = 41`（22 画面 + font-parity 4 + 追加 15）。T2・T4 はこの 4 値を期待値として使う
   - 完了基準:
     1. `scripts/compare-engine-behavior.mjs` が `--base <wasm> --candidate <wasm>`（**両方必須**。既定値で `public/engine.wasm` を base と見なさない = P8）と `--evidence <json>`（既定 `target/engine-compare/compare.json`）を取り、「決めた事項 6〜8」のリクエスト列を 2 つの WASM に流し、応答 JSON の**文字列一致**を数える。差分は `DIFF <画面id> <label> <最初に異なる JSON 経路（例 data.widgets[3].x）>` と両者の値（各 120 文字まで）で表示する（RESEARCH §3「先頭 200 文字では読めない」への対応）。最後に 1 行 JSON `{steps, diffs, okResponses, errorResponses, sequences, durationMs}` を出し、`diffs = 0` なら exit 0、`> 0` なら exit 1、引数不備・WASM 不在は exit 2。判定に WASM のハッシュを使わない（P5）
     2. 全リクエスト（load / event / `*_result` / host_progress）に固定 `clock`（決めた事項 6）を付ける（P6）。`rpc` 定義を持つ画面は `buffer_store` で `public/screens/rpc-demo.pb` を入れてから `load`（P9）。集計行の `okResponses` / `errorResponses` を証跡 JSON に残す
@@ -122,17 +123,17 @@ bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-35120e
 5. **`abi.rs` は無改修**（REQUIREMENTS「差し替えのみ」の 0 件が成立するため。`git diff main --stat -- engine/src/abi.rs` 空が T2 の完了基準）
 6. **照合の固定値**（根拠: `scratch/turn-001-compare.mjs:9`、`tests/abi.test.js:14-28`）: `clock = {nowMs: 1759800000000, tzOffsetMinutes: 540}` を load / event / `*_result` / host_progress の全リクエストに付ける。画面の読み込みは `src/screen-catalog.js` の `SCREEN_CATALOG` / `screenFile` と `src/package-format.js` の `parsePackage(text, packageFormat(file))`。1 シーケンス = 新しい WASM インスタンス（`WebAssembly.instantiate(module_, {})`）。動的な id（dialog / http / storage / file / rpc / host の effect `id`）は **base の応答から取り、同じリクエストを candidate にも流す**（candidate で id が違えば effect の差分として表示される）
 7. **代表 payload（部品種別）**（根拠: `fields.rs:12-20,245-252`（入力 xtype と `event_value`）、`grid.rs:250-407`、`kanban.rs:106`、`navigation.rs:301-334`、`lib.rs:662-688`）。走査は `pkg.ui` の生ツリー（正規化前）で `handler` と `itemId` を持つノード:
-   | xtype（別名含む）                                        | payload                                                   |
-   | -------------------------------------------------------- | --------------------------------------------------------- |
-   | button / splitbutton / xtype なし（menu item）/ その他   | `{}`                                                      |
-   | textfield / textarea / textareafield / combobox / combo  | `{value: "x"}`（combobox は選択肢外でエラーなら、そのエラー応答を照合） |
-   | numberfield / slider / sliderfield                       | `{value: 1}`                                              |
-   | checkbox / checkboxfield                                 | `{value: true}`                                           |
-   | panel（`collapsedBind` あり）                            | `{action: "toggle"}`（無ければ `{}` でエラー応答を照合）  |
-   | window / messagebox                                      | `{action: "close"}`                                       |
-   | grid / gridpanel                                         | `{action: "sort", column: <node.columns[0].dataIndex>}`（columns が無ければ `{}`） |
-   | kanban / tree / treepanel / datepicker / pagingtoolbar   | `{}`（エラー応答の文字列一致を照合。id を要するため）     |
-   各 event の後に `layout` 800 を 1 回流す（RESEARCH §3 と同形）
+   | xtype（別名含む）                                              | payload                                                                            |
+   | -------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+   | button / splitbutton / xtype なし（menu item）/ その他         | `{}`                                                                               |
+   | textfield / textarea / textareafield / combobox / combo        | `{value: "x"}`（combobox は選択肢外でエラーなら、そのエラー応答を照合）            |
+   | numberfield / slider / sliderfield                             | `{value: 1}`                                                                       |
+   | checkbox / checkboxfield                                       | `{value: true}`                                                                    |
+   | panel（`collapsedBind` あり）                                  | `{action: "toggle"}`（無ければ `{}` でエラー応答を照合）                           |
+   | window / messagebox                                            | `{action: "close"}`                                                                |
+   | grid / gridpanel                                               | `{action: "sort", column: <node.columns[0].dataIndex>}`（columns が無ければ `{}`） |
+   | kanban / tree / treepanel / datepicker / pagingtoolbar         | `{}`（エラー応答の文字列一致を照合。id を要するため）                              |
+   | 各 event の後に `layout` 800 を 1 回流す（RESEARCH §3 と同形） |
 8. **追加シーケンス**（画面の基本列 22 本 + `tests/browser/font-parity-{edit,states,surface,text}.json|rhai` 4 本に加える。label は固定文字列で、T1 の 4 と変異 M2 / M3 の判定に使う）:
    - `reload`: `dialogs` 画面の基本列を流した**同じインスタンス**で再 `load` → `showAlert` event → `layout` 800（P1: `dialogs::SEQUENCE` の採番継続）
    - `dialog-confirm-ok`: `dialogs` → `showConfirm` → `:dialog:<id>:ok` → `layout` 800
@@ -149,34 +150,48 @@ bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-35120e
    - `failed-load-keeps-previous`: `abi.test.js:29-43` の定義で `load` → `add` → 不正 script で `load`（エラー）→ `add`（前の Runtime が残り count が進む）
    - `theme`: `{op:"theme", theme:{version:1, mode:"dark"}}` → `layout` 800（`Scene.theme`）→ 不正 theme（エラー）→ `layout` 800
    - `abi-errors`: 未 load で `{"op":"event","target":"x"}` / `{"op":"layout","width":800}`（`No screen loaded`）、`{}`、`{"op":"nope"}`、load 後に `layout 100`（幅エラー）、`event:unknown-target`（`{"op":"event","target":"nope"}` → `Unknown itemId: nope`。M3 の判定に使う）
+   - **訂正（turn 3 / 実測。実物を正とした 5 件。label と M1〜M3 の判定経路は不変）**:
+     1. `host-result`: `host_result` の `data` は `null` ではなく `{body: []}`。`null` だと `listed` が `r.data.body` で throw してロールバックし、続く `refreshOrders` が state 無変化で host effect を出さないため、progress が消費済み id に当たってしまう。順序も `load` → `host_result:load` → `refreshOrders` → `host_progress`（progressHandler 無しのエラー）→ `host_result:refresh` に変更（progress を生きた id に当てるため）
+     2. `file-result`: `list` の直前に `file_result:bytes:2`（`read_bytes` id の成功完了）を 1 歩追加。`busy()` を共有する `mkdir` / `list` / `save` は直前の state が `loading = true` のままだと state 無変化で effect を出さないので、`list` が自分の effect を出せない。この 1 歩は `abi.rs:70` の「失敗完了は pending id を消費しない」も同時に実証する
+     3. `navigate` のインライン fixture の handler / itemId 名は `go` ではなく `combine`（`go` は Rhai の予約語）
+     4. `failed-load-keeps-previous` の不正 script は `fn init(s){throw "failed";s} fn add(s,e){s}`（`abi.test.js:107` の形）。`add` を欠いた形は handler 検証（`add references undefined handler: add`）で先に落ちて init throw 経路に届かない
+     5. `theme`: 先に `load` を 1 歩置く（load 前の `layout` は `No screen loaded` になる）
 9. **変異表**（`build-engine-variant.mjs` の `MUTATIONS` 定数。`from` は**ちょうど 1 回**出現すること。refactor で動いたら `from` だけ直し、ここに訂正行を書く）:
-   | 名前 | ファイル | from → to（意図） | 期待する差分 |
-   | --- | --- | --- | --- |
-   | M1 `layout-x-offset` | `engine/src/lib.rs` | `layout` の root `arrange(...)` 呼び出しの x `16.0` → `17.0`（RESEARCH §3 と同じ変異。`from` は `arrange(` 直後の数行を含めて一意にする） | `layout:*` の `data.widgets[*].x`。基本列で 137 以上 |
-   | M2 `dialog-draft-revision` | `engine/src/lib.rs` | `dialogs::Event::Draft` 分岐の `self.revision += 1;` を削除（`from` は `Draft => {` を含めて一意にする） | `dialog-prompt-input` の `data.revision` |
-   | M3 `unknown-item-message` | `engine/src/lib.rs` | `"Unknown itemId: {target}"` → `"Unknown item: {target}"` | `abi-errors` の `event:unknown-target` の `error` |
+
+   | 名前                       | ファイル            | from → to（意図）                                                                                                                         | 期待する差分                                         |
+   | -------------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+   | M1 `layout-x-offset`       | `engine/src/lib.rs` | `layout` の root `arrange(...)` 呼び出しの x `16.0` → `17.0`（RESEARCH §3 と同じ変異。`from` は `arrange(` 直後の数行を含めて一意にする） | `layout:*` の `data.widgets[*].x`。基本列で 137 以上 |
+   | M2 `dialog-draft-revision` | `engine/src/lib.rs` | `dialogs::Event::Draft` 分岐の `self.revision += 1;` を削除（`from` は `Draft => {` を含めて一意にする）                                  | `dialog-prompt-input` の `data.revision`             |
+   | M3 `unknown-item-message`  | `engine/src/lib.rs` | `"Unknown itemId: {target}"` → `"Unknown item: {target}"`                                                                                 | `abi-errors` の `event:unknown-target` の `error`    |
+
+   **訂正（turn 3 / 実測）**: 確定した `from`（いずれも `lib.rs` にちょうど 1 回）と実測差分数は次のとおり。M1 の実測は基本列 137 以上ではなく **全列で 165**。
+   - M1: `"        arrange(\n            &self.ui,\n            &state,\n            16.0,\n"`（`arrange(` 単独は `:1445` 等にもあるので `&self.ui` 前置で一意化）→ `diffs = 165`
+   - M2: `"                dialogs::Event::Draft => {\n                    self.revision += 1;\n"`（`self.revision += 1;` 単独は `:983` にもある）→ `diffs = 2`
+   - M3: `'"Unknown itemId: {target}"'` → `diffs = 1`
+   - **T2 への申し送り**: M1 / M2 の `from` は `self.ui` / `self.revision` を含むので、`self.root.ui` への差し替えで M1 は必ず動く（M2 の `revision` は Runtime に残るので動かない見込み）。動いたら `from` だけ直してここに訂正行を追記する
+
 10. **`docs/components-plan.md` の節構成**: 1. 状態（定型文）/ 2. 目的と前提（ExtJS のカスタムコンポーネント相当、エンジン内合成 = DECISIONS B 案と却下案 3 つの要約）/ 3. 使い方（`components` 宣言 名前 → `url`、`xtype` に宣言名、`config`（固定値または親 state への `bind`）、`listeners`（子の `emit` 名 → 親 handler）、子 Rhai の `emit(name, payload)` と任意の `config(state, config)`、`state.config` 注入。YAML 例 1 つ）/ 4. Instance 木の構造（`Runtime { root, components: HashMap<itemId, Instance> }`、Scene 1 つ、target / key の `"<itemId>/<子itemId>"` 接頭辞）/ 5. 設計決定（8 論点の表 + 注記 2 件）/ 6. 段階計画（1・2 完了、3〜6）/ 7. 本マイルストーンで確定した構造（Instance 12 フィールド表、Runtime 4 フィールド表、Instance のメソッド 3 本、root 共通物を Runtime に残す理由）/ 8. 残課題（`safe_key` 区切り文字、`http` effect の `kind`、`SEQUENCE` などの thread_local の扱い = RESEARCH §1.2）
 11. **スクリプトの置き場と名前**: `scripts/compare-engine-behavior.mjs` / `scripts/build-engine-variant.mjs` / `scripts/verify-instance-refactor.mjs`。`package.json` の scripts には**足さない**（`verify:transfer` は入っているが、本件は PR 用の一時的な照合で、定常運用の入口にしない。`docs/testing.md` に入口を書く）。スクラッチと証跡は `target/engine-compare/`（gitignore 済み）
 12. **テストファイルを足さない**: 受け入れ基準 1 の「既存テストファイルの変更 0」に加え、新規の `tests/*.test.js` も作らない（照合は Node スクリプトと変異表で歯を確かめる。Vitest に載せると各実行で base ビルドが要る）
 
 ## 落とし穴の対応（RESEARCH §5 → 担当タスク）
 
-| #   | 担当       | 完了基準での検証                                                                                   |
-| --- | ---------- | -------------------------------------------------------------------------------------------------- |
-| P1  | T1 / T2    | `reload` シーケンス（決めた事項 8）が diffs 0                                                       |
-| P2  | T1 / T2    | `dialog-prompt-input` の `data.revision` 一致。M2 で非 0                                            |
-| P3  | T2         | エラー文字列集合の一致（T2-6）、`navigate` + `alert` のエラー応答一致。M3 で非 0                     |
-| P4  | T2         | `lib.rs` テスト 2 本無改修 green、`rollback` シーケンス diffs 0、`commit_state` を Runtime に残す    |
-| P5  | T1         | 判定にハッシュを使わない（T1-1）                                                                    |
-| P6  | T1         | 固定 clock、同一 WASM 同士 diffs 0（T1-4）                                                          |
+| #   | 担当         | 完了基準での検証                                                                                  |
+| --- | ------------ | ------------------------------------------------------------------------------------------------- |
+| P1  | T1 / T2      | `reload` シーケンス（決めた事項 8）が diffs 0                                                     |
+| P2  | T1 / T2      | `dialog-prompt-input` の `data.revision` 一致。M2 で非 0                                          |
+| P3  | T2           | エラー文字列集合の一致（T2-6）、`navigate` + `alert` のエラー応答一致。M3 で非 0                  |
+| P4  | T2           | `lib.rs` テスト 2 本無改修 green、`rollback` シーケンス diffs 0、`commit_state` を Runtime に残す |
+| P5  | T1           | 判定にハッシュを使わない（T1-1）                                                                  |
+| P6  | T1           | 固定 clock、同一 WASM 同士 diffs 0（T1-4）                                                        |
 | P7  | T1 / T2 / T4 | 変異 M1〜M3 が exit 1（T1-4、T2-5、T4-1）                                                         |
-| P8  | T1         | `--base` / `--candidate` 両方必須（T1-1）                                                           |
-| P9  | T1         | descriptor 投入、`okResponses` / `errorResponses` の記録と T2 での一致                               |
-| P10 | T3         | struct 行数と表の行数一致（T3-3）                                                                   |
-| P11 | T2         | `abi.rs` 無改修（T2-2、T2-8）                                                                       |
-| P12 | T1 / T4    | `git worktree list` 1 行（T1-5、T4-5）                                                              |
-| P13 | 恒常       | PROGRESS 冒頭の恒常注意に記載済み。各ターンの「次への注意」には写さない                              |
-| P14 | T1         | 変異コピーに `public/themes/` を含める（T1-3）                                                      |
+| P8  | T1           | `--base` / `--candidate` 両方必須（T1-1）                                                         |
+| P9  | T1           | descriptor 投入、`okResponses` / `errorResponses` の記録と T2 での一致                            |
+| P10 | T3           | struct 行数と表の行数一致（T3-3）                                                                 |
+| P11 | T2           | `abi.rs` 無改修（T2-2、T2-8）                                                                     |
+| P12 | T1 / T4      | `git worktree list` 1 行（T1-5、T4-5）                                                            |
+| P13 | 恒常         | PROGRESS 冒頭の恒常注意に記載済み。各ターンの「次への注意」には写さない                           |
+| P14 | T1           | 変異コピーに `public/themes/` を含める（T1-3）                                                    |
 
 並行性: 単一スレッド WASM・同期 Rhai で並行性は無い（RESEARCH §5 末尾）。境界値: `layout 100`（幅エラー）、`file_result` の `ok:false` + buffer、消費済み id の再完了、`host_progress` 不正 3 種、runaway handler（operations 上限）を `abi-errors` / `file-result` / `http-result` / `host-progress` / `rollback` が担う（決めた事項 8）。異常系: エラー応答も文字列一致で照合する（RESEARCH §2）。
 
@@ -186,18 +201,18 @@ bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-35120e
 - **タスク数 4**: REQUIREMENTS が「文書 1 本 + 純リファクタ + 照合」で小さく、各タスクが 1 ターンで実装 + テスト + コミットまで収まる。8 タスクへ増やさない（テンプレートの方針）
 - **T2 の進め方**: 先に `instance.rs` に struct と `load` を切り出して `cargo test` を通し、次に `dispatch` 以降の `self.x` → `self.root.x` を機械的に置換する。借用エラーは `let root = &mut self.root;` の導入ではなく直接のフィールド参照で解く（`self.root.http.commit(names, &self.root.package.requests)` は disjoint fields で通る）。`self.state_json()?` を呼ぶ箇所（`dispatch:621`、`commit_state:940`、`layout:995`）は `self.root.state_json()?` に置き換え、呼び出し回数・位置を変えない（P4）
 - **RESEARCH「盗める点」の採否**:
-  | 盗める点 | 採否 | 理由 |
-  | --- | --- | --- |
-  | `tests/abi.test.js:14-28` の `raw()` と `:82` の 2 インスタンス起動 | 採用 | 照合スクリプトの WASM 呼び出しの形 |
-  | `scratch/turn-001-compare.mjs`（固定 clock・descriptor 投入・ok/error 集計） | 採用（差分表示を JSON 経路に変更、シーケンス追加） | 実測済みで 230 応答 0 差分を再現できる |
-  | `scripts/verify-transfer.mjs` の手順配列と exit code | 採用（所要の出力を追加） | 最終判定の形。振り返り提案「所要を出す」 |
-  | `dynamic_ui.rs` の「テンプレート（`package.ui`）/ 確定ツリー（`ui`）」の対 | 採用 | Instance が同じ対を持つ。段階 3 で子も同じ関数を使える |
-  | `clear()` 7 連の切り出し | 採用（`Instance::clear_queues` = 5 キューのみ） | 重複削減。順序は観測不能と確認済み |
-  | `commit_state` を Instance 側へ移し root 共通物を引数で渡す | 却下 | `prepare` の順序と借用を変えないため Runtime に残す（RESEARCH §1.3 推奨）。段階 3 で再検討 |
-  | `functions` を `ast.iter_functions()` から再計算 | 却下 | 差分最小。フィールド維持 |
-  | Rhai `call_fn_with_options` / `Engine::new_raw` + 共有パッケージ | 却下 | 挙動不変（最上位文の評価・上限の扱いが変わり得る） |
-  | `dialogs::SEQUENCE` などの thread_local の移動 | 却下 | P1。文書の残課題に記す |
-  | WASM のバイト比較 | 却下 | 同一ソースでも sha256 が違う（RESEARCH §3） |
+  | 盗める点                                                                     | 採否                                               | 理由                                                                                       |
+  | ---------------------------------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+  | `tests/abi.test.js:14-28` の `raw()` と `:82` の 2 インスタンス起動          | 採用                                               | 照合スクリプトの WASM 呼び出しの形                                                         |
+  | `scratch/turn-001-compare.mjs`（固定 clock・descriptor 投入・ok/error 集計） | 採用（差分表示を JSON 経路に変更、シーケンス追加） | 実測済みで 230 応答 0 差分を再現できる                                                     |
+  | `scripts/verify-transfer.mjs` の手順配列と exit code                         | 採用（所要の出力を追加）                           | 最終判定の形。振り返り提案「所要を出す」                                                   |
+  | `dynamic_ui.rs` の「テンプレート（`package.ui`）/ 確定ツリー（`ui`）」の対   | 採用                                               | Instance が同じ対を持つ。段階 3 で子も同じ関数を使える                                     |
+  | `clear()` 7 連の切り出し                                                     | 採用（`Instance::clear_queues` = 5 キューのみ）    | 重複削減。順序は観測不能と確認済み                                                         |
+  | `commit_state` を Instance 側へ移し root 共通物を引数で渡す                  | 却下                                               | `prepare` の順序と借用を変えないため Runtime に残す（RESEARCH §1.3 推奨）。段階 3 で再検討 |
+  | `functions` を `ast.iter_functions()` から再計算                             | 却下                                               | 差分最小。フィールド維持                                                                   |
+  | Rhai `call_fn_with_options` / `Engine::new_raw` + 共有パッケージ             | 却下                                               | 挙動不変（最上位文の評価・上限の扱いが変わり得る）                                         |
+  | `dialogs::SEQUENCE` などの thread_local の移動                               | 却下                                               | P1。文書の残課題に記す                                                                     |
+  | WASM のバイト比較                                                            | 却下                                               | 同一ソースでも sha256 が違う（RESEARCH §3）                                                |
 - **直近 2 件の振り返りの「次回への提案」の採否**:
   - 採用: 変異表を検査タスクの完了基準に入れる（T1 / T2 / T4 の M1〜M3）。並列サブ作業を最終タスクに置かず gate は前景（T4）。台帳規約（生の値は証跡 JSON を指す。T3-6、T4-3）。runner が手順別所要と合計を出す（T4-1）。恒常の注意と次のタスク固有の注意の分離（PROGRESS 冒頭に既存）。「既存画面で条件が揃わない」対策としてインライン fixture を最初から計画に入れる（決めた事項 8）。検査ファイルを役割で分ける（compare / build-variant / runner の 3 本）。`gsd-lite-loop.sh --where` を入口にする（本ターンで実施）
   - 対象外（理由）: 実ブラウザの起動プローブ（本マイルストーンはブラウザ不要）、Codex sandbox（全フェーズ Claude）、lean-ctx フックの root 修正（ループ・環境の改修はスコープ外。恒常注意で回避）、verify の「要確認」付与（verify 側の運用）、`origin` の扱い（discuss で解決済み、DECISIONS）
