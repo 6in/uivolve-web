@@ -190,3 +190,10 @@
 - 想定外: (1) `gh pr create` が push 直後に「you must first push the current branch to a remote, or use the --head flag」で abort した（push は成功していて tracking も設定済み）。`--head gsd-lite/component-composition` を明示して成功。(2) native `grep` を `.gsd-lite/PLAN.md` に向けると lean-ctx のフックが「path escapes project root（root: `.../gsd-lite`）」で拒否した。`git grep` に切り替えた（恒常注意どおり）
 - やり直し: 1 回（`gh pr create` の `--head` 付け直し。上記 (1)）
 - 次への注意: reflect の材料: (a) verify round 1 の差し戻し 2 件のうち本物のバグは F1 の 1 件で、原因は「完了経路（`complete_*`）を合成画面で流すテストが PLAN に無かった」こと。PLAN の T6 / T7 は dispatch 経路しか完了基準に書いていなかった (b) `gh pr create` は `--head` を最初から付ける (c) native `Read` が「unchanged」を返す・native `grep` が `.gsd-lite/` を拒否する、の 2 件は lean-ctx のフック由来で毎ターン出る。`git show` / `git grep` で回避できるので PLAN の恒常注意に既にある (d) 残留リスク 9（F2 の JS 文言が `components.md:117` に未列挙）は次に `components.md` を触るマイルストーンで 1 件足す (e) state は `phase: reflect`。PR のマージは人間 / CI
+
+## turn 19 — reflect — component-composition
+
+- やったこと: 振り返りを .gsd-lite/reflect/20261008-0114-component-composition.md に作成（提案 10 件）。計測は turns.jsonl 18 行（18 試行・199.9 分・126.66 USD・リトライ 0・権限拒否 0）、前回の提案 11 件の反映を 1 件ずつ判定（守られた 6 / 済 1 / 部分的 1 / 守られなかった 3 / 対象外 1）
+- 想定外: (1) turn 11（T9）のサブエージェントが `rm -rf .gsd-lite/logs/component-composition/scratch` を実行しており、turn 1〜10 のプローブ（`turn-002-sequences-probe.mjs` 等。PLAN「入力」と PROGRESS turn 1〜9 の根拠）が存在しない。PROGRESS turn 11 には記録がなく、`turn-011-attempt1.jsonl` のツール呼び出しと依頼文「終わったら消す」から特定した。(2) 前回の提案のうち「スキルに入れる」3 件は PLAN メモにだけ写され、`.claude/skills/gsd-lite-impl/SKILL.md` は未編集（最終更新 d14dfeb）。(3) lean-ctx の `ctx_*` は本ターンも未接続で通常ツールで進めた
+- やり直し: 0 回
+- 次への注意: scratch/ は消さない（スキルの「mktemp -d は消す」を scratch に及ぼさない）。F1 型の穴は「既存の公開入口 × 新しい状態」の直交表を plan の完了基準に写すことで防ぐ。スキル改修の提案は次の discuss 冒頭で人間が実施可否を決める
