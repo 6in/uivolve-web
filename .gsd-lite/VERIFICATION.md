@@ -58,7 +58,7 @@
 ## リモート運用
 
 - `origin` = `https://github.com/6in/uivolve-web.git`（github.com）。`gh` は認証済み（account `6in`）。本ラウンドで `git push -u origin gsd-lite/component-composition` → `gh pr create --base main` を行い、PR の URL を下に記録する
-- PR: （push / 作成後に追記）
+- PR: https://github.com/6in/uivolve-web/pull/2（push `288bc13` → `gh pr create --base main --head gsd-lite/component-composition`。`--head` なしでは `gh` がリモートブランチを見つけられず abort したため明示した）。マージは人間 / CI
 
 ---
 
