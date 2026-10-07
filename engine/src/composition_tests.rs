@@ -337,7 +337,7 @@ fn a_declared_component_node_loads_and_waits_for_its_package() {
     assert_eq!(instance.declared, BTreeSet::from(["orderList".to_string()]));
     assert_eq!(
         Runtime::load(package, SCRIPT).err().unwrap(),
-        "Component packages were not bundled"
+        "Component open: package parts/order-list.json was not bundled"
     );
 }
 
@@ -615,5 +615,250 @@ fn a_child_reads_the_clock_its_parent_is_holding() {
     assert_eq!(
         instance.state_json().expect("child state")["today"],
         "2026-10-04"
+    );
+}
+
+// --- the instance tree of a screen ---
+
+/// A package of the composition fixtures: `components` declares, `items` places.
+fn part(id: &str, state: Value, components: Value, items: Value) -> Package {
+    serde_json::from_value(json!({
+        "version": 1, "id": id, "title": id, "script": format!("{id}.rhai"),
+        "state": state,
+        "components": components,
+        "ui": {"xtype": "container", "items": items},
+    }))
+    .unwrap_or_else(|e| panic!("{id}: {e}"))
+}
+
+fn component(xtype: &str, item_id: &str, config: Value) -> Value {
+    json!({"xtype": xtype, "itemId": item_id, "config": config})
+}
+
+const CHILD_SCRIPT: &str = "fn init(s) { s }";
+/// Carries what the parent configured into the state a grandchild can bind to.
+const MIDDLE_SCRIPT: &str = "fn init(s) { s.label = s.config.query; s }";
+
+/// `leaf.json` — no declarations of its own, so it ends every branch.
+fn leaf() -> Package {
+    part(
+        "leaf",
+        json!({"value": 0}),
+        json!({}),
+        json!([{"xtype": "metric", "text": "件数", "bind": "value"}]),
+    )
+}
+
+/// `middle.json` — declares `leaf` and places it as `c`, one level further down.
+fn middle() -> Package {
+    part(
+        "middle",
+        json!({"label": ""}),
+        json!({"leaf": {"url": "leaf.json"}}),
+        json!([
+            {"xtype": "metric", "text": "ラベル", "bind": "label"},
+            component("leaf", "c", json!({"query": {"bind": "label"}})),
+        ]),
+    )
+}
+
+/// A screen placing `middle` as `a` and the same `leaf` the middle uses as `b`.
+fn composed() -> Package {
+    part(
+        "parent",
+        json!({"query": "x"}),
+        json!({"middle": {"url": "middle.json"}, "leaf": {"url": "leaf.json"}}),
+        json!([
+            component(
+                "middle",
+                "a",
+                json!({"status": "受注", "query": {"bind": "query"}})
+            ),
+            component("leaf", "b", json!({"status": "出荷済"})),
+        ]),
+    )
+}
+
+fn bundle(parts: Vec<(&str, Package, &str)>) -> HashMap<String, (Package, String)> {
+    parts
+        .into_iter()
+        .map(|(url, package, script)| (url.to_owned(), (package, script.to_owned())))
+        .collect()
+}
+
+fn bundled() -> HashMap<String, (Package, String)> {
+    bundle(vec![
+        ("middle.json", middle(), MIDDLE_SCRIPT),
+        ("leaf.json", leaf(), CHILD_SCRIPT),
+    ])
+}
+
+fn compose(
+    package: Package,
+    components: HashMap<String, (Package, String)>,
+) -> Result<Runtime, String> {
+    Runtime::load_with_components(package, SCRIPT, HashMap::new(), None, components, |_| {})
+}
+
+/// The error a screen fails to compose with. `Runtime` is not `Debug`, so rejections go
+/// through here instead of `unwrap_err`.
+fn compose_error(package: Package, components: HashMap<String, (Package, String)>) -> String {
+    compose(package, components)
+        .err()
+        .expect("expected a load error")
+}
+
+#[test]
+fn bundled_components_load_into_a_tree_keyed_by_the_prefixed_item_id() {
+    let runtime = compose(composed(), bundled()).expect("a composed screen");
+    assert_eq!(
+        runtime.components.keys().collect::<Vec<_>>(),
+        ["a", "a/c", "b"]
+    );
+    // Each instance keeps its own state; the parent's never leaves the root.
+    let config =
+        |path: &str| runtime.components[path].state_json().expect("child state")["config"].clone();
+    assert_eq!(config("a"), json!({"status": "受注", "query": "x"}));
+    // The grandchild binds a key `init` of the middle instance derived from its own config.
+    assert_eq!(config("a/c"), json!({"query": "x"}));
+    assert_eq!(config("b"), json!({"status": "出荷済"}));
+    assert_eq!(
+        runtime.state_json().expect("root state"),
+        json!({"query": "x"})
+    );
+    assert_eq!(runtime.revision, 0);
+}
+
+#[test]
+fn an_instance_tree_stays_within_three_levels() {
+    // Three distinct packages, so the depth is reached before the circular check can fire.
+    let deep = |id: &str, url: &str, item_id: &str| {
+        part(
+            id,
+            json!({}),
+            json!({"part": {"url": url}}),
+            json!([component("part", item_id, json!({}))]),
+        )
+    };
+    let components = bundle(vec![
+        ("one.json", deep("one", "two.json", "b"), CHILD_SCRIPT),
+        ("two.json", deep("two", "three.json", "c"), CHILD_SCRIPT),
+        ("three.json", leaf(), CHILD_SCRIPT),
+    ]);
+    let root = part(
+        "parent",
+        json!({}),
+        json!({"part": {"url": "one.json"}}),
+        json!([component("part", "a", json!({}))]),
+    );
+    assert_eq!(
+        compose_error(root, components),
+        "Component a/b/c: nesting depth exceeds 3"
+    );
+}
+
+#[test]
+fn a_screen_holds_at_most_eight_instances_including_the_root() {
+    let components = bundle(vec![("leaf.json", leaf(), CHILD_SCRIPT)]);
+    let screen = |count: usize| {
+        part(
+            "parent",
+            json!({}),
+            json!({"leaf": {"url": "leaf.json"}}),
+            Value::Array(
+                (0..count)
+                    .map(|i| component("leaf", &format!("c{i}"), json!({})))
+                    .collect(),
+            ),
+        )
+    };
+    let runtime = compose(screen(7), components.clone()).expect("seven components");
+    assert_eq!(runtime.components.len(), 7);
+    assert_eq!(
+        compose_error(screen(8), components),
+        "At most 8 instances per screen (root included); exceeded at component c7"
+    );
+}
+
+#[test]
+fn a_component_cannot_reach_itself_through_its_own_declarations() {
+    let recursive = part(
+        "loop",
+        json!({}),
+        json!({"part": {"url": "loop.json"}}),
+        json!([component("part", "b", json!({}))]),
+    );
+    let root = part(
+        "parent",
+        json!({}),
+        json!({"part": {"url": "loop.json"}}),
+        json!([component("part", "a", json!({}))]),
+    );
+    assert_eq!(
+        compose_error(root, bundle(vec![("loop.json", recursive, CHILD_SCRIPT)])),
+        "Component a/b: circular reference to loop.json"
+    );
+}
+
+#[test]
+fn a_component_needs_its_package_bundled_and_a_config_the_parent_state_answers() {
+    assert_eq!(
+        compose_error(
+            composed(),
+            bundle(vec![("leaf.json", leaf(), CHILD_SCRIPT)])
+        ),
+        "Component a: package middle.json was not bundled"
+    );
+    let unbound = part(
+        "parent",
+        json!({"query": "x"}),
+        json!({"leaf": {"url": "leaf.json"}}),
+        json!([component("leaf", "a", json!({"q": {"bind": "missing"}}))]),
+    );
+    assert_eq!(
+        compose_error(unbound, bundled()),
+        "Component a: config bind missing is not in the parent state"
+    );
+}
+
+#[test]
+fn the_per_instance_limits_of_a_child_name_the_component_that_broke_them() {
+    let root = part(
+        "parent",
+        json!({}),
+        json!({"leaf": {"url": "leaf.json"}}),
+        json!([component("leaf", "a", json!({}))]),
+    );
+    let long = format!("{CHILD_SCRIPT} // {}", "x".repeat(100_001));
+    assert_eq!(
+        compose_error(
+            root.clone(),
+            bundle(vec![("leaf.json", leaf(), long.as_str())])
+        ),
+        "Component a: Script exceeds 100 KB"
+    );
+    let crowded = part(
+        "leaf",
+        json!({}),
+        json!({}),
+        Value::Array(
+            (0..201)
+                .map(|_| json!({"xtype": "label", "text": "x"}))
+                .collect(),
+        ),
+    );
+    assert_eq!(
+        compose_error(
+            root.clone(),
+            bundle(vec![("leaf.json", crowded, CHILD_SCRIPT)])
+        ),
+        "Component a: UI exceeds 200 nodes or 20 nesting levels"
+    );
+    // A child whose state is not an object is refused rather than indexed into.
+    let mut scalar = leaf();
+    scalar.state = json!(1);
+    assert_eq!(
+        compose_error(root, bundle(vec![("leaf.json", scalar, CHILD_SCRIPT)])),
+        "Component a: Initial state must be an object"
     );
 }

@@ -119,6 +119,35 @@ pub fn validate_node(node: &Node, parent: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The component nodes of a template in document order, the order their instances load in. A
+/// component node carries no items of its own, so the walk never descends into one.
+pub fn component_nodes<'a>(node: &'a Node, found: &mut Vec<&'a Node>) {
+    for child in &node.items {
+        if child.port_kind == "component" {
+            found.push(child);
+        } else {
+            component_nodes(child, found);
+        }
+    }
+}
+
+/// Resolve the `config` of a component node against the state of the instance holding it: a
+/// `{ "bind": key }` value reads that top-level key, anything else is handed down verbatim.
+pub fn evaluate_config(node: &Node, state: &Value) -> Result<Value, String> {
+    let mut resolved = serde_json::Map::new();
+    for (key, value) in node.config.as_object().into_iter().flatten() {
+        let value = match bind_target(value).and_then(Value::as_str) {
+            Some(target) => state
+                .get(target)
+                .cloned()
+                .ok_or_else(|| format!("config bind {target} is not in the parent state"))?,
+            None => value.clone(),
+        };
+        resolved.insert(key.clone(), value);
+    }
+    Ok(Value::Object(resolved))
+}
+
 /// `{ "bind": <key> }` — the only object shape a component config value may take. Anything
 /// else is handed to the child verbatim.
 pub fn bind_target(value: &Value) -> Option<&Value> {

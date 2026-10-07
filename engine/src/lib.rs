@@ -373,9 +373,101 @@ pub struct Modal {
 
 pub struct Runtime {
     root: instance::Instance,
+    /// The component instances of the screen, keyed by prefixed itemId path (`"a"`, `"a/b"`).
+    /// Ordered so that children commit and report failures in the same order every run.
+    // Only the composition tests read the tree so far; `layout` and `dispatch` follow.
+    #[allow(dead_code)]
+    components: BTreeMap<String, instance::Instance>,
     dialogs: dialogs::Requests,
     pages: pages::Requests,
     pub revision: u32,
+}
+
+/// The state a component load carries across the levels of the instance tree.
+struct Composing<'a> {
+    /// Child packages by declaration URL. The same package placed twice is bundled once.
+    bundled: &'a HashMap<String, (Package, String)>,
+    context: &'a extensions::ExtensionContext,
+    dialogs: &'a mut dialogs::Requests,
+    pages: &'a pages::Requests,
+    /// URLs of the instances between the root and the one being loaded.
+    loading: Vec<String>,
+    loaded: BTreeMap<String, instance::Instance>,
+    /// Instances loaded so far, the root included.
+    count: usize,
+}
+
+impl Composing<'_> {
+    /// Load the component nodes of `parent` in document order, each with its own config, and
+    /// recurse into the components they declare in turn.
+    fn load(
+        &mut self,
+        parent: &instance::Instance,
+        prefix: &str,
+        depth: usize,
+    ) -> Result<(), String> {
+        let mut nodes = Vec::new();
+        composition::component_nodes(&parent.package.ui, &mut nodes);
+        if nodes.is_empty() {
+            return Ok(());
+        }
+        let state = parent.state_json()?;
+        for node in nodes {
+            let path = match prefix.is_empty() {
+                true => node.item_id.clone(),
+                false => format!("{prefix}/{}", node.item_id),
+            };
+            if depth + 1 > 3 {
+                return Err(format!("Component {path}: nesting depth exceeds 3"));
+            }
+            self.count += 1;
+            if self.count > 8 {
+                return Err(format!(
+                    "At most 8 instances per screen (root included); exceeded at component {path}"
+                ));
+            }
+            let url = &parent
+                .package
+                .components
+                .get(&node.xtype)
+                .ok_or_else(|| format!("Component {path}: {} is not declared", node.xtype))?
+                .url;
+            if self.loading.contains(url) {
+                return Err(format!("Component {path}: circular reference to {url}"));
+            }
+            let config = composition::evaluate_config(node, &state)
+                .map_err(|error| format!("Component {path}: {error}"))?;
+            let (package, script) = self
+                .bundled
+                .get(url)
+                .ok_or_else(|| format!("Component {path}: package {url} was not bundled"))?;
+            let url = url.clone();
+            let mut package = package.clone();
+            // `init` reads the parent's configuration from `state.config`; the `config` handler
+            // only runs for the changes that follow.
+            let Some(state) = package.state.as_object_mut() else {
+                return Err(format!("Component {path}: Initial state must be an object"));
+            };
+            state.insert("config".into(), config);
+            let child = instance::Instance::load(
+                package,
+                script,
+                HashMap::new(),
+                self.context,
+                None,
+                false,
+                |_| {},
+                self.dialogs,
+                self.pages,
+            )
+            .map_err(|error| format!("Component {path}: {error}"))?;
+            self.loading.push(url);
+            self.load(&child, &path, depth + 1)?;
+            self.loading.pop();
+            self.loaded.insert(path, child);
+        }
+        Ok(())
+    }
 }
 
 impl Runtime {
@@ -407,9 +499,30 @@ impl Runtime {
         clock: Option<extensions::Clock>,
         register: impl FnOnce(&mut Engine),
     ) -> Result<Self, String> {
+        Self::load_with_components(
+            package,
+            script,
+            descriptors,
+            clock,
+            HashMap::new(),
+            register,
+        )
+    }
+
+    /// Load a screen together with the packages its `components` declare, keyed by the URL of
+    /// the declaration. Each placement of a package becomes an instance of its own, loaded
+    /// after the instance holding it so that its `config` sees a parent that finished `init`.
+    pub fn load_with_components(
+        package: Package,
+        script: &str,
+        descriptors: HashMap<String, Vec<u8>>,
+        clock: Option<extensions::Clock>,
+        components: HashMap<String, (Package, String)>,
+        register: impl FnOnce(&mut Engine),
+    ) -> Result<Self, String> {
         let mut dialogs = dialogs::Requests::default();
         let pages = pages::Requests::default();
-        // One context per screen: the instance tree of `load_with_components` shares this clock.
+        // One context per screen: every instance of the tree shares this clock.
         let context = extensions::ExtensionContext::default();
         let root = instance::Instance::load(
             package,
@@ -422,13 +535,20 @@ impl Runtime {
             &mut dialogs,
             &pages,
         )?;
-        // Declarations are validated with the rest of the package; bundling them into an
-        // instance tree arrives with `load_with_components`.
-        if !root.package.components.is_empty() {
-            return Err("Component packages were not bundled".into());
-        }
+        let mut composing = Composing {
+            bundled: &components,
+            context: &context,
+            dialogs: &mut dialogs,
+            pages: &pages,
+            loading: Vec::new(),
+            loaded: BTreeMap::new(),
+            count: 1,
+        };
+        composing.load(&root, "", 1)?;
+        let components = composing.loaded;
         Ok(Self {
             root,
+            components,
             dialogs,
             pages,
             revision: 0,

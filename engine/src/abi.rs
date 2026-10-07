@@ -36,7 +36,18 @@ fn execute(request: Value) -> Result<Value, String> {
                     descriptors.insert(name.clone(),crate::buffers::take(id)?);
                 }
             }
-            let mut runtime = Runtime::load_with_clock(package, script, descriptors, clock, |_| {})?;
+            let mut components = std::collections::HashMap::new();
+            if let Some(value) = request.get("components") {
+                let values = value.as_object().ok_or("Invalid components")?;
+                if values.len()>8 {return Err("At most 8 component packages".into());}
+                for (url,entry) in values {
+                    let entry=entry.as_object().ok_or("Invalid components")?;
+                    let child: Package = serde_json::from_value(entry.get("package").cloned().ok_or("Invalid components")?).map_err(|e| e.to_string())?;
+                    let script=entry.get("script").and_then(Value::as_str).ok_or("Invalid components")?;
+                    components.insert(url.clone(),(child,script.to_owned()));
+                }
+            }
+            let mut runtime = Runtime::load_with_components(package, script, descriptors, clock, components, |_| {})?;
             let result = result(&mut runtime)?;
             RUNTIME.with(|r| *r.borrow_mut() = Some(runtime));
             Ok(result)

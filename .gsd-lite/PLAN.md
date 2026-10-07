@@ -82,7 +82,7 @@ bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-ef582d
   - 依存: T2
   - 並列サブ作業: なし
 
-- [ ] T4: Runtime の Instance 木と同梱ロード（R2 / R1 の config 注入 / R6 の Rust 側 / P12 の Rust 側）
+- [x] T4: Runtime の Instance 木と同梱ロード（R2 / R1 の config 注入 / R6 の Rust 側 / P12 の Rust 側）
   - 完了基準:
     - `Runtime` に `components: BTreeMap<String, Instance>`（キー = 接頭辞付き itemId パス `"a"` / `"a/b"`。BTreeMap の理由はメモ）。`pub fn load_with_components(package, script, descriptors, clock, components: HashMap<String, (Package, String)>, register)` を追加し、既存 `load / load_with_extensions / load_with_descriptors / load_with_clock` は空の map でそれを呼ぶ（公開シグネチャ不変。受け入れ基準 6）
     - ロード順: root `Instance::load`（init まで）→ root の template（`package.ui`）を `items` 走査して component ノードを文書順に列挙 → 各ノードで `composition::evaluate_config(node, &parent_state_json)`（`{bind}` は親 state の最上位キー。無ければ `"Component {path}: config bind {key} is not in the parent state"`）→ 同梱本体 `components[decl.url]` を引き（無ければ `"Component {path}: package {url} was not bundled"`）、子 `Package` の `state["config"]` に評価済み config を入れてから子 `Instance::load`（`effects == false`。`init` は `state.config` を読める。`config` handler は呼ばない）→ 子の宣言で再帰（パスは `"a/b"`）
