@@ -56,4 +56,4 @@
 ## リモート運用
 
 - `origin` = `https://github.com/6in/uivolve-web.git`、`gh` 認証済み。ブランチを push して PR を作成する（ローカルマージはしない）
-- PR: （作成後に追記）
+- PR: <https://github.com/6in/uivolve-web/pull/1>（base `main`、ブランチ `gsd-lite/component-instance-refactor`。マージは人間 / CI）

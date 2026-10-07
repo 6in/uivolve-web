@@ -73,3 +73,11 @@
 - PLAN 訂正: なし
 - 後始末: `git worktree list` 1 行、`git status --porcelain` 空（証跡は gitignore 済みの `target/engine-compare/` のみ。変異 WASM と JSON 4 本はそこに残置）
 - 次への注意: 全タスク完了。verify は `bun scripts/verify-instance-refactor.mjs` 1 本で基準 1・2 を再現できる（クリーンな作業ツリーが前提。約 36 秒。base WASM が消えていれば +30 秒で自動再ビルドする）。基準 5 の文書とコードの一致は上記 5 の 2 つの数（12 / 12）を再実行して確かめる。基準 3・4・6 は `git diff main` と `git grep` の 3 本で、いずれも上に実コマンドを書いてある。PLAN の訂正行（T1 直下の 4 値、決めた事項 8 の 5 件、決めた事項 9 の `from` と turn 4 の M1 更新、追従先チェックリスト 1 行目）は実測を正とした結果なので、verify はそれを前提に読むこと
+
+## turn 7 — verify — 合格 / 指摘 0 件（残留リスク 4 件）/ push + PR #1 作成
+
+- やったこと: コードレビューとセキュリティチェックを読み取り専用サブエージェント 2 本で並行させ、親が最終判定 `bun scripts/verify-instance-refactor.mjs` をクリーンな作業ツリーで前景実行（exit 0、13 手順、合計 37.2 秒。照合 346 / 0 / 325 / 21 / 41、変異 165 / 2 / 1）。受け入れ基準 1〜6 と PLAN「追従先チェックリスト」5 行を実コマンドで再照合、文字列集合（199 / 61 差 0）を再実行、3 スクリプトの引数不備 6 形が exit 2 であることをプローブ。VERIFICATION.md を書いてコミット → `git push -u origin` → `gh pr create` で PR <https://github.com/6in/uivolve-web/pull/1>
+- 想定外: (1) lean-ctx の MCP ツール未接続（恒常注意どおり通常ツール）。`cat .gsd-lite/state.json` もフックで拒否され Read で読んだ。(2) Read ツールが `scripts/build-engine-variant.mjs` / `verify-instance-refactor.mjs` を「このセッションで読了済み」として中身を返さなかった（サブエージェントの読みと重複判定された模様）。`git show HEAD:<path>` で取得した。(3) コードレビューのサブエージェントが約 8 分かかり、セキュリティ側（約 2.5 分）の 3 倍。待ち時間は `sleep` の背景実行で埋めた
+- やり直し: 0 回
+- 判定の根拠: 差し戻し 0 件。レビューが挙げた「`rpc-result` 列が `complete_rpc` の handler 経路に届かない」「`handlerNodes` が `menu` / `bbar` / `tbar` / `buttons` を走査しない」は、PLAN 決めた事項 8 が「デコード失敗ならそのエラーを照合」と明示して受け入れた形で、要件に堅牢性・網羅性の基準が無く、dispatch 経路は他の 137 handler で差分 0 のため残留リスクとした（verify が要件を追加しない）
+- 次への注意: reflect は PR #1 のマージを待たない（マージは人間 / CI）。振り返りの材料: (a) 照合列の設計時に「handler が実際に Rhai まで届くか」を base の応答で 1 度確かめる手順を T1 の完了基準に入れると、RPC の decode 失敗のような空振りを plan 段階で拾える。(b) サブエージェントのレビューは観点を絞るほど速い（セキュリティ 2.5 分 vs 汎用コードレビュー 8 分）。(c) 恒常注意の「`.gsd-lite/` の `cat` 拒否」は verify でも再現。(d) Read ツールの読了済み判定が親子で共有されるので、サブエージェント起動後に同じファイルを親が読むときは `git show` を使う
