@@ -19,8 +19,8 @@
     "path": "."
   },
   "milestone": "component-composition",
-  "phase": "research",
-  "next_command": "/gsd-lite-research",
+  "phase": "plan",
+  "next_command": "/gsd-lite-plan",
   "branch": {
     "name": "gsd-lite/component-composition",
     "base": "main"
@@ -29,7 +29,7 @@
     "targets": ["local_projects", "official_docs", "similar_oss"],
     "local_search_paths": ["."]
   },
-  "turn": 0,
+  "turn": 1,
   "max_turns": 60,
   "retry_max": 2,
   "verify_round": 0,
@@ -41,5 +41,5 @@
     "verify": "claude-fable-5-1",
     "reflect": "claude-fable-5-1"
   },
-  "updated_at": "2026-10-07T21:52:21+09:00"
+  "updated_at": "2026-10-07T22:08:16+09:00"
 }
