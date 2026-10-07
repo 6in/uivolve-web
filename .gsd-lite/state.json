@@ -9,14 +9,14 @@
   "fix_round": 0,
   "target": { "name": "", "path": "." },
   "milestone": "component-instance-refactor",
-  "phase": "impl",
-  "next_command": "/gsd-lite-impl",
+  "phase": "verify",
+  "next_command": "/gsd-lite-verify",
   "branch": { "name": "gsd-lite/component-instance-refactor", "base": "main" },
   "research": {
     "targets": ["local_projects", "official_docs"],
     "local_search_paths": ["."]
   },
-  "turn": 5,
+  "turn": 6,
   "max_turns": 60,
   "retry_max": 2,
   "verify_round": 0,
@@ -28,5 +28,5 @@
     "verify": "claude-fable-5-1",
     "reflect": "claude-fable-5-1"
   },
-  "updated_at": "2026-10-07T11:44:31+09:00"
+  "updated_at": "2026-10-07T11:50:45+09:00"
 }

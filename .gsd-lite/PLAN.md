@@ -83,7 +83,7 @@ bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-35120e
     - B: 追従 4 か所（対象: `docs/README.md`、`docs/architecture.md`、`README.md`）
     - 親が `docs:check` / `check` を回してコミット
 
-- [ ] T4: 最終判定スクリプトと全検査（gate は前景・並列なし）
+- [x] T4: 最終判定スクリプトと全検査（gate は前景・並列なし）
   - 完了基準:
     1. `scripts/verify-instance-refactor.mjs` を新設。`scripts/verify-transfer.mjs:7-15` の手順配列の形を流用し、手順は順に `bun run build:wasm` → `bunx vp test run` → `bun run test:rust` → `bun run check` → `bun run docs:check` → `bun run build` → base WASM が無ければ `bun scripts/build-engine-variant.mjs --commit <base> --out target/engine-compare/base-<base>.wasm` → `bun scripts/compare-engine-behavior.mjs --base … --candidate public/engine.wasm`（exit 0 を要求）→ 変異 M1 / M2 / M3 を順にビルドして照合（**exit 1 を要求**。exit 0 なら歯なしとして失敗）。`--base-commit <rev>`（既定 `main`）、`--skip-mutations`（開発中の短縮用。最終判定では付けない）。各手順の所要秒と合計を最後に表形式で出力し、exit code を返す（振り返り「gate 所要の食い違い」への対応）
     2. `docs/testing.md:83` の段落の後に、照合スクリプト 3 本の用途・入口・所要の目安を 1 段落追加（追従先チェックリスト 3 行目。Playwright「3本」の記述は変えない）

@@ -52,3 +52,24 @@
 - 既存テストの期待値変更: なし（`tests/` を 1 行も触っていない）
 - PLAN 訂正: 追従先チェックリスト 1 行目の確かめ方に「訂正（turn 5 / 実測）」= `lib.rs` は `instance.rs` ではなく `mod instance;`（`lib.rs:21`）で確かめる。要件・決定には触れない
 - 次への注意: T4 は最終タスクでサブエージェントを起動せず前景で回す（PLAN T4 の並列サブ作業は「なし」）。`scripts/verify-instance-refactor.mjs` は `scripts/verify-transfer.mjs:7-15` の手順配列の形を流用し、**変異 M1〜M3 は exit 1 を要求**する（exit 0 なら歯なしとして失敗）点を間違えない。`docs/testing.md:83` の Playwright「3本」の記述は変えずに**別の文**で照合スクリプト 3 本を足す。base WASM は `target/engine-compare/base-35120e0.wasm` に既にあり cargo target-dir も温まっているので変異ビルドは 1 本約 8s、照合は 1 回約 0.7s。最終判定はクリーンな作業ツリー（`git status --porcelain` が空）で回す必要があるので、`verify-instance-refactor.mjs` と `docs/testing.md` を**先にコミットしてから** gate を回す順序にする
+
+## turn 6 — impl — T4 最終判定スクリプトと全検査
+
+- やったこと: `scripts/verify-instance-refactor.mjs` を新設（`verify-transfer.mjs:7-15` の手順配列 + 所要計測。変異表は `build-engine-variant.mjs` の `MUTATIONS` を import して二重定義を避けた）、`docs/testing.md:85` に照合スクリプト 3 本の用途・入口・所要を**別の段落**で追加（`:83` の Playwright「3本」は無変更）。先にこの 2 ファイルをコミットしてクリーンな作業ツリーにし、gate を前景で 1 回通して exit 0
+- 想定外: なし
+- やり直し: 1 回（PROGRESS の turn 5 の固定項目名「次への注意」を「次への注意（turn 5 → T4）」に書き換えてしまい、turn 5 と同じ失敗を踏んだので即戻した。**固定項目名は読み返し用の見出しであって追記しない**）
+- gate の実測（`bun scripts/verify-instance-refactor.mjs`、13 手順すべて期待どおり・exit 0）:
+  - 照合（base `35120e0` vs `public/engine.wasm`）: `steps 346 / diffs 0 / ok 325 / error 21 / sequences 41`（T1 の訂正行と一致）
+  - 変異: M1 `layout-x-offset` diffs 165（`layout:* data.widgets[*].x`）/ M2 `dialog-draft-revision` diffs 2（`dialog-prompt-input data.revision`）/ M3 `unknown-item-message` diffs 1（`abi-errors event:unknown-target error`）。3 本とも exit 1 で歯あり
+  - 手順別所要（秒）: build:wasm 0.2 / vp test run 5.4 / test:rust 0.2 / check 2.4 / docs:check 0.0 / build 0.5 / 照合 0.8 / M1 ビルド 7.7 + 照合 0.7 / M2 8.2 + 0.8 / M3 8.2 + 0.7。**合計 36.1**（base WASM は既存で再ビルドなし）
+- 受け入れ基準 1〜6 の根拠:
+  1. gate の第 1〜6 手順が green（`package.json:19` の `test` = `build:wasm && vp test run && test:rust` なので gate の先頭 3 手順と同一）。`bunx vp test run` 631 passed / 30 files、`bun run test:rust` 15 passed、`bun run check`（261 files 整形済み・lint 0）、`bun run docs:check`（472 リンク / 58 ファイル）、`bun run build` 成功。`git diff main --stat -- tests/ engine/src/extensions/` が空（期待値変更 0 件・ファイル変更 0 件）
+  2. `bun scripts/compare-engine-behavior.mjs` が `diffs = 0`（証跡 `target/engine-compare/compare.json`）、変異 3 本が exit 1（変異表 1 件以上の要求に対し 3 件）
+  3. `git diff main --stat -- engine/src/abi.rs` が空、`tests/abi.test.js` は `tests/` 無改修に含まれ green
+  4. `git diff main -- engine/src/lib.rs` の `pub fn` 行の差分 0 行、`lib.rs` 内テスト 4 本を含む cargo test 15 passed
+  5. `git grep -c -E "^    pub\(crate\) [a-z_]+:" -- engine/src/instance.rs` = **12**、`docs/components-plan.md` の Instance フィールド表も **12 行**で名前・順序が一致（T3-3 の比較を再実行）
+  6. `git grep -c -E "components|HashMap<String, Instance>|instances" -- engine/src/lib.rs engine/src/instance.rs` が 0 行（exit 1 = 不一致）
+- 既存テストの期待値変更: なし（`tests/` を 1 行も触っていない。`git diff main --stat -- tests/` が空）
+- PLAN 訂正: なし
+- 後始末: `git worktree list` 1 行、`git status --porcelain` 空（証跡は gitignore 済みの `target/engine-compare/` のみ。変異 WASM と JSON 4 本はそこに残置）
+- 次への注意: 全タスク完了。verify は `bun scripts/verify-instance-refactor.mjs` 1 本で基準 1・2 を再現できる（クリーンな作業ツリーが前提。約 36 秒。base WASM が消えていれば +30 秒で自動再ビルドする）。基準 5 の文書とコードの一致は上記 5 の 2 つの数（12 / 12）を再実行して確かめる。基準 3・4・6 は `git diff main` と `git grep` の 3 本で、いずれも上に実コマンドを書いてある。PLAN の訂正行（T1 直下の 4 値、決めた事項 8 の 5 件、決めた事項 9 の `from` と turn 4 の M1 更新、追従先チェックリスト 1 行目）は実測を正とした結果なので、verify はそれを前提に読むこと
