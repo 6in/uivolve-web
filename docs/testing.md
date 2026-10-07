@@ -82,6 +82,8 @@ DOM版とCanvas版で同じ役割の文字が同じ実効サイズで出てい�
 
 恒久的なPlaywright実行スクリプトは3本ある。うち検査の系統は2つで、もう1本は記録用の撮影スクリプト（`scripts/capture-retrospective.mjs`。比較デモのHello Worldをブログ記事の画像として撮る。`package.json`のscriptsには入れていない）。OPFS転送は`bun run test:transfer:browser`（`scripts/test-transfer-browser.mjs`）と最終判定の`bun run verify:transfer`。レンダラー間のフォントサイズは`bun scripts/test-font-parity-browser.mjs --suite <名前>`（`--list`で登録済みsuiteと実装状態、`--browser-path`/`--browser-endpoint`でブラウザ経路、`--viewport`で幅、`--evidence`で証跡の出力先を選ぶ）と最終判定の`bun scripts/verify-font-parity.mjs`。対象範囲は先に固定してあり、どちらもLinuxのシステムChromium（headless）を使い、`bunx vp dev`を127.0.0.1のOS自動割当ポートで自分で起動して終了させる。既存のサーバーへは接続しない。新しい依存は追加しておらず、既存の`playwright` devDependencyだけを使う。CI用ブラウザ環境は引き続きリポジトリへ同梱していないので、これらは手元で実行する。
 
+エンジン内部のリファクタが応答を変えていないかは、ブラウザを使わない照合スクリプト3本で見る。`bun scripts/compare-engine-behavior.mjs --base <wasm> --candidate <wasm>`は固定clockで全画面のload・イベント・完了・layoutを2つのWASMへ流し、応答JSONの文字列一致を数える（差分0でexit 0、差分ありでexit 1。証跡は`--evidence`の既定`target/engine-compare/compare.json`。約1秒）。比較対象のWASMは`bun scripts/build-engine-variant.mjs --commit <rev> --out <wasm>`が別コミットから、`--mutation <名前> --out <wasm>`が意図的に壊した変種から作る（どちらも作業ツリーの`engine/`は触らない。初回約30秒、cargoのtarget-dirを共有する2回目以降は約10秒）。最終判定は`bun scripts/verify-instance-refactor.mjs`で、既存の全検査（`build:wasm`→`vp test run`→`test:rust`→`check`→`docs:check`→`build`）のあとにbaseとの照合が差分0であること、さらに変異3本の照合がいずれも差分を見つけること（exit 1。exit 0なら照合に歯が無いとして失敗）を確認し、手順ごとの所要と合計を表で出す。`--base-commit <rev>`で比較元を選び、`--skip-mutations`は開発中の短縮用で最終判定では付けない。これらは一時的な照合用で`package.json`のscriptsには入れていない。
+
 ## レビューに残す情報
 
 変わる動作、以前のパッケージへの影響、実行したコマンドとブラウザ操作、未確認・未対応範囲を記す。性能値を示す場合は、WASM計測・DOM更新・Canvas命令発行など測った対象を明記する。再描画のCPU時間をGPU完了やFPSと混同しない。
