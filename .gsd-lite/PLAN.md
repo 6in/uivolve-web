@@ -119,7 +119,7 @@ bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-ef582d
   - 依存: T5
   - 並列サブ作業: なし
 
-- [ ] T7: emit / listeners / config のトランザクション（R4 後半 / R10 の listener・config 系）
+- [x] T7: emit / listeners / config のトランザクション（R4 後半 / R10 の listener・config 系）
   - 完了基準:
     - 順序（DECISIONS Round 1）: 子 handler → 子の `Emits::take()` を順に → 各 emit について親 Instance の template から該当 component ノード（`item_id == 子のキー末尾`）の `listeners[name]` を引き、あれば親 handler を `(親の候補 state, #{ target: "<component itemId>", action: "<emit 名>", value: <payload> })` で呼ぶ（無ければ無視）。親が root でなければ親の emit をさらにその親へ（上方向のみ、深さ 3 で打ち切り）→ 候補 state が変わった各 Instance について、その直下の component ノードの `evaluate_config` を「候補 state」と「現在の確定 state」で比べ、変わった子だけ `state.config` を更新し、子の `functions` に `config` があれば `config(state, #{ config: <map> })` を呼ぶ（子の候補 state があればそれに対して。emit 元自身を含む）。`config` 後に子の emit キューが空でなければ `"emit is not available in config"`。config 更新は下方向へ再帰 → `commit_all`。どこかで失敗したら親子とも変更なし、revision 不変
     - 親 handler のエラー文言は既存形 `"{script} / {itemId} / {handler}: {e}"`、子 config のエラーは `"Component {path}: {script} / config: {e}"`
