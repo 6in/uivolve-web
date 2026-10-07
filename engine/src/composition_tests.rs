@@ -697,7 +697,16 @@ fn compose(
     package: Package,
     components: HashMap<String, (Package, String)>,
 ) -> Result<Runtime, String> {
-    Runtime::load_with_components(package, SCRIPT, HashMap::new(), None, components, |_| {})
+    compose_script(package, SCRIPT, components)
+}
+
+/// Compose a screen whose root script the test brings along, for the listeners it declares.
+fn compose_script(
+    package: Package,
+    script: &str,
+    components: HashMap<String, (Package, String)>,
+) -> Result<Runtime, String> {
+    Runtime::load_with_components(package, script, HashMap::new(), None, components, |_| {})
 }
 
 /// The error a screen fails to compose with. `Runtime` is not `Debug`, so rejections go
@@ -1345,4 +1354,295 @@ fn a_failing_child_handler_leaves_the_whole_screen_where_it_was() {
     assert_eq!(runtime.state_json().expect("root state"), root);
     assert_eq!(child_state(&runtime, "a"), child);
     assert_eq!(runtime.revision, 1);
+}
+
+// --- what a child announces, and what a moved parent state hands back down ---
+
+/// The child of the transaction fixtures: a grid whose selection announces itself, a button that
+/// announces something nobody listens for, and a `config` handler recording what it was handed.
+const REPORT_SCRIPT: &str = "fn init(s) { s }
+fn config(s, e) { s.configs += 1; s.seen = e.config.query; s }
+fn select(s, e) { s.picked = e.id; emit(\"selected\", #{\"id\": e.id}); s }
+fn whisper(s, e) { s.picked = 7; emit(\"unheard\", #{\"id\": 0}); s }";
+
+/// The same child, refusing the configuration it is handed.
+const ANGRY_SCRIPT: &str = "fn init(s) { s }
+fn config(s, e) { throw \"the child refused the configuration\"; }
+fn select(s, e) { s }
+fn whisper(s, e) { s }";
+
+/// The same child, announcing something from `config` — where no event is open to answer it.
+const LOUD_SCRIPT: &str = "fn init(s) { s }
+fn config(s, e) { emit(\"configured\", #{}); s }
+fn select(s, e) { s }
+fn whisper(s, e) { s }";
+
+/// The middle of the chain: it listens to its own child and announces that further up.
+const RELAY_SCRIPT: &str = "fn init(s) { s }
+fn onPicked(s, e) { s.relayed = e.value.id; emit(\"picked\", #{\"id\": e.value.id, \"from\": e.target}); s }";
+
+/// The root of the transaction fixtures: one listener per announcement it expects, and one that
+/// refuses what it is told.
+const PARENT_SCRIPT: &str = "fn init(s) { s }
+fn onSelected(s, e) { s.notice = e.target + \"/\" + e.action + \"/\" + e.value.id; s }
+fn onPicked(s, e) { s.notice = \"relay \" + e.value.from + \" \" + e.value.id; s }
+fn boom(s, e) { throw \"the parent refused\"; }";
+
+/// A component node that also names the handlers its parent answers announcements with.
+fn listening(xtype: &str, item_id: &str, config: Value, listeners: Value) -> Value {
+    json!({"xtype": xtype, "itemId": item_id, "config": config, "listeners": listeners})
+}
+
+/// One child body, with whichever of the scripts above the test bundles under its URL.
+fn emitting(id: &str) -> Package {
+    part(
+        id,
+        json!({
+            "picked": 0, "configs": 0, "seen": "",
+            "rows": [{"id": 1, "number": "SO-001"}, {"id": 2, "number": "SO-002"}],
+        }),
+        json!({}),
+        json!([
+            {
+                "xtype": "grid", "itemId": "orders", "bind": "rows",
+                "selectedBind": "picked", "handler": "select",
+                "columns": [{"text": "番号", "dataIndex": "number"}],
+            },
+            {"xtype": "button", "itemId": "shout", "text": "知らせる", "handler": "whisper"},
+        ]),
+    )
+}
+
+/// `relay.json` — holds a `report` as `c`, so an announcement has two levels to climb.
+fn relay_part() -> Package {
+    part(
+        "relay",
+        json!({"relayed": 0}),
+        json!({"report": {"url": "report.json"}}),
+        json!([listening(
+            "report",
+            "c",
+            json!({}),
+            json!({"selected": "onPicked"})
+        )]),
+    )
+}
+
+/// A screen declaring every transaction fixture; each test places the ones it needs.
+fn reporting(items: Value) -> Package {
+    part(
+        "parent",
+        json!({"query": "", "notice": ""}),
+        json!({
+            "report": {"url": "report.json"},
+            "angry": {"url": "angry.json"},
+            "loud": {"url": "loud.json"},
+            "relay": {"url": "relay.json"},
+        }),
+        items,
+    )
+}
+
+fn report_bundle() -> HashMap<String, (Package, String)> {
+    bundle(vec![
+        ("report.json", emitting("report"), REPORT_SCRIPT),
+        ("angry.json", emitting("angry"), ANGRY_SCRIPT),
+        ("loud.json", emitting("loud"), LOUD_SCRIPT),
+        ("relay.json", relay_part(), RELAY_SCRIPT),
+    ])
+}
+
+/// A root-side textfield, so a test can move the key the configurations bind to.
+fn filter_field() -> Value {
+    json!({"xtype": "textfield", "itemId": "filter", "bind": "query", "fieldLabel": "絞り込み"})
+}
+
+fn reporting_screen(items: Value) -> Runtime {
+    compose_script(reporting(items), PARENT_SCRIPT, report_bundle()).expect("a composed screen")
+}
+
+#[test]
+fn an_emit_reaches_the_listener_the_parent_declared_on_the_node_holding_the_child() {
+    let mut runtime = reporting_screen(json!([listening(
+        "report",
+        "a",
+        json!({}),
+        json!({"selected": "onSelected"})
+    )]));
+    runtime
+        .dispatch("a/orders", json!({"id": 2}))
+        .expect("the grid event of the child");
+    // The event map names the placement, the announcement and its payload.
+    assert_eq!(
+        runtime.state_json().expect("root state")["notice"],
+        json!("a/selected/2")
+    );
+    assert_eq!(child_state(&runtime, "a")["picked"], json!(2));
+    // Child and parent moved inside one revision.
+    assert_eq!(runtime.revision, 1);
+}
+
+#[test]
+fn an_emit_no_listener_answers_still_commits_the_child_that_announced_it() {
+    let mut runtime = reporting_screen(json!([listening(
+        "report",
+        "a",
+        json!({}),
+        json!({"selected": "onSelected"})
+    )]));
+    runtime
+        .dispatch("a/shout", json!({}))
+        .expect("the button of the child");
+    assert_eq!(child_state(&runtime, "a")["picked"], json!(7));
+    assert_eq!(
+        runtime.state_json().expect("root state")["notice"],
+        json!("")
+    );
+    assert_eq!(runtime.revision, 1);
+}
+
+#[test]
+fn a_moved_parent_state_reconfigures_the_components_bound_to_what_changed() {
+    let mut runtime = reporting_screen(json!([
+        filter_field(),
+        component("report", "bound", json!({"query": {"bind": "query"}})),
+        component("report", "also", json!({"query": {"bind": "query"}})),
+        component("report", "fixed", json!({"status": "受注"})),
+    ]));
+    runtime
+        .dispatch("filter", json!({"value": "山田"}))
+        .expect("the root textfield");
+    for path in ["bound", "also"] {
+        let child = child_state(&runtime, path);
+        assert_eq!(child["config"], json!({"query": "山田"}), "{path}");
+        assert_eq!(child["configs"], json!(1), "{path}");
+        assert_eq!(child["seen"], json!("山田"), "{path}");
+    }
+    // A configuration the parent spelled out never changes, so its handler is never called.
+    let fixed = child_state(&runtime, "fixed");
+    assert_eq!(fixed["config"], json!({"status": "受注"}));
+    assert_eq!(fixed["configs"], json!(0));
+    assert_eq!(runtime.revision, 1);
+    // The same value again leaves every configuration where it is.
+    runtime
+        .dispatch("filter", json!({"value": "山田"}))
+        .expect("the root textfield");
+    assert_eq!(child_state(&runtime, "bound")["configs"], json!(1));
+    assert_eq!(runtime.revision, 2);
+}
+
+#[test]
+fn the_state_of_a_child_stays_out_of_the_root_and_the_parent_state_out_of_the_child() {
+    let mut runtime = reporting_screen(json!([
+        filter_field(),
+        listening(
+            "report",
+            "a",
+            json!({"query": {"bind": "query"}}),
+            json!({"selected": "onSelected"})
+        ),
+    ]));
+    runtime
+        .dispatch("filter", json!({"value": "山田"}))
+        .expect("the root textfield");
+    runtime
+        .dispatch("a/orders", json!({"id": 1}))
+        .expect("the grid event of the child");
+    // The root state is its own keys only, whichever instance the events moved.
+    assert_eq!(
+        runtime.state_json().expect("root state"),
+        json!({"query": "山田", "notice": "a/selected/1"})
+    );
+    // The child sees the parent only through the configuration it was handed.
+    let child = child_state(&runtime, "a");
+    assert_eq!(
+        child
+            .as_object()
+            .expect("a child state")
+            .keys()
+            .collect::<Vec<_>>(),
+        ["config", "configs", "picked", "rows", "seen"]
+    );
+    assert_eq!(child["config"], json!({"query": "山田"}));
+}
+
+#[test]
+fn an_announcement_climbs_one_level_at_a_time_to_the_root() {
+    let mut runtime = reporting_screen(json!([listening(
+        "relay",
+        "a",
+        json!({}),
+        json!({"picked": "onPicked"})
+    )]));
+    assert_eq!(runtime.components.keys().collect::<Vec<_>>(), ["a", "a/c"]);
+    runtime
+        .dispatch("a/c/orders", json!({"id": 1}))
+        .expect("the grid event of the grandchild");
+    assert_eq!(child_state(&runtime, "a/c")["picked"], json!(1));
+    // The middle answered its own child and announced that further up itself.
+    assert_eq!(child_state(&runtime, "a")["relayed"], json!(1));
+    assert_eq!(
+        runtime.state_json().expect("root state")["notice"],
+        json!("relay c 1")
+    );
+    assert_eq!(runtime.revision, 1);
+}
+
+#[test]
+fn a_listener_that_refuses_leaves_the_whole_screen_where_it_was() {
+    let mut runtime = reporting_screen(json!([listening(
+        "report",
+        "a",
+        json!({}),
+        json!({"selected": "boom"})
+    )]));
+    let root = runtime.state_json().expect("root state");
+    let child = child_state(&runtime, "a");
+    let error = dispatch_error(&mut runtime, "a/orders", json!({"id": 2}));
+    assert!(error.starts_with("parent.rhai / a / boom:"), "{error}");
+    assert!(error.contains("the parent refused"), "{error}");
+    assert_eq!(runtime.state_json().expect("root state"), root);
+    assert_eq!(child_state(&runtime, "a"), child);
+    assert_eq!(runtime.revision, 0);
+}
+
+#[test]
+fn a_child_that_refuses_a_configuration_leaves_the_whole_screen_where_it_was() {
+    let mut runtime = reporting_screen(json!([
+        filter_field(),
+        component("angry", "a", json!({"query": {"bind": "query"}})),
+    ]));
+    let child = child_state(&runtime, "a");
+    let error = dispatch_error(&mut runtime, "filter", json!({"value": "山田"}));
+    assert!(
+        error.starts_with("Component a: angry.rhai / config:"),
+        "{error}"
+    );
+    assert!(
+        error.contains("the child refused the configuration"),
+        "{error}"
+    );
+    assert_eq!(
+        runtime.state_json().expect("root state"),
+        json!({"query": "", "notice": ""})
+    );
+    assert_eq!(child_state(&runtime, "a"), child);
+    assert_eq!(runtime.revision, 0);
+}
+
+#[test]
+fn a_child_cannot_announce_anything_while_it_is_being_reconfigured() {
+    let mut runtime = reporting_screen(json!([
+        filter_field(),
+        component("loud", "a", json!({"query": {"bind": "query"}})),
+    ]));
+    assert_eq!(
+        dispatch_error(&mut runtime, "filter", json!({"value": "山田"})),
+        "Component a: emit is not available in config"
+    );
+    assert_eq!(
+        runtime.state_json().expect("root state"),
+        json!({"query": "", "notice": ""})
+    );
+    assert_eq!(runtime.revision, 0);
 }

@@ -587,18 +587,176 @@ impl Runtime {
         let Some((key, target)) = self.route(target)? else {
             return Ok(());
         };
-        if key.is_empty() {
-            return match self.root.run_event(&target, payload)? {
-                Some(next) => self.commit_state(next),
-                None => Ok(()),
-            };
-        }
-        let next = self.components[&key]
-            .run_event(&target, payload)
-            .map_err(|e| format!("Component {key}: {e}"))?;
+        let next = match key.is_empty() {
+            true => self.root.run_event(&target, payload)?,
+            false => self
+                .instance(&key)?
+                .run_event(&target, payload)
+                .map_err(|e| format!("Component {key}: {e}"))?,
+        };
         match next {
-            Some(next) => self.commit_all(self.root.state.clone(), vec![(key, next)]),
+            Some(next) => self.commit_event(key, next),
             None => Ok(()),
+        }
+    }
+
+    /// Carry one handler result across the instances it touches and commit them together: the
+    /// emits of the instance travel up to the listeners of its parents, the configurations the
+    /// moved states resolve to travel back down, and `commit_all` moves the screen at the end.
+    /// A failure anywhere leaves every instance — and the revision — where it was.
+    fn commit_event(&mut self, key: String, next: Dynamic) -> Result<(), String> {
+        let mut candidates = BTreeMap::new();
+        candidates.insert(key.clone(), next);
+        self.propagate_emits(&mut candidates, key)?;
+        let mut visited = BTreeSet::new();
+        for path in candidates.keys().cloned().collect::<Vec<_>>() {
+            self.propagate_config(&mut candidates, &path, &mut visited)?;
+        }
+        let root_next = candidates
+            .remove("")
+            .unwrap_or_else(|| self.root.state.clone());
+        self.commit_all(root_next, candidates.into_iter().collect())
+    }
+
+    /// Hand the emits of an instance to the listeners its parent declared on the node holding
+    /// it, then do the same with whatever the parent emitted in turn. Emits only ever travel
+    /// up, so the walk ends at the root, which has no `emit` of its own.
+    fn propagate_emits(
+        &self,
+        candidates: &mut BTreeMap<String, Dynamic>,
+        mut path: String,
+    ) -> Result<(), String> {
+        while !path.is_empty() {
+            let emits = self.instance(&path)?.emits.take();
+            if emits.is_empty() {
+                return Ok(());
+            }
+            let (parent_path, item_id) = match path.rsplit_once('/') {
+                Some((parent, item_id)) => (parent.to_owned(), item_id.to_owned()),
+                None => (String::new(), path.clone()),
+            };
+            let parent = self.instance(&parent_path)?;
+            let node = component_node(parent, &item_id)
+                .ok_or_else(|| format!("Component {path}: no component node to emit to"))?;
+            let mut next = self.candidate(candidates, &parent_path)?;
+            let mut announced = false;
+            for (name, payload) in emits {
+                // An emit nobody listens for is not an error: the child announces, the parent
+                // decides which announcements concern it.
+                let Some(handler) = node.listeners.get(&name) else {
+                    continue;
+                };
+                let event = rhai::serde::to_dynamic(
+                    json!({"target": item_id, "action": name, "value": payload}),
+                )
+                .map_err(|e| e.to_string())?;
+                next = parent
+                    .engine
+                    .call_fn(&mut Scope::new(), &parent.ast, handler, (next, event))
+                    .map_err(|e| {
+                        let error =
+                            format!("{} / {item_id} / {handler}: {e}", parent.package.script);
+                        match parent_path.is_empty() {
+                            true => error,
+                            false => format!("Component {parent_path}: {error}"),
+                        }
+                    })?;
+                announced = true;
+            }
+            if announced {
+                candidates.insert(parent_path.clone(), next);
+            }
+            path = parent_path;
+        }
+        Ok(())
+    }
+
+    /// Re-resolve the `config` of every component an instance holds against its candidate state
+    /// and hand down the ones that changed. A child whose configuration moved runs its `config`
+    /// handler, which may move its own children's configurations in turn.
+    fn propagate_config(
+        &self,
+        candidates: &mut BTreeMap<String, Dynamic>,
+        path: &str,
+        visited: &mut BTreeSet<String>,
+    ) -> Result<(), String> {
+        if !visited.insert(path.to_owned()) {
+            return Ok(());
+        }
+        let parent = self.instance(path)?;
+        let candidate: Value = rhai::serde::from_dynamic(&self.candidate(candidates, path)?)
+            .map_err(|e| e.to_string())?;
+        let committed = parent.state_json()?;
+        let mut nodes = Vec::new();
+        composition::component_nodes(&parent.ui, &mut nodes);
+        for node in nodes {
+            let child_path = match path.is_empty() {
+                true => node.item_id.clone(),
+                false => format!("{path}/{}", node.item_id),
+            };
+            let resolve = |state: &Value| {
+                composition::evaluate_config(node, state)
+                    .map_err(|e| format!("Component {child_path}: {e}"))
+            };
+            let config = resolve(&candidate)?;
+            if config == resolve(&committed)? {
+                continue;
+            }
+            self.reconfigure(candidates, &child_path, config)?;
+            self.propagate_config(candidates, &child_path, visited)?;
+        }
+        Ok(())
+    }
+
+    /// Put a changed configuration into the state of the instance it belongs to and let its
+    /// `config` handler react. The handler is the child's chance to recompute what it derives
+    /// from the configuration; announcing anything from there has no event to answer to.
+    fn reconfigure(
+        &self,
+        candidates: &mut BTreeMap<String, Dynamic>,
+        path: &str,
+        config: Value,
+    ) -> Result<(), String> {
+        let child = self.instance(path)?;
+        let mut state: Value = rhai::serde::from_dynamic(&self.candidate(candidates, path)?)
+            .map_err(|e| e.to_string())?;
+        state
+            .as_object_mut()
+            .ok_or_else(|| format!("Component {path}: State must be an object"))?
+            .insert("config".into(), config.clone());
+        let mut next = rhai::serde::to_dynamic(state).map_err(|e| e.to_string())?;
+        if child.functions.contains("config") {
+            let event =
+                rhai::serde::to_dynamic(json!({"config": config})).map_err(|e| e.to_string())?;
+            next = child
+                .engine
+                .call_fn(&mut Scope::new(), &child.ast, "config", (next, event))
+                .map_err(|e| format!("Component {path}: {} / config: {e}", child.package.script))?;
+            if !child.emits.take().is_empty() {
+                return Err(format!("Component {path}: emit is not available in config"));
+            }
+        }
+        candidates.insert(path.to_owned(), next);
+        Ok(())
+    }
+
+    /// The state an instance would commit: what the event moved it to, or where it still is.
+    fn candidate(
+        &self,
+        candidates: &BTreeMap<String, Dynamic>,
+        path: &str,
+    ) -> Result<Dynamic, String> {
+        match candidates.get(path) {
+            Some(next) => Ok(next.clone()),
+            None => Ok(self.instance(path)?.state.clone()),
+        }
+    }
+
+    /// The instance a prefixed itemId path names, the empty path being the root.
+    fn instance(&self, path: &str) -> Result<&instance::Instance, String> {
+        match path.is_empty() {
+            true => Ok(&self.root),
+            false => self.components.get(path).ok_or_else(|| unknown_item(path)),
         }
     }
 
@@ -846,8 +1004,10 @@ impl Runtime {
             .collect()
     }
 
+    /// Commit a root state the root itself produced: an event of its own, or the response of an
+    /// effect it queued. The configurations of its components follow the new state either way.
     fn commit_state(&mut self, next: Dynamic) -> Result<(), String> {
-        self.commit_all(next, vec![])
+        self.commit_event(String::new(), next)
     }
 
     /// Commit one event across the instances it moved: everything is checked before anything is
@@ -1236,6 +1396,14 @@ impl instance::Instance {
 
 fn unknown_item(target: &str) -> String {
     format!("Unknown itemId: {target}")
+}
+
+/// The component node of an instance that holds the child placed under `item_id`, i.e. the node
+/// carrying the `listeners` and the `config` of that placement.
+fn component_node<'a>(instance: &'a instance::Instance, item_id: &str) -> Option<&'a Node> {
+    let mut nodes = Vec::new();
+    composition::component_nodes(&instance.ui, &mut nodes);
+    nodes.into_iter().find(|node| node.item_id == item_id)
 }
 
 fn initialize_ui(ui: &Node, state: &mut Value) {
