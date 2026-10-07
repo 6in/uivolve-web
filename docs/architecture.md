@@ -57,11 +57,11 @@ flowchart TD
 
 ## 画面とイベントの確定
 
-Runtimeのroot Instanceは読み込んだDSLのテンプレートと、確定した実際のUIツリーを分けて保持する。`engine/src/dynamic_ui.rs`がtabpanelのitemsBindをstateの部品定義から展開し、新しい部品の既定値と部品固有の状態を確認してから、ツリーとstateを同時に確定する。入力・イベント検索・レイアウト・window収集・WebMCPに渡すSceneは同じ確定済みツリーを使う。layoutのたびに展開や初期化は行わない。ページごとの部品定義やRhai関数をRustへ組み込む必要はない。
+Runtimeのroot Instanceは読み込んだDSLのテンプレートと、確定した実際のUIツリーを分けて保持する。`engine/src/dynamic_ui.rs`がtabpanelのitemsBindをstateの部品定義から展開し、新しい部品の既定値と部品固有の状態を確認してから、ツリーとstateを同時に確定する。入力・イベント検索・レイアウト・window収集・WebMCPに渡すSceneは同じ確定済みツリーを使う。layoutのたびに展開や初期化は行わない。ページごとの部品定義やRhai関数をRustへ組み込む必要はない。`components`を宣言した画面では、Runtimeはroot Instanceに加えてcomponentノードごとの子Instanceを持ち、接頭辞付きitemId（`list`、`list/detail`）で引く。
 
-`load`はJSONを解析・正規化・構造検証し、既定状態を補完してからRhaiをコンパイルする。参照されたhandlerの存在を確認し、`init(state)`の結果、部品固有の状態制約、状態サイズを確認する。root Instanceのloadが成功したRuntimeだけをABIのスロットへ入れる。以前の画面は候補が失敗しても残る。
+`load`はJSONを解析・正規化・構造検証し、既定状態を補完してからRhaiをコンパイルする。参照されたhandlerの存在を確認し、`init(state)`の結果、部品固有の状態制約、状態サイズを確認する。root Instanceのloadが成功したRuntimeだけをABIのスロットへ入れる。以前の画面は候補が失敗しても残る。子Instanceはrootの`init`が終わってからノードの出現順にloadし、親の確定stateから`config`を評価して子の`state.config`へ入れ、その子が宣言した孫へ降りる。子Instanceは効果関数を持たず、HTTP取得・保存・ファイル・RPC・ダイアログ・遷移の依頼はrootだけが出す。Instance木の上限と`emit`の契約は[部品化の契約](components.md)を参照する。
 
-イベントは対象までのパスを探し、disabled、非表示のタブ/Card/window、折りたたみ、モーダル背後などを共通エンジンで判定する。対象外なら状態・revisionを更新しない。受け付けたイベントは状態のコピーへ組み込みの変更を適用してからRhaiを実行する。結果をオブジェクトへ戻し、Grid・ナビゲーション・追加部品・Cardの状態制約とサイズを確認してから確定し、revisionを進める。
+イベントは対象までのパスを探し、disabled、非表示のタブ/Card/window、折りたたみ、モーダル背後などを共通エンジンで判定する。対象外なら状態・revisionを更新しない。受け付けたイベントは状態のコピーへ組み込みの変更を適用してからRhaiを実行する。結果をオブジェクトへ戻し、Grid・ナビゲーション・追加部品・Cardの状態制約とサイズを確認してから確定し、revisionを進める。componentノードを含む画面では、1つのイベントで動いた親と子を同じ確定で扱う。すべての検証が通ってから親子のstateを代入し、revisionは1つだけ進める。どこかが失敗すれば画面全体が動かない。
 
 この順序により、入力の`bind`更新やwindowの開閉も、Rhaiが失敗すれば確定しない。入力値の型検証と、任意のRhaiによる全状態の検証は同一ではない。たとえば必須入力などの業務制約はRhaiに置く。具体的な値・actionの契約は[画面形式](screen-format.md)と部品別の文書を参照する。
 
@@ -81,7 +81,7 @@ DOMはkeyを使って既存要素を更新し、Canvasは面全体を再描画�
 
 制御用の公開関数は`input_alloc(len)`、`input_free(ptr,len)`、`request(ptr,len)`、`response_len()`。JSは入力を確保してUTF-8 JSONを書き込み、requestが返す応答のポインターと長さを読む。入力はfinallyで解放する。応答はエンジン所有で、次のrequestまで有効。次の呼び出しより前にJSONへ読み取る。メモリが拡張され得るため、呼び出し後はその時点の`memory.buffer`を使う。バイナリには`buffer_store / buffer_ptr / buffer_len / buffer_free`を追加した。[所有権・上限の契約](files-cache-rpc.md)に従う。
 
-操作は`load / event / host_result / host_progress / http_result / storage_result / file_result / rpc_result / dialog_result / layout / theme`。成功は`{ "ok": true, "data": ... }`、失敗は`{ "ok": false, "error": "..." }`。入力の上限は2,000,000バイト。現在のWASMはブラウザのimportを要求しない。HTTP取得・保存・描画APIはホストが担当する。各操作の詳細は[画面形式](screen-format.md)、[HTTP取得](tutorial-http-grid.md)、[保存・型](platform-features.md)、[ファイル・RPC](files-cache-rpc.md)、[独自ダイアログ](dialogs.md)、[レイアウト](layouts.md)、[テーマ](theme-format.md)を参照する。
+操作は`load / event / host_result / host_progress / http_result / storage_result / file_result / rpc_result / dialog_result / layout / theme`。`load`は画面パッケージとRhaiのほかに、`components`が宣言した子パッケージを`request.components`で受け取る。成功は`{ "ok": true, "data": ... }`、失敗は`{ "ok": false, "error": "..." }`。入力の上限は2,000,000バイト。現在のWASMはブラウザのimportを要求しない。HTTP取得・保存・描画APIはホストが担当する。各操作の詳細は[画面形式](screen-format.md)、[HTTP取得](tutorial-http-grid.md)、[保存・型](platform-features.md)、[ファイル・RPC](files-cache-rpc.md)、[独自ダイアログ](dialogs.md)、[レイアウト](layouts.md)、[テーマ](theme-format.md)を参照する。
 
 Rhaiの`http_get(name)`は要求を一時キューへ置く。stateとUIの検証後に要求を確定し、結果へ`effects`を添える。ホストは画面JSONを基準にURLを解決し、ResourceClientでJSONを取得してid付きの`http_result`を送る。Runtimeは進行中のidだけを受け入れ、最新stateと応答を受け取りhandlerへ渡す。通常のイベントと同じ確定処理を通し、完了でもrevisionが進む。画面置換の成功時にホストが進行中の取得を中止し、世代番号でも遅延応答を破棄する。
 

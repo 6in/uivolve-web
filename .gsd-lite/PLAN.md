@@ -166,7 +166,7 @@ bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-ef582d
   - 依存: T9
   - 並列サブ作業: なし
 
-- [ ] T11: 契約文書と追従（R8）
+- [x] T11: 契約文書と追従（R8）
   - 完了基準:
     - 新設 `docs/components.md`（冒頭に「状態: 実装済み契約（段階 3）」）: 用語（コンポーネント / ウィジェット（組み込み部品）/ component ノード / 接頭辞付き itemId）/ 宣言 `components`（名前の規則・衝突・url）/ component ノードの許可属性 / `config`（固定値・`{bind}`・`state.config` への注入・`config(state, event)` の引数と呼び出し時機）/ `emit` と `listeners`（event map の 3 キー・未登録 emit の無視・上限 8・init / config 中の禁止・root での未定義）/ トランザクション順序（子 handler → emit → listener → config 差分 → 検証 → 親 → 子の代入、revision 1 つ、失敗時は親子とも不変）/ Scene と event の接頭辞 / 制限（Instance 8・深さ 3・Instance ごとの既存上限・2MB 据え置き・`/` 予約）/ 拒否（子の効果関数 19 種は load 時走査 + 実行時 stub。「拒否の根拠は実行時」と `Fn("name")` の注意（P8）、子の宣言 7 種、子の `window`、`network-first`、エディタ適用は直前の子を再利用）/ stateSchema を持つ子は `additionalProperties: false` なら `config` を `properties` に含める（`state_schema.rs:224-231`）/ ExtJS との違い（bubbling・`false` 戻り値・`scope` は無い）/ `internals` feature の版固定注意 / 段階 4 以降の課題（子の非同期効果、window、キャッシュ、WebMCP 合成、`with_clock` の context 共有を前提にすること、連鎖深さ 4 → 本構造では 2 段で打ち切り）/ 証跡はファイル名を指す（`target/engine-compare/composition.json`。生の値は写さない）
     - `docs/components-plan.md:3-4` の冒頭に段階 3 完了（2026-10 のマイルストーン）と `components.md` への参照を足す。`:74`「本マイルストーンでは components の HashMap は追加しない」は検討記録として残し、冒頭の注記で現状を指す

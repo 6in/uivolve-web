@@ -2,7 +2,7 @@
 
 画面パッケージはJSONまたはYAML。UI処理は別URLのRhaiテキスト。`script`は、パッケージURLから解決する相対または絶対HTTP / HTTPS URL。YAMLの対応範囲は[ブラウザ機能の契約](platform-features.md)を参照。
 
-トップレベルには必須の`version / id / title / script / state / ui`と、任意の`requests / operations / pages / storage / files / rpc / stateSchema / webmcp`がある。`stateSchema`はDSLで宣言したstateの型・範囲を確定前に検証する。`storage`はIndexedDB/OPFSの名前付き保存レコード、`webmcp`は画面や部品の説明メタデータ。記法・制限・実行例は[保存・型・メタデータの契約](platform-features.md)にまとめる。`files`はOPFSのファイル領域、`rpc`はDescriptorを使うUnary呼び出し。[ファイル・キャッシュ・RPCの契約](files-cache-rpc.md)を参照する。`pages`は名前付きの遷移先。Rhaiの`navigate(name)`で別の画面パッケージを取得し、表示を切り替える。[画面遷移のチュートリアル](tutorial-page-navigation.md)を参照する。
+トップレベルには必須の`version / id / title / script / state / ui`と、任意の`requests / operations / pages / storage / files / rpc / stateSchema / webmcp / components`がある。`stateSchema`はDSLで宣言したstateの型・範囲を確定前に検証する。`storage`はIndexedDB/OPFSの名前付き保存レコード、`webmcp`は画面や部品の説明メタデータ。記法・制限・実行例は[保存・型・メタデータの契約](platform-features.md)にまとめる。`files`はOPFSのファイル領域、`rpc`はDescriptorを使うUnary呼び出し。[ファイル・キャッシュ・RPCの契約](files-cache-rpc.md)を参照する。`pages`は名前付きの遷移先。Rhaiの`navigate(name)`で別の画面パッケージを取得し、表示を切り替える。[画面遷移のチュートリアル](tutorial-page-navigation.md)を参照する。`components`は画面パッケージを親画面の部品として組み込む宣言で、記法・制限は[部品化の契約](components.md)を参照する。
 
 初めて書く場合は、入力・ボタン・結果表示を使う[Hello Worldチュートリアル](tutorial-hello-world.md)を参照。実行例は[hello-world.json](../public/screens/hello-world.json)と[hello-world.rhai](../public/screens/hello-world.rhai)。
 
@@ -71,7 +71,7 @@ toolbar、datepicker、messagebox、toast、エディター、文書、図表、
 | progressbar      | value または bind, text                                   | 0〜1の進捗表示。text省略時は百分率                       |
 | fieldset         | title, items, collapsible, collapsed                      | タイトル付きグループ。折りたたみに対応                   |
 
-対応属性: `xtype`, `itemId`, `text`, `title`, `layout`, `bind`, `selectedBind`, `disabledBind`, `collapsedBind`, `visibleBind`, `width`, `handler`, `variant`, `flex`, `items`, `columns`。未知の属性はエラー。`flex`は正の数（既定1）で、hbox内の幅を配分する。`itemId`内のコロンは内部キー用に予約している。
+対応属性: `xtype`, `itemId`, `text`, `title`, `layout`, `bind`, `selectedBind`, `disabledBind`, `collapsedBind`, `visibleBind`, `width`, `handler`, `variant`, `flex`, `items`, `columns`, `config`, `listeners`。未知の属性はエラー。`flex`は正の数（既定1）で、hbox内の幅を配分する。`itemId`内のコロンは内部キー用に予約している。`itemId`内のスラッシュは接頭辞付きitemId用に予約している。`config`と`listeners`は`components`で宣言した部品ノードの属性で、契約は[部品化の契約](components.md)を参照する。
 
 レイアウトの追加属性: `height`, `region`, `colSpan`, `activeItem`, `activeBind`。設定オブジェクトと適用範囲は[レイアウト形式](layouts.md)を参照する。
 

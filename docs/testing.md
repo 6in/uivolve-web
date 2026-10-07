@@ -22,23 +22,26 @@ AI向けスキルは[スキル案内](skills.md)に従う。`tests/skills.test.j
 
 ## 自動テストの役割
 
-| ファイル                                      | 主な対象                                                                                |
-| --------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `tests/abi.test.js`                           | 公開関数とimport、UTF-8応答、壊れた入力、Runtime/テーマの独立性と巻き戻し               |
-| `tests/engine.test.js` / Rustのlib.rs内テスト | 画面load、Rhai、イベント、上限、パネル/window、テーマ                                   |
-| `tests/fields.test.js`                        | 入力型、選択肢、既定値、readOnly/disabled、値検証                                       |
-| `tests/grid-navigation.test.js`               | 安定ID、ソート・検索・ページ、編集下書き、タブ・ツリー・メニュー                        |
-| `tests/gallery.test.js`                       | 追加部品、図表・文書・メディア契約、ダイアログなど                                      |
-| `tests/layouts.test.js`                       | Grid span、幅に応じた配置、Border/Fit、Card状態・可視性・WebMCP                         |
-| `tests/kanban.test.js`                        | 列移動・順序・空列、Rhai拒否と状態保持、幅・無効・modal、WebMCP、ポインター中止         |
-| `tests/widget-contract.test.js`               | 物理/意味的操作、readOnly・modalガード、カタログとパッケージの整合                      |
-| `tests/webmcp.test.js`                        | ツール経由の実WASM操作、stale/token、可視性、登録・中断処理                             |
-| `tests/resource-client.test.js`               | HTTP/CORS設定、JWT切替・送信先、トークン更新、中断・失敗・認証付きWASM起動              |
-| `tests/http-grid.test.js`                     | RhaiのHTTP依頼と完了、JSON検証、一覧保持、重複・失敗の巻き戻し、中止・タイムアウト      |
-| `tests/page-navigation.test.js`               | 別のYAML/Rhaiへの遷移・往復、失敗時の画面保持、state検証・上限・URL拒否・古い失敗の無視 |
-| `tests/native-extensions.test.js`             | 実WASMでのRust関数呼び出し、Unicode・キャプチャ・置換、集計、容量と型エラー時の巻き戻し |
-| `tests/platform-features.test.js`             | YAML/JSON互換、URL解決、型・bind・動的部品の検証、保存依頼・完了・中止とOPFS確定        |
-| `tests/font-parity-runner.test.js`            | 最終判定gateの順序と失敗伝播、未知suiteの拒否、xtypeとkindの照合、状態一覧の担当suite   |
+| ファイル                                      | 主な対象                                                                                    |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `tests/abi.test.js`                           | 公開関数とimport、UTF-8応答、壊れた入力、Runtime/テーマの独立性と巻き戻し                   |
+| `tests/engine.test.js` / Rustのlib.rs内テスト | 画面load、Rhai、イベント、上限、パネル/window、テーマ                                       |
+| `tests/fields.test.js`                        | 入力型、選択肢、既定値、readOnly/disabled、値検証                                           |
+| `tests/grid-navigation.test.js`               | 安定ID、ソート・検索・ページ、編集下書き、タブ・ツリー・メニュー                            |
+| `tests/gallery.test.js`                       | 追加部品、図表・文書・メディア契約、ダイアログなど                                          |
+| `tests/layouts.test.js`                       | Grid span、幅に応じた配置、Border/Fit、Card状態・可視性・WebMCP                             |
+| `tests/kanban.test.js`                        | 列移動・順序・空列、Rhai拒否と状態保持、幅・無効・modal、WebMCP、ポインター中止             |
+| `tests/widget-contract.test.js`               | 物理/意味的操作、readOnly・modalガード、カタログとパッケージの整合                          |
+| `tests/webmcp.test.js`                        | ツール経由の実WASM操作、stale/token、可視性、登録・中断処理                                 |
+| `tests/resource-client.test.js`               | HTTP/CORS設定、JWT切替・送信先、トークン更新、中断・失敗・認証付きWASM起動                  |
+| `tests/http-grid.test.js`                     | RhaiのHTTP依頼と完了、JSON検証、一覧保持、重複・失敗の巻き戻し、中止・タイムアウト          |
+| `tests/page-navigation.test.js`               | 別のYAML/Rhaiへの遷移・往復、失敗時の画面保持、state検証・上限・URL拒否・古い失敗の無視     |
+| `tests/native-extensions.test.js`             | 実WASMでのRust関数呼び出し、Unicode・キャプチャ・置換、集計、容量と型エラー時の巻き戻し     |
+| `tests/platform-features.test.js`             | YAML/JSON互換、URL解決、型・bind・動的部品の検証、保存依頼・完了・中止とOPFS確定            |
+| `tests/components-loader.test.js`             | 子パッケージの再帰取得とURL書き換え、重複排除・循環・深さと台数の拒否、同梱と2MB報告        |
+| `tests/components-demo.test.js`               | 受注ダッシュボードの実WASM load、2か所の部品のkey独立、config伝播とemitの親反映             |
+| `engine/src/composition_tests.rs`             | 宣言とノード属性の検証、子Instanceの実行環境、Instance木、配置、ルーティング、emit / config |
+| `tests/font-parity-runner.test.js`            | 最終判定gateの順序と失敗伝播、未知suiteの拒否、xtypeとkindの照合、状態一覧の担当suite       |
 
 ## 部品変更の確認
 
