@@ -375,8 +375,6 @@ pub struct Runtime {
     root: instance::Instance,
     /// The component instances of the screen, keyed by prefixed itemId path (`"a"`, `"a/b"`).
     /// Ordered so that children commit and report failures in the same order every run.
-    // Only the composition tests read the tree so far; `layout` and `dispatch` follow.
-    #[allow(dead_code)]
     components: BTreeMap<String, instance::Instance>,
     dialogs: dialogs::Requests,
     pages: pages::Requests,
@@ -962,11 +960,25 @@ impl Runtime {
         self.root.state_json()
     }
 
+    /// Snapshot the component instances for one layout pass. `measure` and `arrange_sized`
+    /// reach the children through it instead of carrying a context down every call.
+    fn layout_scope(&self) -> Result<Option<composition::LayoutScope>, String> {
+        if self.components.is_empty() {
+            return Ok(None);
+        }
+        let mut instances = BTreeMap::new();
+        for (path, instance) in &self.components {
+            instances.insert(path.clone(), (instance.ui.clone(), instance.state_json()?));
+        }
+        Ok(Some(composition::enter_layout(instances)))
+    }
+
     pub fn layout(&self, width: f64) -> Result<Scene, String> {
         if !width.is_finite() || !(240.0..=4096.0).contains(&width) {
             return Err("Viewport width must be between 240 and 4096".into());
         }
         let state = self.root.state_json()?;
+        let _components = self.layout_scope()?;
         let mut widgets = Vec::new();
         let mut windows = Vec::new();
         collect_windows(&self.root.ui, &state, &mut windows);
@@ -1317,6 +1329,12 @@ fn flag(state: &Value, path: &str) -> bool {
     !path.is_empty() && lookup(state, path).as_bool() == Some(true)
 }
 
+/// A component node the parent currently hides. `visibleBind` is the one binding a parent
+/// keeps over a child; without it the component is always laid out.
+fn hidden_component(node: &Node, state: &Value) -> bool {
+    !node.visible_bind.is_empty() && !flag(state, &node.visible_bind)
+}
+
 fn is_panel(node: &Node) -> bool {
     ["panel", "fieldset"].contains(&node.xtype.as_str())
 }
@@ -1366,6 +1384,13 @@ fn content_height(node: &Node, state: &Value, width: f64) -> f64 {
 }
 
 fn measure(node: &Node, state: &Value, width: f64) -> f64 {
+    if node.port_kind == "component" {
+        if hidden_component(node, state) {
+            return 0.0;
+        }
+        return composition::with_component(&node.item_id, |ui, child| measure(ui, child, width))
+            .unwrap_or(0.0);
+    }
     if node.xtype == "kanban" {
         return kanban::height(node, state, width);
     }
@@ -1459,6 +1484,18 @@ fn arrange_sized(
     allocated_height: Option<f64>,
     widgets: &mut Vec<Widget>,
 ) {
+    if node.port_kind == "component" {
+        if !hidden_component(node, state) {
+            let start = widgets.len();
+            let arranged = composition::with_component(&node.item_id, |ui, child| {
+                arrange_sized(ui, child, x, y, width, "root", allocated_height, widgets)
+            });
+            if arranged.is_some() {
+                composition::prefix_widgets(&node.item_id, &mut widgets[start..]);
+            }
+        }
+        return;
+    }
     if node.xtype == "kanban" {
         kanban::arrange(node, state, x, y, width, key, widgets);
         return;

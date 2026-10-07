@@ -1,11 +1,16 @@
 //! Screen composition: a package may declare child packages under `components` and place them
 //! as nodes whose `xtype` is the declared name. This module owns the declaration rules and the
 //! shape of a component node; loading the children into an instance tree lives on `Runtime`.
-use super::{fields, metadata, Node, Package, XTYPES};
+use super::{fields, metadata, Node, Package, Widget, XTYPES};
 use rhai::{ASTNode, Dynamic, Engine, EvalAltResult, Expr, ImmutableString, Stmt, AST};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{any::TypeId, cell::RefCell, collections::BTreeSet, rc::Rc};
+use std::{
+    any::TypeId,
+    cell::RefCell,
+    collections::{BTreeMap, BTreeSet},
+    rc::Rc,
+};
 
 /// One `components` entry: where the child package is fetched from.
 #[derive(Clone, Deserialize, Serialize)]
@@ -322,6 +327,80 @@ impl Emits {
     /// queued, after a handler the parent looks for a matching listener.
     pub fn take(&self) -> Vec<(String, Value)> {
         std::mem::take(&mut *self.queue.borrow_mut())
+    }
+}
+
+thread_local! {
+    /// The instance tree `measure` and `arrange_sized` reach into while a composed screen is
+    /// laid out. A screen without components never opens it, so it costs those screens nothing.
+    static LAYOUT: RefCell<Option<Scope>> = const { RefCell::new(None) };
+}
+
+struct Scope {
+    /// Ui and state of every component instance, by prefixed itemId path.
+    instances: BTreeMap<String, Rc<(Node, Value)>>,
+    /// The itemIds of the component nodes between the root and the one being laid out.
+    stack: Vec<String>,
+}
+
+/// Holds the layout scope open. Dropping it clears the scope, so neither an error on the way
+/// out nor a panic can leave a stale tree behind for the next layout.
+pub struct LayoutScope(());
+
+impl Drop for LayoutScope {
+    fn drop(&mut self) {
+        LAYOUT.with(|scope| *scope.borrow_mut() = None);
+    }
+}
+
+/// Open a layout scope over the instance tree of a screen.
+pub fn enter_layout(instances: BTreeMap<String, (Node, Value)>) -> LayoutScope {
+    let instances = instances
+        .into_iter()
+        .map(|(path, instance)| (path, Rc::new(instance)))
+        .collect();
+    LAYOUT.with(|scope| {
+        *scope.borrow_mut() = Some(Scope {
+            instances,
+            stack: Vec::new(),
+        });
+    });
+    LayoutScope(())
+}
+
+/// Run `f` against the instance placed at the component node `item_id`, with the ui and state
+/// of that instance and the scope pointing at it. `None` when no scope is open or nothing is
+/// placed there — a composed screen is then laid out as if the node were empty.
+pub fn with_component<T>(item_id: &str, f: impl FnOnce(&Node, &Value) -> T) -> Option<T> {
+    let instance = LAYOUT.with(|scope| {
+        let mut scope = scope.borrow_mut();
+        let scope = scope.as_mut()?;
+        let path = match scope.stack.is_empty() {
+            true => item_id.to_owned(),
+            false => format!("{}/{item_id}", scope.stack.join("/")),
+        };
+        let instance = scope.instances.get(&path)?.clone();
+        scope.stack.push(item_id.to_owned());
+        Some(instance)
+    })?;
+    let laid_out = f(&instance.0, &instance.1);
+    LAYOUT.with(|scope| {
+        if let Some(scope) = scope.borrow_mut().as_mut() {
+            scope.stack.pop();
+        }
+    });
+    Some(laid_out)
+}
+
+/// Move the widgets an instance produced into the namespace of the node holding it: keys and
+/// event targets inside an instance are its own itemIds, and only the prefix tells two
+/// placements of the same package apart. Nesting composes one prefix per level.
+pub fn prefix_widgets(item_id: &str, widgets: &mut [Widget]) {
+    for widget in widgets {
+        widget.key = format!("{item_id}/{}", widget.key);
+        if !widget.target.is_empty() {
+            widget.target = format!("{item_id}/{}", widget.target);
+        }
     }
 }
 

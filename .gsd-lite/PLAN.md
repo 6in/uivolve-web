@@ -96,7 +96,7 @@ bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-ef582d
   - 依存: T3
   - 並列サブ作業: なし
 
-- [ ] T5: レイアウトの合成（R3 / P4 / P5 / P14）
+- [x] T5: レイアウトの合成（R3 / P4 / P5 / P14）
   - 完了基準:
     - 方式 (H): `composition::LayoutScope`（thread_local `RefCell<Option<Scope>>`、`Scope { instances: BTreeMap<String, (Node, Value)>, stack: Vec<String> }`）とガード。`Runtime::layout` は `self.components` が空でないときだけ各子の `ui` clone と `state_json` でスコープを張る（既存画面はコスト 0）
     - `measure`（`lib.rs:1209`）と `arrange_sized`（`lib.rs:1293`）の先頭に `node.port_kind == "component"` の分岐を 1 つずつ足す。`measure`: `visibleBind` があり親 state で false なら 0、そうでなければ接頭辞を push → 子 `ui` を子 state で `measure` → pop。`arrange_sized`: 同じ条件で子を `arrange_sized(&child.ui, &child.state, x, y, width, "root", allocated_height, widgets)` し、戻ったら `widgets[start..]` の `key` に `"{path}/"` を前置、`target` は空でないものだけ前置（`payload` は触らない）。`Runtime::layout` の `arrange(&self.root.ui, &state, 16.0,` の行（M1 の対象 `build-engine-variant.mjs:13`）は変えない

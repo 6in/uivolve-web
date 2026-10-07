@@ -862,3 +862,279 @@ fn the_per_instance_limits_of_a_child_name_the_component_that_broke_them() {
         "Component a: Initial state must be an object"
     );
 }
+
+// --- laying out an instance tree ---
+
+/// `list.json` — a child tall enough to move what follows it, holding an itemId (`search`) its
+/// parent uses as well.
+fn list_part() -> Package {
+    part(
+        "list",
+        json!({"query": "", "rows": [{"number": "SO-001"}, {"number": "SO-002"}]}),
+        json!({}),
+        json!([
+            {"xtype": "textfield", "itemId": "search", "bind": "query", "fieldLabel": "絞り込み"},
+            {
+                "xtype": "grid", "itemId": "orders", "bind": "rows",
+                "columns": [{"text": "番号", "dataIndex": "number"}],
+            },
+        ]),
+    )
+}
+
+/// `middle.json` of the layout fixtures — places the same list one level further down.
+fn middle_list() -> Package {
+    part(
+        "middle",
+        json!({}),
+        json!({"list": {"url": "list.json"}}),
+        json!([
+            {"xtype": "label", "itemId": "caption", "text": "内訳"},
+            component("list", "c", json!({})),
+        ]),
+    )
+}
+
+/// A screen declaring `list` and placing whatever the test puts in `items`.
+fn listing(items: Value) -> Package {
+    part(
+        "parent",
+        json!({"query": "", "ready": false}),
+        json!({"list": {"url": "list.json"}}),
+        items,
+    )
+}
+
+fn list_bundle() -> HashMap<String, (Package, String)> {
+    bundle(vec![("list.json", list_part(), CHILD_SCRIPT)])
+}
+
+/// Replace one top-level key of an instance state. Stands in for the dispatch of a later task,
+/// which is what moves a child state once the screen is running.
+fn set_state(instance: &mut instance::Instance, key: &str, value: Value) {
+    let mut state = instance.state_json().expect("an instance state");
+    state[key] = value;
+    instance.state = rhai::serde::to_dynamic(state).expect("a state map");
+}
+
+fn keys(scene: &Scene) -> Vec<String> {
+    scene.widgets.iter().map(|w| w.key.clone()).collect()
+}
+
+fn count_rows(scene: &Scene, prefix: &str) -> usize {
+    scene
+        .widgets
+        .iter()
+        .filter(|w| w.key.starts_with(&format!("{prefix}orders:row:")))
+        .count()
+}
+
+fn widget_at<'a>(scene: &'a Scene, key: &str) -> &'a Widget {
+    scene
+        .widgets
+        .iter()
+        .find(|w| w.key == key)
+        .unwrap_or_else(|| panic!("no widget {key} in {:?}", keys(scene)))
+}
+
+#[test]
+fn component_widgets_carry_the_prefix_that_keeps_a_shared_item_id_unique() {
+    let runtime = compose(
+        listing(json!([
+            {"xtype": "textfield", "itemId": "search", "bind": "query", "fieldLabel": "検索"},
+            component("list", "a", json!({})),
+        ])),
+        list_bundle(),
+    )
+    .expect("a composed screen");
+    let scene = runtime.layout(800.0).expect("a scene");
+    let keys = keys(&scene);
+    assert_eq!(
+        keys.iter().collect::<BTreeSet<_>>().len(),
+        keys.len(),
+        "{keys:?}"
+    );
+    assert!(keys.contains(&"search".to_owned()), "{keys:?}");
+    // The child keeps its own itemIds; only the prefix tells the two `search` fields apart.
+    assert_eq!(widget_at(&scene, "a/search").target, "a/search");
+    assert_eq!(widget_at(&scene, "search").target, "search");
+    for widget in scene.widgets.iter().filter(|w| w.key.starts_with("a/")) {
+        assert!(
+            widget.target.is_empty() || widget.target.starts_with("a/"),
+            "{} targets {}",
+            widget.key,
+            widget.target
+        );
+    }
+    // Nothing of the child leaks into the root state or the window layer.
+    assert_eq!(
+        runtime.state_json().expect("root state"),
+        json!({"query": "", "ready": false})
+    );
+    assert!(scene.modal.is_none());
+}
+
+#[test]
+fn two_placements_of_one_package_lay_out_and_move_on_their_own() {
+    let mut runtime = compose(
+        part(
+            "parent",
+            json!({}),
+            json!({"middle": {"url": "middle.json"}, "list": {"url": "list.json"}}),
+            json!([
+                component("middle", "a", json!({})),
+                component("list", "b", json!({})),
+            ]),
+        ),
+        bundle(vec![
+            ("middle.json", middle_list(), CHILD_SCRIPT),
+            ("list.json", list_part(), CHILD_SCRIPT),
+        ]),
+    )
+    .expect("a composed screen");
+    // The template the loader walks and the resolved ui the layout walks place the same nodes.
+    let item_ids = |ui: &Node| {
+        let mut nodes = Vec::new();
+        composition::component_nodes(ui, &mut nodes);
+        nodes
+            .iter()
+            .map(|n| n.item_id.clone())
+            .collect::<Vec<String>>()
+    };
+    assert_eq!(
+        item_ids(&runtime.root.package.ui),
+        item_ids(&runtime.root.ui)
+    );
+    let scene = runtime.layout(800.0).expect("a scene");
+    let keys = keys(&scene);
+    assert_eq!(
+        keys.iter().collect::<BTreeSet<_>>().len(),
+        keys.len(),
+        "{keys:?}"
+    );
+    assert!(keys.contains(&"a/c/orders:header".to_owned()), "{keys:?}");
+    assert!(keys.contains(&"b/orders:header".to_owned()), "{keys:?}");
+    assert_eq!(widget_at(&scene, "a/c/search").target, "a/c/search");
+    assert_eq!(
+        (count_rows(&scene, "a/c/"), count_rows(&scene, "b/")),
+        (2, 2)
+    );
+    // Moving one instance leaves its twin where it was.
+    set_state(
+        runtime.components.get_mut("b").expect("b"),
+        "rows",
+        json!([{"number": "SO-009"}]),
+    );
+    let scene = runtime.layout(800.0).expect("a scene");
+    assert_eq!(
+        (count_rows(&scene, "a/c/"), count_rows(&scene, "b/")),
+        (2, 1)
+    );
+}
+
+#[test]
+fn the_height_of_a_child_moves_what_the_parent_places_after_it() {
+    let mut runtime = compose(
+        listing(json!([
+            component("list", "a", json!({})),
+            {"xtype": "label", "itemId": "footer", "text": "合計"},
+        ])),
+        list_bundle(),
+    )
+    .expect("a composed screen");
+    let footer = |runtime: &Runtime| {
+        let scene = runtime.layout(800.0).expect("a scene");
+        (widget_at(&scene, "footer").y, scene.height)
+    };
+    let (before, height) = footer(&runtime);
+    set_state(
+        runtime.components.get_mut("a").expect("a"),
+        "rows",
+        json!([{"number": "1"}, {"number": "2"}, {"number": "3"}, {"number": "4"}]),
+    );
+    let (after, taller) = footer(&runtime);
+    // Two more grid rows of 42 push the footer and the screen down by the same amount.
+    assert_eq!(after - before, 84.0);
+    assert_eq!(taller - height, 84.0);
+}
+
+#[test]
+fn a_component_the_parent_hides_lays_out_nothing() {
+    let mut runtime = compose(
+        listing(json!([
+            {"xtype": "list", "itemId": "a", "config": {}, "visibleBind": "ready"},
+            {"xtype": "label", "itemId": "footer", "text": "合計"},
+        ])),
+        list_bundle(),
+    )
+    .expect("a composed screen");
+    let scene = runtime.layout(800.0).expect("a scene");
+    assert!(
+        !scene.widgets.iter().any(|w| w.key.starts_with("a/")),
+        "{:?}",
+        keys(&scene)
+    );
+    let hidden = widget_at(&scene, "footer").y;
+    set_state(&mut runtime.root, "ready", json!(true));
+    let scene = runtime.layout(800.0).expect("a scene");
+    assert_eq!(count_rows(&scene, "a/"), 2);
+    assert!(widget_at(&scene, "footer").y > hidden);
+}
+
+#[test]
+fn a_disabled_parent_disables_the_widgets_of_the_child_below_it() {
+    let runtime = compose(
+        listing(json!([{
+            "xtype": "panel", "itemId": "wrap", "title": "受注", "disabled": true,
+            "items": [component("list", "a", json!({}))],
+        }])),
+        list_bundle(),
+    )
+    .expect("a composed screen");
+    let scene = runtime.layout(800.0).expect("a scene");
+    let child: Vec<&Widget> = scene
+        .widgets
+        .iter()
+        .filter(|w| w.key.starts_with("a/"))
+        .collect();
+    assert!(!child.is_empty());
+    assert!(child.iter().all(|w| w.disabled), "{:?}", keys(&scene));
+}
+
+#[test]
+fn a_composed_screen_lays_out_at_every_viewport_width() {
+    let runtime = compose(
+        part(
+            "parent",
+            json!({}),
+            json!({"middle": {"url": "middle.json"}, "list": {"url": "list.json"}}),
+            json!([
+                component("middle", "a", json!({})),
+                component("list", "b", json!({})),
+            ]),
+        ),
+        bundle(vec![
+            ("middle.json", middle_list(), CHILD_SCRIPT),
+            ("list.json", list_part(), CHILD_SCRIPT),
+        ]),
+    )
+    .expect("a composed screen");
+    assert!(runtime.layout(239.0).is_err());
+    for width in [240.0, 800.0, 4096.0] {
+        let scene = runtime.layout(width).expect("a scene");
+        assert!(scene.height.is_finite() && scene.height >= 0.0);
+        for w in &scene.widgets {
+            assert!(
+                w.x.is_finite() && w.y.is_finite() && w.width >= 0.0 && w.height >= 0.0,
+                "{} at {width}: {} {} {} {}",
+                w.key,
+                w.x,
+                w.y,
+                w.width,
+                w.height
+            );
+        }
+    }
+    // The scope of a finished layout is closed, so no instance tree outlives its pass.
+    assert!(composition::with_component("b", |_, _| ()).is_none());
+}
