@@ -178,7 +178,7 @@ bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-ef582d
     - A: `docs/components.md` 新設（対象: `docs/components.md`）
     - B: 既存文書の追従 6 ファイル（対象: `docs/components-plan.md`, `docs/screen-format.md`, `docs/architecture.md`, `docs/README.md`, `README.md`, `docs/testing.md`）
 
-- [ ] T12: 最終判定と R10 の総点検
+- [x] T12: 最終判定と R10 の総点検
   - 完了基準:
     - `bun scripts/verify-instance-refactor.mjs` が OK（所要の表を PROGRESS に写す）
     - R10 の 18 ケースそれぞれに対応するテスト名（Rust の `fn` 名 / Vitest の `it` 文言）を表にして PROGRESS に書く（対応先の無いケースが 0 件）。REQUIREMENTS §受け入れ基準 1〜7 も同様に「どのコマンド / テストで確かめたか」を 1 行ずつ
