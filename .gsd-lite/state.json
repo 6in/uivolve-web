@@ -29,7 +29,7 @@
     "targets": ["local_projects", "official_docs", "similar_oss"],
     "local_search_paths": ["."]
   },
-  "turn": 15,
+  "turn": 16,
   "max_turns": 60,
   "retry_max": 2,
   "verify_round": 1,
@@ -41,5 +41,5 @@
     "verify": "claude-fable-5-1",
     "reflect": "claude-fable-5-1"
   },
-  "updated_at": "2026-10-08T00:48:57+09:00"
+  "updated_at": "2026-10-08T00:56:01+09:00"
 }
