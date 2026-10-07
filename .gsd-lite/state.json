@@ -2,24 +2,37 @@
   "version": 1,
   "engine": "claude",
   "phase_engines": {},
-  "codex": { "model": {}, "reasoning_effort": {} },
-  "opencode": { "model": {}, "variant": {}, "agent": {} },
+  "codex": {
+    "model": {},
+    "reasoning_effort": {}
+  },
+  "opencode": {
+    "model": {},
+    "variant": {},
+    "agent": {}
+  },
   "subagents": "auto",
   "reflect": true,
   "fix_round": 0,
-  "target": { "name": "", "path": "." },
-  "milestone": "component-instance-refactor",
-  "phase": "done",
-  "next_command": "DONE",
-  "branch": { "name": "gsd-lite/component-instance-refactor", "base": "main" },
+  "target": {
+    "name": "",
+    "path": "."
+  },
+  "milestone": "component-composition",
+  "phase": "research",
+  "next_command": "/gsd-lite-research",
+  "branch": {
+    "name": "gsd-lite/component-composition",
+    "base": "main"
+  },
   "research": {
-    "targets": ["local_projects", "official_docs"],
+    "targets": ["local_projects", "official_docs", "similar_oss"],
     "local_search_paths": ["."]
   },
-  "turn": 8,
+  "turn": 0,
   "max_turns": 60,
   "retry_max": 2,
-  "verify_round": 1,
+  "verify_round": 0,
   "verify_round_max": 3,
   "model": {
     "research": "claude-fable-5-1",
@@ -28,5 +41,5 @@
     "verify": "claude-fable-5-1",
     "reflect": "claude-fable-5-1"
   },
-  "updated_at": "2026-10-07T12:08:15+09:00"
+  "updated_at": "2026-10-07T21:52:21+09:00"
 }
