@@ -1,6 +1,6 @@
 ---
 name: uivolve-web-app-dev
-description: uivolve-web上で動くアプリの画面JSON/YAML、Rhai、stateSchema、テーマを作成・修正する。HTTPメソッド・パス変数、保存、動的部品、ダイアログ、日付・金額・Unicode処理を既存契約で組み合わせる。Rust/WASMやブラウザホスト自体の変更はエンジン開発の範囲。
+description: uivolve-web上で動くアプリの画面JSON/YAML、Rhai、stateSchema、テーマを作成・修正する。HTTPメソッド・パス変数、保存、動的部品、画面合成（components）、ダイアログ、日付・金額・Unicode処理を既存契約で組み合わせる。Rust/WASMやブラウザホスト自体の変更はエンジン開発の範囲。
 ---
 
 # uivolve-webでアプリを作る
@@ -20,6 +20,7 @@ description: uivolve-web上で動くアプリの画面JSON/YAML、Rhai、stateSc
 | ------------------------------------------- | ------------------------------------------------- |
 | フォーム・入力検証・stateの型               | [入力と型](references/fields-state.md)            |
 | 配置・Grid・動的タブ・ウィンドウ・テーマ    | [部品と配置](references/components-layout.md)     |
+| 既存の画面パッケージを部品として埋め込む    | [部品と配置](references/components-layout.md)     |
 | HTTPメソッド・パス変数・query・本文         | [HTTPの選択と接続](references/http.md)            |
 | 日付・時計・金額・Unicode加工               | [共通関数の選択](references/native-functions.md)  |
 | JSON保存・OPFSファイル・RPC・正規表現の利用 | [I/Oと拡張](references/io-extensions.md)          |

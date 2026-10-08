@@ -4,24 +4,26 @@
 
 ## 作業と根拠を選ぶ
 
-| 作業                             | 入口                                                                                   | 決めるもの                                            |
-| -------------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| 既存機能で画面を作る             | [app-devスキル](../skills/uivolve-web-app-dev/SKILL.md)、[画面契約](screen-format.md)  | YAML/JSON、Rhai、stateSchema                          |
-| 独立アプリの起動設定             | [共通ランタイム](runtime-distribution.md)                                              | CSS/JS/WASMの配置、app.json、登録済みアダプターと接続 |
-| メソッド・パス変数・本文付きHTTP | [HTTP契約](http-adapter.md)                                                            | ホスト登録＋operations.options＋host_callのargs       |
-| 固定URLのJSON GET                | [GETチュートリアル](tutorial-http-grid.md)                                             | requests＋http_get                                    |
-| OPFSファイルのHTTP転送           | [転送契約](opfs-file-transfer.md)                                                      | files＋転送operations、容量・中止・受信進捗           |
-| サーバーなしの固定応答・CRUD     | [WorkerモックAPI](worker-mock-api.md)                                                  | 独立モックDSL＋workerMockAdapter＋既存operations      |
-| 日付、金額、Unicode加工          | [日付](date-functions.md)、[小数](decimal-functions.md)、[文字列](text-functions.md)   | 引数の型、単位、丸め、上限                            |
-| 保存、OPFS、Unary RPC            | [保存・型](platform-features.md)、[ファイル・RPC](files-cache-rpc.md)                  | 依頼宣言、完了handler、JSON/bytes寿命                 |
-| 部品やエンジンを変更             | [engine-devスキル](../skills/uivolve-web-engine-dev/SKILL.md)、[構成](architecture.md) | Rust、ABI、両レンダラー、対応テスト                   |
-| 画面を操作する                   | [WebMCP](webmcp.md)                                                                    | 可視key/actions、最新token/revision                   |
+| 作業                             | 入口                                                                                   | 決めるもの                                                  |
+| -------------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| 既存機能で画面を作る             | [app-devスキル](../skills/uivolve-web-app-dev/SKILL.md)、[画面契約](screen-format.md)  | YAML/JSON、Rhai、stateSchema                                |
+| 既存の画面パッケージを部品にする | [合成契約](components.md)                                                              | components宣言、componentノードのconfig/listeners、子のemit |
+| 独立アプリの起動設定             | [共通ランタイム](runtime-distribution.md)                                              | CSS/JS/WASMの配置、app.json、登録済みアダプターと接続       |
+| メソッド・パス変数・本文付きHTTP | [HTTP契約](http-adapter.md)                                                            | ホスト登録＋operations.options＋host_callのargs             |
+| 固定URLのJSON GET                | [GETチュートリアル](tutorial-http-grid.md)                                             | requests＋http_get                                          |
+| OPFSファイルのHTTP転送           | [転送契約](opfs-file-transfer.md)                                                      | files＋転送operations、容量・中止・受信進捗                 |
+| サーバーなしの固定応答・CRUD     | [WorkerモックAPI](worker-mock-api.md)                                                  | 独立モックDSL＋workerMockAdapter＋既存operations            |
+| 日付、金額、Unicode加工          | [日付](date-functions.md)、[小数](decimal-functions.md)、[文字列](text-functions.md)   | 引数の型、単位、丸め、上限                                  |
+| 保存、OPFS、Unary RPC            | [保存・型](platform-features.md)、[ファイル・RPC](files-cache-rpc.md)                  | 依頼宣言、完了handler、JSON/bytes寿命                       |
+| 部品やエンジンを変更             | [engine-devスキル](../skills/uivolve-web-engine-dev/SKILL.md)、[構成](architecture.md) | Rust、ABI、両レンダラー、対応テスト                         |
+| 画面を操作する                   | [WebMCP](webmcp.md)                                                                    | 可視key/actions、最新token/revision                         |
 
 文書の種別を区別する。契約文書は使えるAPI、チュートリアルは実行可能な特定例、計画・検討は履歴と未実装範囲。計画中の名前・属性をコード生成の根拠にしない。違いを見つけたら、対象版の実装・意味のあるテストで確認し、契約と例を揃える。
 
 ## 実装済みの境界
 
 - 共通UI WASMはstate・型・部品・layout・イベントを確定し、ブラウザimportを持たない。Rhaiは同期。通信・保存はホストへ依頼し、完了handlerで最新stateへ反映する。
+- 画面合成（`components`）は同期のみ。子の非同期効果・`window`・配信キャッシュ・WebMCPの合成は段階4以降の将来設計で、子に通信・保存・ダイアログを書くコードを生成しない。
 - host_call、HostEffects、HTTPアダプター、WebWorkerの宣言的モックAPIは実装済み。WebSocket、カメラ/マイク、Bluetooth、PGlite/DuckDBアダプター、host_event、host_closeは将来設計。ブラウザ自体のAPIが存在することと、この製品のDSLで使えることを区別する。
 - 日付・時計、10進文字列の金額、Unicodeの正規化・書記素処理は登録済み。専用かな変換・文字種検査は後続。日時をJSのDateオブジェクト、金額をFLOATとして扱うコードを生成しない。
 - 比較デモの画面一覧はsrc/screen-catalog.jsから生成する。外部アプリはapp.jsonのpagesを使う。画面追加のためだけにデモindex.htmlの選択肢を手動追加しない。
