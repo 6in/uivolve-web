@@ -136,7 +136,7 @@ dialogs / pagesのキューは画面で1本なのでrootの位置に並び、子
 
 完了もイベントと同じ1トランザクション。子のhandler → その子のemit → 親のlisteners → configの下方向連鎖 → 全Instanceの検証 → 1 commitで`revision`を1つ進める。どこかで失敗すれば**全Instanceが不変で`revision`も動かない**。
 
-- handlerの失敗は完了を消費する（既存どおり）。同じidで二度目を返しても`Unknown or completed …`になる。
+- handlerの失敗は完了を消費する（既存どおり）。同じidで二度目を返しても`Unknown or completed …`になる。ただし`host_progress`は例外で、progressはpendingを消費しないため、progress handlerが失敗しても同じidの`host_progress` / `host_result`はその後も届く。
 - 不正な完了（宛先違い・消費済み）はpendingを**不変**のまま残す。別のInstanceを名乗った完了が、名乗られた側の待ちを壊すことはない。
 
 ### 相対URLの基準
@@ -189,6 +189,7 @@ scope規則の定義は本節が唯一で、他の文書はここを参照する
 
 日本語（JS）。
 
+- `コンポーネント {名前} の宣言が不正です（url を文字列で指定してください）`。`components`の宣言の`url`が文字列でないとき、ローダーと`UiRuntime`の両方が出す。
 - `コンポーネント {path} の保存領域 {scope} が不正です（英数字・-・_ で80バイト以内、各要素に __ を含めない）`
 - `コンポーネント {instance} の配送先が未登録です`。root由来のeffectだと`{instance}`が空文字になり、文中に空白が2つ並ぶ。
 
