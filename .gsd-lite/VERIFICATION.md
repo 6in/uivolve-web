@@ -1,11 +1,34 @@
 # VERIFICATION — component-effects
 
-- 実施: 2026-10-09 / gsd-lite-verify（turn 14、verify_round 1 → 差し戻し）
-- 対象: `git diff main...HEAD`（base `main` = `49c8183`、HEAD = `0eb8a20`。67 ファイル、+6128 / −1438。コードは `engine/src/{lib,abi,composition,composition_tests,dialogs,instance,pages,http}.rs` と `engine/Cargo.toml`、JS は `src/{engine,runtime,application-loader,component-tree,host-effects,http-effects,storage-effects,page-effects,screen-catalog}.js`、スクリプト 4 本、デモ 6 ファイル、Vitest 新規 2 本 + 追記 6 本、文書 11 ファイル、`vite.config.js`）
-- 判定: **指摘あり（差し戻し）**。コード・テスト・最終判定・堅牢性格子・セキュリティは差し戻し事由 0 件。契約文書 `docs/components.md` の 2 点（R10 が明示した JS 文言の列挙漏れ / `host_progress` が完了を消費しない例外の未記載）を F1（文書のみ）にまとめた
-- 進め方: コードレビューとセキュリティチェックを読み取り専用のサブエージェント 2 本に並行させ、親が最終判定スクリプト・ABI の堅牢性格子・文書の照合・受け入れ基準の突き合わせを前景で行った。サブエージェントの指摘は親が実物で再確認したものだけを採った（MAJOR-1 は親が先に `git grep` で独立に見つけた同じ指摘。MINOR-1 は `engine/src/host.rs:151-173` で再確認）
+- 実施: 2026-10-09 / gsd-lite-verify（round 1 = turn 14 で差し戻し、round 2 = turn 16 で**合格**）
+- 対象: `git diff main...HEAD`（base `main` = `49c8183`。round 1 は HEAD = `0eb8a20`、round 2 は HEAD = `7a83d13`。68 ファイル、+6331 / −1530。コードは `engine/src/{lib,abi,composition,composition_tests,dialogs,instance,pages,http}.rs` と `engine/Cargo.toml`、JS は `src/{engine,runtime,application-loader,component-tree,host-effects,http-effects,storage-effects,page-effects,screen-catalog}.js`、スクリプト 4 本、デモ 6 ファイル、Vitest 新規 2 本 + 追記 6 本、文書 11 ファイル、`vite.config.js`）
+- 判定: **合格（round 2）**。round 1 の指摘 2 件（文書のみ）は F1 で解消。round 2 は「round 1 の格子の再確認 + F1 の差分の回帰」だけを行い、新しいクラスの探索はしていない
+- 進め方（round 1）: コードレビューとセキュリティチェックを読み取り専用のサブエージェント 2 本に並行させ、親が最終判定スクリプト・ABI の堅牢性格子・文書の照合・受け入れ基準の突き合わせを前景で行った。サブエージェントの指摘は親が実物で再確認したものだけを採った（MAJOR-1 は親が先に `git grep` で独立に見つけた同じ指摘。MINOR-1 は `engine/src/host.rs:151-173` で再確認）
+- 進め方（round 2）: サブエージェントなし。F1 の差分が小さい（文書 1 ファイル 2 行）ので親が前景で全部行った
 
-## 指摘（→ F1）
+## round 2（turn 16）で確認したこと
+
+### F1 の差分の回帰
+
+- `git diff 0eb8a20..HEAD --stat` は `docs/components.md`（+2 / −1）と `.gsd-lite/` の 4 ファイルだけ。`engine/**` / `src/**` / `tests/**` / `scripts/**` に変更なし（F1 の「対象」どおり）
+- 指摘 1: `git grep -n -F '宣言が不正です' -- src docs` が `docs/components.md:192` / `src/application-loader.js:128` / `src/runtime.js:51` の 3 件。文書の文言は実装の文字列（`${name}` を `{名前}` に置き換えた形）と一致。「日本語（JS）」の列挙は 3 文言になり、残り 2 文言も `src/component-tree.js:42` / `src/{http,storage,page}-effects.js` の実物と一致
+- 指摘 2: `docs/components.md:139` の追記「`host_progress` は例外で、progress は pending を消費しない」を `engine/src/host.rs:151-173` で再確認（`progress` は `pending.get` のみ、`consume` `:175-179` が `pending.remove`）。格子 `composition_tests.rs:2490-2496` の `HostProgress` 行は `consuming: false` で、`:2854` / `:2919` の分岐が「失敗後も同 id で再完了できる」ことを固定している
+- 追従先チェックリストの条件を再実行（全部成立）: `kind` 省略系 0 件 / `19個|宣言7種|効果関数19|拒否2本|internals|not available in components` は `docs/components.md:169,171,187` の `webmcp` / `window` 文言 3 件だけ / `STUBS|23画面|変異5本|M1〜M5|rejection of effect|rejectSequences` 0 件 / `instance` は components 13・dialogs 1・files-cache-rpc 2・http-adapter 1・platform-features 1・tutorial-http-grid 1 / `docs/testing.md` の新テスト 2 行 / `区切り文字` は `components-plan.md:99` の完了文脈 1 件のみ / `components.md` の `__` 7 件
+- `bun run docs:check` → 499 targets・59 files OK
+
+### 最終判定（クリーンな作業ツリーから再実行）
+
+`bun scripts/verify-instance-refactor.mjs` が exit 0（72.8 秒。ログ `.gsd-lite/logs/component-effects/scratch/turn-016-verify.log`）。`BASE_CHECKS` 6 本 green（Vitest 34 files・672 passed / cargo test 90 passed / check / docs:check / build）→ `compare candidate` 370 steps・diffs 0 → `probe composition` 54 steps・problems 0 → 変異 7 本すべて exit 1（`layout-x-offset` 171 / `dialog-draft-revision` 2 / `unknown-item-message` 1 / `emit-skips-listener` 7 / `config-diff-ignored` 2 / `instance-dropped` 19 / `completion-routed-to-root` 12）。round 1 と同じ値。実行後も `git status` クリーン
+
+### round 1 の格子の再確認
+
+`bun .gsd-lite/logs/component-effects/scratch/turn-014-robust-probe.mjs`（HEAD の `public/engine.wasm`）→ `{"steps":315,"problems":0}`。round 1 と同一
+
+### 受け入れ基準 6（round 2 で達成）
+
+`docs/components.md` のエラー文言は英語 6 / 日本語 3 がすべて実装の文字列と一致し、`host_progress` の例外も実装と一致。round 1 の表の「未達」はこれで解消。1〜5 / 7〜9 は round 1 の結果が再実行でも変わらない
+
+## round 1 の指摘（→ F1。turn 15 で解消）
 
 1. **R10 が明示した JS 文言が契約文書に無い**: `docs/components.md` の「エラー文言」節「日本語（JS）」の列挙に `コンポーネント {名前} の宣言が不正です（url を文字列で指定してください）` が無い（`git grep -F '宣言が不正です' -- docs` が 0 件。実装は `src/application-loader.js:128` / `src/runtime.js:51` にある）。REQUIREMENTS R10 の第 1 項（前回残留リスク 9）と PLAN の追従先チェックリスト「JS の日本語文言を足す」行の条件（1 件）に反する。T11 の最終確認は追従先チェックリスト 11 行のうち 9 条件を再実測していて、この行が抜けていた
 2. **「handler の失敗は完了を消費する」が `host_progress` に当てはまらない**: `docs/components.md:139` は 7 op 共通の文として書いているが、`host::Requests::progress`（`host.rs:151-173`）は `pending.get` だけで消費せず、progress handler が失敗しても同じ id の `host_progress` / `host_result` はその後も届く。Rust の格子 `completion_grid` は `HostProgress { consuming: false }` でこの挙動を固定済み。文書に例外の 1 文を足す（実装は変えない）
