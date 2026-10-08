@@ -155,7 +155,7 @@ bun scripts/probe-composition.mjs --candidate public/engine.wasm   # 候補の�
     - C: `src/host-effects.js`（Instance ごとの `#lastId` / `#active` / `#operations` / cancel / 上限。対象: このファイル）
     - D: `tests/components-effects.test.js` + `tests/components-loader.test.js` の追記（A〜C のメソッド名・文言は本 PLAN に従う。対象: この 2 ファイル）
 
-- [ ] T8: デモ `parts-lab`（R9）と Vitest（受け入れ 8）
+- [x] T8: デモ `parts-lab`（R9）と Vitest（受け入れ 8）
   - 完了基準:
     - 子 `public/screens/parts/note-pad.json` + `note-pad.rhai`（`id: "note-pad"`、title「メモ（部品）」、`storage: { memo: { backend: "indexeddb", key: "memo", handler: "stored" } }`、state `{ text: "", status: "未保存", config: {} }`、ui は textfield `itemId: "text"`（`bind: "text"`）+ button `save`（`handler: "save"`）+ label `bind: "status"`。rhai: `init` で `storage_read("memo")` を積む、`save` で `storage_write("memo", #{ text: s.text })`、`stored(s, r)` が `read` で `r.data != ()` なら `s.text = r.data.text`、`write` 成功で `s.status = "保存済み"` と `emit("saved", #{ text: s.text })`）
     - 子 `public/screens/parts/approval.json` + `approval.rhai`（`id: "approval"`、title「承認（部品）」、state `{ result: "未確認", config: {} }`、ui は button `ask`（`handler: "ask"`）+ label `bind: "result"`。rhai: `ask` で `confirm("承認しますか？", "answered")`、`answered(s, r)` が `s.result = if r.data == true { "承認" } else { "却下" }` と `emit("answered", #{ approved: r.data == true })`）

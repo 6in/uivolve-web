@@ -149,6 +149,12 @@ export const SCREEN_CATALOG = Object.freeze(
       description: "受注一覧の部品を2つ並べ、絞り込みと選択を親子でやり取り",
     },
     {
+      id: "parts-lab",
+      title: "部品ラボ",
+      category: "apps",
+      description: "HTTP・保存・ダイアログを使う部品を1画面に置き、完了を各部品へ返す",
+    },
+    {
       id: "worker-orders",
       title: "受注管理・Worker API",
       category: "apps",

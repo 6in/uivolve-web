@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "id": "note-pad",
+  "title": "メモ（部品）",
+  "script": "note-pad.rhai",
+  "storage": {
+    "memo": { "backend": "indexeddb", "key": "memo", "handler": "stored" }
+  },
+  "state": {
+    "text": "",
+    "status": "未保存",
+    "config": {}
+  },
+  "ui": {
+    "xtype": "container",
+    "layout": "vbox",
+    "items": [
+      {
+        "xtype": "textfield",
+        "itemId": "text",
+        "fieldLabel": "メモ",
+        "emptyText": "例：明日の打ち合わせ",
+        "bind": "text"
+      },
+      {
+        "xtype": "button",
+        "itemId": "save",
+        "text": "メモを保存",
+        "handler": "save",
+        "variant": "primary"
+      },
+      { "xtype": "label", "itemId": "status", "bind": "status", "variant": "muted" }
+    ]
+  }
+}
