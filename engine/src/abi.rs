@@ -1,4 +1,4 @@
-use super::{theme, Package, Runtime};
+use super::{composition, theme, Completion, Package, Runtime};
 use serde_json::{json, Value};
 use std::cell::RefCell;
 
@@ -28,6 +28,17 @@ fn take_descriptors(
         descriptors.insert(name.clone(), crate::buffers::take(id)?);
     }
     Ok(descriptors)
+}
+
+/// The instance a completion is addressed to. A missing key means the root, which is how every
+/// effect without an `instance` of its own comes back; anything that is not a usable path is
+/// refused rather than silently read as the root.
+fn take_instance(request: &Value) -> Result<String, String> {
+    match request.get("instance") {
+        None => Ok(String::new()),
+        Some(Value::String(path)) if composition::valid_instance_path(path) => Ok(path.clone()),
+        _ => Err("Invalid component instance".into()),
+    }
 }
 
 fn execute(request: Value) -> Result<Value, String> {
@@ -85,19 +96,21 @@ fn execute(request: Value) -> Result<Value, String> {
             let runtime = slot.as_mut().ok_or("No screen loaded")?;
             let channel = match request["op"].as_str() {Some("storage_result")=>"Storage",Some("file_result")=>"File",Some("rpc_result")=>"RPC",Some("dialog_result")=>"Dialog",_=>"HTTP"};
             let id = request.get("id").and_then(Value::as_u64).ok_or_else(|| format!("Missing {channel} request id"))?;
+            let instance = take_instance(&request)?;
             let ok = request.get("ok").and_then(Value::as_bool).ok_or_else(|| format!("Missing {channel} result ok"))?;
             let error = request.get("error").and_then(Value::as_str).unwrap_or("");
             if error.len() > 2048 { return Err(format!("{channel} error exceeds 2048 bytes")); }
             let response=json!({"ok":ok,"data":request.get("data").cloned().unwrap_or(Value::Null),"error":error});
             runtime.with_clock(clock, |runtime| {
-            if request["op"]=="storage_result" {runtime.complete_storage(id,response)?;}
-            else if request["op"]=="dialog_result" {runtime.complete_dialog(id,response)?;}
+            let completion = if request["op"]=="storage_result" {Completion::Storage{id,response}}
+            else if request["op"]=="dialog_result" {Completion::Dialog{id,response}}
             else if request["op"]=="file_result" || request["op"]=="rpc_result" {
                 let buffer = request.get("buffer").map(|v| v.as_u64().filter(|id| *id>0 && *id<=u32::MAX as u64).map(|id| id as u32).ok_or("Invalid buffer id")).transpose()?;
                 if !ok && buffer.is_some() { return Err("Failed completion must not carry a binary buffer".into()); }
-                if request["op"]=="file_result" {runtime.complete_file(id,response,buffer)?;}
-                else {runtime.complete_rpc(id,response,buffer)?;}
-            } else {runtime.complete_http(id,response)?;}
+                if request["op"]=="file_result" {Completion::File{id,response,buffer}}
+                else {Completion::Rpc{id,response,buffer}}
+            } else {Completion::Http{id,response}};
+            runtime.complete(&instance, completion)?;
             result(runtime)
             })
         }),
@@ -105,9 +118,10 @@ fn execute(request: Value) -> Result<Value, String> {
             let mut slot = r.borrow_mut();
             let runtime = slot.as_mut().ok_or("No screen loaded")?;
             let id = request.get("id").and_then(Value::as_u64).ok_or("Missing host request id")?;
-            let response = request.get("data").cloned().ok_or("Missing host progress data")?;
+            let instance = take_instance(&request)?;
+            let data = request.get("data").cloned().ok_or("Missing host progress data")?;
             runtime.with_clock(clock, |runtime| {
-                runtime.progress_host(id, response)?;
+                runtime.complete(&instance, Completion::HostProgress { id, data })?;
                 result(runtime)
             })
         }),
@@ -115,13 +129,14 @@ fn execute(request: Value) -> Result<Value, String> {
             let mut slot = r.borrow_mut();
             let runtime = slot.as_mut().ok_or("No screen loaded")?;
             let id = request.get("id").and_then(Value::as_u64).ok_or("Missing host request id")?;
+            let instance = take_instance(&request)?;
             let response = json!({
                 "ok": request.get("ok").cloned().unwrap_or(Value::Null),
                 "data": request.get("data").cloned().unwrap_or(Value::Null),
                 "error": request.get("error").cloned().unwrap_or(Value::Null),
             });
             runtime.with_clock(clock, |runtime| {
-                runtime.complete_host(id, response)?;
+                runtime.complete(&instance, Completion::Host { id, response })?;
                 result(runtime)
             })
         }),

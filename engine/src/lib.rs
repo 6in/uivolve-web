@@ -381,6 +381,70 @@ pub struct Runtime {
     pub revision: u32,
 }
 
+/// The response of one effect, on its way back to the instance that queued it. `Runtime` takes
+/// the instance path next to it, so the host answers an effect with the two things the effect
+/// itself carried: its `instance` and its `id`.
+pub enum Completion {
+    Http {
+        id: u64,
+        response: Value,
+    },
+    Storage {
+        id: u64,
+        response: Value,
+    },
+    File {
+        id: u64,
+        response: Value,
+        buffer: Option<u32>,
+    },
+    Rpc {
+        id: u64,
+        response: Value,
+        buffer: Option<u32>,
+    },
+    Host {
+        id: u64,
+        response: Value,
+    },
+    HostProgress {
+        id: u64,
+        data: Value,
+    },
+    Dialog {
+        id: u64,
+        response: Value,
+    },
+}
+
+/// What the five own channels of one instance queued during a handler, checked by `prepare` and
+/// waiting for the whole screen to pass before any of them is committed.
+struct Queued {
+    http: Vec<String>,
+    host: Vec<host::Intent>,
+    storage: Vec<storage::Intent>,
+    files: Vec<files::Intent>,
+    rpc: Vec<rpc::Intent>,
+}
+
+impl Queued {
+    fn is_empty(&self) -> bool {
+        self.http.is_empty()
+            && self.host.is_empty()
+            && self.storage.is_empty()
+            && self.files.is_empty()
+            && self.rpc.is_empty()
+    }
+
+    /// The binary bytes and buffer count this instance would hand out, for the screen-wide
+    /// budget `buffers::capacity` enforces across every instance together.
+    fn size(&self) -> (usize, usize) {
+        let (file_bytes, file_count) = files::Requests::size(&self.files);
+        let (rpc_bytes, rpc_count) = rpc::Requests::size(&self.rpc);
+        (file_bytes + rpc_bytes, file_count + rpc_count)
+    }
+}
+
 /// Everything a component package needs to become an instance: what `load_with_bundle` is
 /// handed for each declaration URL of the screen.
 pub struct Bundle {
@@ -853,110 +917,19 @@ impl Runtime {
     }
 
     pub fn progress_host(&mut self, id: u64, response: Value) -> Result<(), String> {
-        let name = self.root.host.progress(id, &response)?;
-        let handler = self.root.package.operations[&name].options["progressHandler"]
-            .as_str()
-            .ok_or("Host operation has no progress handler")?
-            .to_string();
-        self.pages.clear();
-        self.clear_queues();
-        self.dialogs.clear();
-        let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
-        let next = self
-            .root
-            .engine
-            .call_fn(
-                &mut Scope::new(),
-                &self.root.ast,
-                &handler,
-                (self.root.state.clone(), response),
-            )
-            .map_err(|e| {
-                format!(
-                    "{} / host progress {} / {}: {e}",
-                    self.root.package.script, name, handler
-                )
-            })?;
-        self.commit_state(next)
+        self.complete("", Completion::HostProgress { id, data: response })
     }
 
     pub fn complete_host(&mut self, id: u64, response: Value) -> Result<(), String> {
-        host::validate_result(&response)?;
-        let name = self.root.host.consume(id)?;
-        self.pages.clear();
-        self.clear_queues();
-        self.dialogs.clear();
-        let handler = &self.root.package.operations[&name].handler;
-        let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
-        let next = self
-            .root
-            .engine
-            .call_fn(
-                &mut Scope::new(),
-                &self.root.ast,
-                handler,
-                (self.root.state.clone(), response),
-            )
-            .map_err(|e| {
-                format!(
-                    "{} / host {} / {}: {e}",
-                    self.root.package.script, name, handler
-                )
-            })?;
-        self.commit_state(next)
+        self.complete("", Completion::Host { id, response })
     }
 
     pub fn complete_http(&mut self, id: u64, response: Value) -> Result<(), String> {
-        self.pages.clear();
-        let name = self.root.http.consume(id)?;
-        self.clear_queues();
-        self.dialogs.clear();
-        let handler = &self.root.package.requests[&name].handler;
-        let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
-        // Use current state, including edits made while the HTTP request was in flight.
-        let next = self
-            .root
-            .engine
-            .call_fn(
-                &mut Scope::new(),
-                &self.root.ast,
-                handler,
-                (self.root.state.clone(), response),
-            )
-            .map_err(|e| {
-                format!(
-                    "{} / HTTP {} / {}: {e}",
-                    self.root.package.script, name, handler
-                )
-            })?;
-        self.commit_state(next)
+        self.complete("", Completion::Http { id, response })
     }
 
-    pub fn complete_storage(&mut self, id: u64, mut response: Value) -> Result<(), String> {
-        self.pages.clear();
-        let (name, operation) = self.root.storage.consume(id)?;
-        self.clear_queues();
-        self.dialogs.clear();
-        response["operation"] = serde_json::to_value(operation).map_err(|e| e.to_string())?;
-        response["request"] = json!(name);
-        let handler = &self.root.package.storage[&name].handler;
-        let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
-        let next = self
-            .root
-            .engine
-            .call_fn(
-                &mut Scope::new(),
-                &self.root.ast,
-                handler,
-                (self.root.state.clone(), response),
-            )
-            .map_err(|e| {
-                format!(
-                    "{} / storage {} / {}: {e}",
-                    self.root.package.script, name, handler
-                )
-            })?;
-        self.commit_state(next)
+    pub fn complete_storage(&mut self, id: u64, response: Value) -> Result<(), String> {
+        self.complete("", Completion::Storage { id, response })
     }
 
     pub fn complete_file(
@@ -965,84 +938,92 @@ impl Runtime {
         response: Value,
         buffer: Option<u32>,
     ) -> Result<(), String> {
-        self.pages.clear();
-        self.clear_queues();
-        self.dialogs.clear();
-        let mut response: rhai::Map = rhai::serde::to_dynamic(response)
-            .map_err(|e| e.to_string())?
-            .cast();
-        let name = self.root.files.consume(id, &mut response, buffer)?;
-        let handler = &self.root.package.files[&name].handler;
-        let next = self
-            .root
-            .engine
-            .call_fn(
-                &mut Scope::new(),
-                &self.root.ast,
-                handler,
-                (self.root.state.clone(), Dynamic::from_map(response)),
-            )
-            .map_err(|e| {
-                format!(
-                    "{} / file {} / {}: {e}",
-                    self.root.package.script, name, handler
-                )
-            })?;
-        self.commit_state(next)
+        self.complete(
+            "",
+            Completion::File {
+                id,
+                response,
+                buffer,
+            },
+        )
     }
 
     pub fn complete_rpc(
         &mut self,
         id: u64,
-        mut response: Value,
+        response: Value,
         buffer: Option<u32>,
+    ) -> Result<(), String> {
+        self.complete(
+            "",
+            Completion::Rpc {
+                id,
+                response,
+                buffer,
+            },
+        )
+    }
+
+    /// Answering a dialog without naming an instance: the queue is the screen's, so the request
+    /// alone says which instance asked. This is how `dispatch` delivers `:dialog:{id}:ok`.
+    pub fn complete_dialog(&mut self, id: u64, response: Value) -> Result<(), String> {
+        self.complete_at("", Completion::Dialog { id, response }, None)
+    }
+
+    /// Deliver the response of one effect to the instance that queued it. `instance` is the
+    /// prefixed itemId path the effect carried, the empty path being the root.
+    pub fn complete(&mut self, instance: &str, completion: Completion) -> Result<(), String> {
+        self.complete_at(instance, completion, Some(instance))
+    }
+
+    /// `expected` is what a dialog completion must match: the host names the instance it read
+    /// off the effect, so naming the wrong one may not swallow somebody else's dialog.
+    fn complete_at(
+        &mut self,
+        instance: &str,
+        completion: Completion,
+        expected: Option<&str>,
     ) -> Result<(), String> {
         self.pages.clear();
         self.clear_queues();
         self.dialogs.clear();
-        let name = self.root.rpc.consume(id, &mut response, buffer)?;
-        let handler = &self.root.package.rpc[&name].handler;
-        let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
-        let next = self
-            .root
-            .engine
-            .call_fn(
-                &mut Scope::new(),
-                &self.root.ast,
-                handler,
-                (self.root.state.clone(), response),
-            )
-            .map_err(|e| {
-                format!(
-                    "{} / RPC {} / {}: {e}",
-                    self.root.package.script, name, handler
-                )
-            })?;
-        self.commit_state(next)
-    }
-    pub fn complete_dialog(&mut self, id: u64, mut response: Value) -> Result<(), String> {
-        self.pages.clear();
-        self.clear_queues();
-        self.dialogs.clear();
-        let (handler, _origin) = self.dialogs.consume(id, &mut response, None)?;
-        let next = if handler.is_empty() {
-            self.root.state.clone()
-        } else {
-            let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
-            self.root
-                .engine
-                .call_fn(
-                    &mut Scope::new(),
-                    &self.root.ast,
-                    &handler,
-                    (self.root.state.clone(), response),
-                )
-                .map_err(|e| format!("{} / dialog / {}: {e}", self.root.package.script, handler))?
+        if !instance.is_empty() && !self.components.contains_key(instance) {
+            return Err(format!("Unknown component instance: {instance}"));
+        }
+        let (path, next) = match completion {
+            // The dialog stack belongs to the screen, so the request itself — not the caller —
+            // decides which instance runs the handler.
+            Completion::Dialog { id, mut response } => {
+                let (handler, origin) = self
+                    .dialogs
+                    .consume(id, &mut response, expected)
+                    .map_err(|error| composition::blame(instance, error))?;
+                let next = self
+                    .instance(&origin)?
+                    .complete_dialog(&handler, response)
+                    .map_err(|error| composition::blame(&origin, error))?;
+                (origin, next)
+            }
+            completion => {
+                let target = match instance.is_empty() {
+                    true => &mut self.root,
+                    false => self
+                        .components
+                        .get_mut(instance)
+                        .expect("the instance resolved above"),
+                };
+                let next = target
+                    .complete(completion)
+                    .map_err(|error| composition::blame(instance, error))?;
+                (instance.to_owned(), next)
+            }
         };
-        self.commit_state(next)
+        self.commit_event(path, next)
     }
+
     pub fn take_effects(&mut self) -> Vec<Value> {
-        self.root
+        let mut effects: Vec<Value> = self
+            .root
             .http
             .take()
             .into_iter()
@@ -1059,13 +1040,18 @@ impl Runtime {
             .chain(self.dialogs.take())
             .chain(self.pages.take())
             .chain(self.root.host.take())
-            .collect()
-    }
-
-    /// Commit a root state the root itself produced: an event of its own, or the response of an
-    /// effect it queued. The configurations of its components follow the new state either way.
-    fn commit_state(&mut self, next: Dynamic) -> Result<(), String> {
-        self.commit_event(String::new(), next)
+            .collect();
+        // The effects of the children follow the root's, each naming the instance the host has
+        // to send the response back to. The root's carry no `instance` at all.
+        for (path, instance) in &mut self.components {
+            effects.extend(instance.take_effects().into_iter().map(|mut effect| {
+                if let Some(object) = effect.as_object_mut() {
+                    object.insert("instance".to_owned(), json!(path));
+                }
+                effect
+            }));
+        }
+        effects
     }
 
     /// Commit one event across the instances it moved: everything is checked before anything is
@@ -1089,11 +1075,7 @@ impl Runtime {
                 .map_err(|e| format!("Component {key}: {e}"))?;
             prepared.push((key, state, child_ui));
         }
-        let names = self.root.http.prepare(&self.root.package.requests)?;
-        let host_intents = self.root.host.prepare(&self.root.package.operations)?;
-        let intents = self.root.storage.prepare(&self.root.package.storage)?;
-        let file_intents = self.root.files.prepare(&self.root.package.files)?;
-        let rpc_intents = self.root.rpc.prepare()?;
+        let queued = self.root.prepare_effects()?;
         let dialog_intents = self
             .dialogs
             .prepare(&|origin| self.ast_of(origin))
@@ -1102,29 +1084,33 @@ impl Runtime {
             .pages
             .prepare(&|origin| self.pages_of(origin))
             .map_err(|(origin, error)| composition::blame(&origin, error))?;
+        // Every instance queues into channels of its own, but the screen still moves as one: the
+        // exclusion below and the buffer budget count all of them together.
+        let mut child_queued = Vec::new();
+        for (path, instance) in &self.components {
+            let queued = instance
+                .prepare_effects()
+                .map_err(|error| composition::blame(path, error))?;
+            child_queued.push((path.clone(), queued));
+        }
         if !page_intents.is_empty()
-            && (!names.is_empty()
-                || !intents.is_empty()
-                || !file_intents.is_empty()
-                || !rpc_intents.is_empty()
+            && (!queued.is_empty()
                 || !dialog_intents.is_empty()
-                || !host_intents.is_empty())
+                || child_queued.iter().any(|(_, queued)| !queued.is_empty()))
         {
             return Err(
                 "Navigation cannot be combined with other effects in the same handler".into(),
             );
         }
-        let (file_bytes, file_count) = files::Requests::size(&file_intents);
-        let (rpc_bytes, rpc_count) = rpc::Requests::size(&rpc_intents);
-        buffers::capacity(file_bytes + rpc_bytes, file_count + rpc_count)?;
+        let (mut bytes, mut count) = queued.size();
+        for (_, queued) in &child_queued {
+            let (child_bytes, child_count) = queued.size();
+            bytes += child_bytes;
+            count += child_count;
+        }
+        buffers::capacity(bytes, count)?;
         self.root.apply(next, ui);
-        self.root.http.commit(names, &self.root.package.requests);
-        self.root.host.commit(host_intents);
-        self.root
-            .storage
-            .commit(intents, &self.root.package.storage);
-        self.root.files.commit(file_intents);
-        self.root.rpc.commit(rpc_intents, &self.root.package.rpc);
+        self.root.commit_effects(queued);
         self.dialogs.commit(dialog_intents);
         self.pages.commit(page_intents);
         for (key, state, ui) in prepared {
@@ -1132,6 +1118,12 @@ impl Runtime {
                 .get_mut(&key)
                 .expect("a component prepared above")
                 .apply(state, ui);
+        }
+        for (key, queued) in child_queued {
+            self.components
+                .get_mut(&key)
+                .expect("a component prepared above")
+                .commit_effects(queued);
         }
         self.revision += 1;
         Ok(())
@@ -1421,6 +1413,172 @@ impl instance::Instance {
             || navigation::hidden(path, state)
             || extras::hidden(path, state)
             || layouts::hidden(path, state)
+    }
+
+    /// The candidate state the response of one of this instance's own effects produces. Like
+    /// `run_event` it only runs the handler: the level above commits it across the screen, and
+    /// names this instance if it failed.
+    fn complete(&mut self, completion: Completion) -> Result<Dynamic, String> {
+        match completion {
+            Completion::HostProgress { id, data } => {
+                let name = self.host.progress(id, &data)?;
+                let handler = self.package.operations[&name].options["progressHandler"]
+                    .as_str()
+                    .ok_or("Host operation has no progress handler")?
+                    .to_string();
+                let response = rhai::serde::to_dynamic(data).map_err(|e| e.to_string())?;
+                self.engine
+                    .call_fn(
+                        &mut Scope::new(),
+                        &self.ast,
+                        &handler,
+                        (self.state.clone(), response),
+                    )
+                    .map_err(|e| {
+                        format!(
+                            "{} / host progress {} / {}: {e}",
+                            self.package.script, name, handler
+                        )
+                    })
+            }
+            Completion::Host { id, response } => {
+                host::validate_result(&response)?;
+                let name = self.host.consume(id)?;
+                let handler = &self.package.operations[&name].handler;
+                let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
+                self.engine
+                    .call_fn(
+                        &mut Scope::new(),
+                        &self.ast,
+                        handler,
+                        (self.state.clone(), response),
+                    )
+                    .map_err(|e| {
+                        format!("{} / host {} / {}: {e}", self.package.script, name, handler)
+                    })
+            }
+            Completion::Http { id, response } => {
+                let name = self.http.consume(id)?;
+                let handler = &self.package.requests[&name].handler;
+                let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
+                // Use current state, including edits made while the HTTP request was in flight.
+                self.engine
+                    .call_fn(
+                        &mut Scope::new(),
+                        &self.ast,
+                        handler,
+                        (self.state.clone(), response),
+                    )
+                    .map_err(|e| {
+                        format!("{} / HTTP {} / {}: {e}", self.package.script, name, handler)
+                    })
+            }
+            Completion::Storage { id, mut response } => {
+                let (name, operation) = self.storage.consume(id)?;
+                response["operation"] =
+                    serde_json::to_value(operation).map_err(|e| e.to_string())?;
+                response["request"] = json!(name);
+                let handler = &self.package.storage[&name].handler;
+                let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
+                self.engine
+                    .call_fn(
+                        &mut Scope::new(),
+                        &self.ast,
+                        handler,
+                        (self.state.clone(), response),
+                    )
+                    .map_err(|e| {
+                        format!(
+                            "{} / storage {} / {}: {e}",
+                            self.package.script, name, handler
+                        )
+                    })
+            }
+            Completion::File {
+                id,
+                response,
+                buffer,
+            } => {
+                let mut response: rhai::Map = rhai::serde::to_dynamic(response)
+                    .map_err(|e| e.to_string())?
+                    .cast();
+                let name = self.files.consume(id, &mut response, buffer)?;
+                let handler = &self.package.files[&name].handler;
+                self.engine
+                    .call_fn(
+                        &mut Scope::new(),
+                        &self.ast,
+                        handler,
+                        (self.state.clone(), Dynamic::from_map(response)),
+                    )
+                    .map_err(|e| {
+                        format!("{} / file {} / {}: {e}", self.package.script, name, handler)
+                    })
+            }
+            Completion::Rpc {
+                id,
+                mut response,
+                buffer,
+            } => {
+                let name = self.rpc.consume(id, &mut response, buffer)?;
+                let handler = &self.package.rpc[&name].handler;
+                let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
+                self.engine
+                    .call_fn(
+                        &mut Scope::new(),
+                        &self.ast,
+                        handler,
+                        (self.state.clone(), response),
+                    )
+                    .map_err(|e| {
+                        format!("{} / RPC {} / {}: {e}", self.package.script, name, handler)
+                    })
+            }
+            // The dialog queue belongs to the screen, not to an instance: `Runtime` consumes the
+            // request itself to learn who asked, then calls `complete_dialog` below.
+            Completion::Dialog { .. } => {
+                unreachable!("a dialog is routed by the instance that asked for it")
+            }
+        }
+    }
+
+    /// Run the completion handler a dialog this instance asked for named. An empty handler is
+    /// the `alert` case: the answer only closes the dialog.
+    fn complete_dialog(&self, handler: &str, response: Value) -> Result<Dynamic, String> {
+        if handler.is_empty() {
+            return Ok(self.state.clone());
+        }
+        let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
+        self.engine
+            .call_fn(
+                &mut Scope::new(),
+                &self.ast,
+                handler,
+                (self.state.clone(), response),
+            )
+            .map_err(|e| format!("{} / dialog / {}: {e}", self.package.script, handler))
+    }
+
+    /// `prepare` the five channels this instance owns. The error names nothing: the level above
+    /// decides whether to blame the instance.
+    fn prepare_effects(&self) -> Result<Queued, String> {
+        Ok(Queued {
+            http: self.http.prepare(&self.package.requests)?,
+            host: self.host.prepare(&self.package.operations)?,
+            storage: self.storage.prepare(&self.package.storage)?,
+            files: self.files.prepare(&self.package.files)?,
+            rpc: self.rpc.prepare()?,
+        })
+    }
+
+    /// Hand the channels what `prepare_effects` checked. Infallible like `apply`, and run in the
+    /// same pass: once the screen starts moving, no instance may fail any more.
+    fn commit_effects(&mut self, queued: Queued) {
+        self.http.commit(queued.http, &self.package.requests);
+        self.host.commit(queued.host);
+        self.storage.commit(queued.storage, &self.package.storage);
+        self.files.commit(queued.files);
+        self.rpc.commit(queued.rpc, &self.package.rpc);
     }
 
     /// Everything `commit_all` checks before any instance of a screen is moved: the candidate

@@ -203,6 +203,13 @@ pub fn blame(origin: &str, error: impl std::fmt::Display) -> String {
     }
 }
 
+/// Whether a path the host sent back with a completion could name a component instance: one or
+/// more non-empty itemId segments joined by `/`. The root is named by leaving the key out, not
+/// by an empty string, and `:` is rejected because the event targets of a screen use it.
+pub fn valid_instance_path(value: &str) -> bool {
+    !value.is_empty() && !value.contains(':') && value.split('/').all(|segment| !segment.is_empty())
+}
+
 /// The one declaration a child package still may not carry: `webmcp` publishes the screen-wide
 /// tool surface, which belongs to the root. Effects themselves are a child's to queue.
 pub fn reject_effect_declarations(package: &Package) -> Result<(), String> {

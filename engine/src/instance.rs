@@ -254,6 +254,26 @@ impl Instance {
         })
     }
 
+    /// The effects this instance committed, in the order the host is handed them. The queues a
+    /// whole screen shares (dialogs, pages) are not here: the root reports them once for
+    /// everybody, already tagged with the instance that asked.
+    pub(crate) fn take_effects(&mut self) -> Vec<Value> {
+        self.http
+            .take()
+            .into_iter()
+            .map(|effect| serde_json::to_value(effect).unwrap())
+            .chain(
+                self.storage
+                    .take()
+                    .into_iter()
+                    .map(|effect| serde_json::to_value(effect).unwrap()),
+            )
+            .chain(self.files.take())
+            .chain(self.rpc.take())
+            .chain(self.host.take())
+            .collect()
+    }
+
     /// Drop every queued-but-uncommitted request of this instance.
     pub(crate) fn clear_queues(&self) {
         self.http.clear();
