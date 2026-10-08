@@ -14,6 +14,7 @@ import { FileClient } from "./file-client.js";
 import { RpcClient } from "./rpc-client.js";
 import { PageEffects } from "./page-effects.js";
 import { packageFormat } from "./package-format.js";
+import { componentScope, instanceTable } from "./component-tree.js";
 
 function prepareScreen(definition, source, clock) {
   const screen = structuredClone(definition);
@@ -56,7 +57,11 @@ function resolveComponents(screen, source, bundled, clock) {
       if (!child)
         throw new Error(`コンポーネント ${name} の本体がありません（URLから読み込んでください）`);
       const prepared = prepareScreen(child.screen, href, clock);
-      resolved[href] = { screen: prepared, script: child.script };
+      resolved[href] = {
+        screen: prepared,
+        script: child.script,
+        descriptors: child.descriptors ?? {},
+      };
       visit(prepared, href);
     }
   };
@@ -92,9 +97,9 @@ export class UiRuntime {
     this.loadSequence = 0;
     this.frame = 0;
     this.surfaces = [];
-    const complete = (method) => (id, response) => {
+    const complete = (method) => (id, response, instance) => {
       this.assertActive();
-      const result = this.engine[method](id, response);
+      const result = this.engine[method](id, response, instance);
       this.updateState(result);
       this.options.onError?.(null);
       this.render();
@@ -351,11 +356,26 @@ export class UiRuntime {
     const clock = engine.readClock();
     screen = prepareScreen(screen, source, clock);
     const bundled = resolveComponents(screen, source, components, clock);
+    // Every Instance the engine will build is routed from here: the host operations it may run,
+    // the url its relative requests resolve against and the storage scope it keeps data under.
+    // The host definitions are validated before `load` so a refusal leaves the old screen intact.
+    const instances = instanceTable(screen, source.href, bundled);
     const start = performance.now();
-    const hostOperations = this.hostEffects.prepare(screen.operations, source, {
-      scope: screen.id,
-      files: screen.files ?? {},
-    });
+    const hostOperations = new Map();
+    const urls = new Map();
+    const scopes = new Map();
+    for (const [path, entry] of instances) {
+      const scope = componentScope(screen.id, path);
+      urls.set(path, entry.url);
+      scopes.set(path, scope);
+      hostOperations.set(
+        path,
+        this.hostEffects.prepare(entry.screen.operations, entry.url, {
+          scope,
+          files: entry.screen.files ?? {},
+        }),
+      );
+    }
     const result = engine.load(screen, script, descriptors, { clock, components: bundled });
     const duration = performance.now() - start;
     this.engine = engine;
@@ -365,12 +385,12 @@ export class UiRuntime {
     this.components = bundled;
     this.screenToken = crypto.randomUUID();
     this.packageUrl = source;
-    this.hostEffects.reset(hostOperations);
-    this.httpEffects.reset(source);
-    this.storageEffects.reset(screen.id);
-    this.fileEffects.reset(screen.id);
-    this.rpcEffects.reset(source);
-    this.pageEffects.reset(source);
+    this.hostEffects.resetInstances(hostOperations);
+    this.httpEffects.resetInstances(urls);
+    this.storageEffects.resetInstances(scopes);
+    this.fileEffects.resetInstances(scopes);
+    this.rpcEffects.resetInstances(urls);
+    this.pageEffects.resetInstances(urls);
     this.updateState(result);
     this.render();
     this.options.onError?.(null);

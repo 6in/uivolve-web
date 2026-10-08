@@ -89,6 +89,7 @@ it.each(
       expect.objectContaining({
         error: expect.objectContaining({ code: "BUSY" }),
       }),
+      undefined,
     );
     complete.mockClear();
     release();
@@ -361,6 +362,7 @@ it("validates host transferLimit and snapshots file declarations in prepared con
   expect(complete).toHaveBeenCalledWith(
     1,
     expect.objectContaining({ ok: true, data: expect.objectContaining({ body: null }) }),
+    undefined,
   );
   effects.dispose();
 });

@@ -2,7 +2,8 @@ import { StorageClient } from "./storage-client.js";
 
 export class StorageEffects {
   #generation = 0;
-  #scope;
+  // Instance path ("" is root) -> scope string (storage / file) or base URL (rpc).
+  #scopes = new Map();
   #controllers = new Set();
   constructor({
     client = new StorageClient(),
@@ -19,16 +20,26 @@ export class StorageEffects {
     this.timeout = timeout;
     this.label = label;
   }
-  reset(scope) {
+  resetInstances(scopes) {
     this.#generation++;
     for (const controller of this.#controllers) controller.abort();
     this.#controllers.clear();
-    this.#scope = scope;
+    this.#scopes = scopes;
+  }
+  reset(scope) {
+    this.resetInstances(new Map([["", scope]]));
   }
   run(effects = []) {
     return Promise.all(effects.map((effect) => this.#request(effect)));
   }
   async #request(effect) {
+    const instance = effect.instance ?? "";
+    const scope = this.#scopes.get(instance);
+    // An unregistered Instance means the screen was replaced or the table is stale; never hand it to WASM.
+    if (scope === undefined) {
+      this.onError(new Error(`コンポーネント ${instance} の配送先が未登録です`));
+      return;
+    }
     const generation = this.#generation;
     const controller = new AbortController();
     this.#controllers.add(controller);
@@ -41,7 +52,7 @@ export class StorageEffects {
     let response;
     try {
       const data = await Promise.race([
-        this.client.execute(this.#scope, effect, { signal: controller.signal }),
+        this.client.execute(scope, effect, { signal: controller.signal }),
         cancelled,
       ]);
       controller.signal.throwIfAborted();
@@ -61,7 +72,7 @@ export class StorageEffects {
     }
     if (generation !== this.#generation) return;
     try {
-      const next = this.complete(effect.id, response);
+      const next = this.complete(effect.id, response, effect.instance);
       await this.runNext(next.effects);
     } catch (exception) {
       this.onError(exception);

@@ -290,6 +290,42 @@ describe("ApplicationLoader の components 取得", () => {
     );
   });
 
+  // A child resolves its RPC descriptor against its own URL, so the bytes travel with its entry.
+  it("keeps the descriptors a child downloaded on its entry of the components map", async () => {
+    const bytes = new Uint8Array(
+      await readFile(new URL("../public/screens/rpc-demo.pb", import.meta.url)),
+    );
+    const f = fixture([
+      [
+        "parent.json",
+        screen("parent", {
+          components: { part: { url: "part.json" } },
+          ui: { xtype: "container", items: [node("part")] },
+        }),
+      ],
+      [
+        "part.json",
+        screen("part", {
+          rpc: {
+            echo: {
+              url: "https://rpc.test/uivolve.demo.EchoService/Echo",
+              descriptor: "rpc-demo.pb",
+              service: "uivolve.demo.EchoService",
+              method: "Echo",
+              protocol: "connect",
+              handler: "echoDone",
+            },
+          },
+        }),
+        "fn init(s) { s } fn echoDone(s, r) { s }",
+      ],
+    ]);
+    f.responses.set(href("rpc-demo.pb"), bytes);
+    const candidate = await f.loader.fetch(href("parent.json"));
+    expect(candidate.components[href("part.json")].descriptors).toEqual({ "rpc-demo.pb": bytes });
+    expect(f.reads.get(href("rpc-demo.pb"))).toBe(1);
+  });
+
   it("leaves the scope rules to a child that declares neither storage nor files", async () => {
     const f = fixture([
       [

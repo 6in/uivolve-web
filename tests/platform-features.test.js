@@ -331,7 +331,7 @@ it("routes chained effects and drops late storage responses after screen replace
   const current = host.run([{ id: 2 }]);
   resolve({ name: "new" });
   await current;
-  expect(complete).toHaveBeenCalledWith(2, success({ name: "new" }));
+  expect(complete).toHaveBeenCalledWith(2, success({ name: "new" }), undefined);
   expect(runNext).toHaveBeenCalledWith([{ url: "data.json" }]);
   expect(onError).not.toHaveBeenCalled();
 });
@@ -376,11 +376,15 @@ it("times out storage even when the browser operation cannot immediately be abor
   });
   host.reset("page");
   await host.run([{ id: 1 }]);
-  expect(complete).toHaveBeenCalledWith(1, {
-    ok: false,
-    data: null,
-    error: "保存操作がタイムアウトしました",
-  });
+  expect(complete).toHaveBeenCalledWith(
+    1,
+    {
+      ok: false,
+      data: null,
+      error: "保存操作がタイムアウトしました",
+    },
+    undefined,
+  );
   expect(onError).not.toHaveBeenCalled();
 });
 it("waits for OPFS close, treats absent files as null and aborts before committing a cancelled write", async () => {

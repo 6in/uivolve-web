@@ -13,6 +13,13 @@ const clockOperations = new Set([
   "dialog_result",
 ]);
 
+// `instance` is the path of the child Instance a completion belongs to; the root reports none.
+// The key is added only when one was given, so a completion the host could not attribute never
+// reaches the engine as `instance: null`.
+function withInstance(request, instance) {
+  return instance === undefined ? request : { ...request, instance };
+}
+
 export class WasmEngine {
   constructor(exports, bytes, { clockProvider = browserClock } = {}) {
     if (typeof clockProvider !== "function") throw new Error("clockProviderには関数が必要です");
@@ -68,17 +75,32 @@ export class WasmEngine {
   }
 
   load(screen, script, descriptors = {}, options = {}) {
-    const ids = Object.create(null);
-    try {
-      for (const key of new Set(Object.values(screen.rpc ?? {}).map((r) => r.descriptor))) {
-        if (!(descriptors[key] instanceof Uint8Array))
+    // Every buffer taken for the root or for a child is released by the one `finally` below,
+    // so the same descriptor url bundled with two packages is held — and freed — twice.
+    const allocated = [];
+    const store = (definition, available) => {
+      const ids = Object.create(null);
+      for (const key of new Set(Object.values(definition.rpc ?? {}).map((r) => r.descriptor))) {
+        if (!(available[key] instanceof Uint8Array))
           throw new Error(`Descriptorがありません: ${key}`);
-        ids[key] = this.storeBuffer(descriptors[key]);
+        ids[key] = this.storeBuffer(available[key]);
+        allocated.push(ids[key]);
       }
-      const entries = Object.entries(options.components ?? {}).map(([href, child]) => [
-        href,
-        { package: child.screen, script: child.script },
-      ]);
+      return ids;
+    };
+    try {
+      const ids = store(screen, descriptors);
+      const entries = Object.entries(options.components ?? {}).map(([href, child]) => {
+        const childIds = store(child.screen, child.descriptors ?? {});
+        return [
+          href,
+          {
+            package: child.screen,
+            script: child.script,
+            ...(Object.keys(childIds).length ? { descriptors: childIds } : {}),
+          },
+        ];
+      });
       const request = {
         op: "load",
         package: screen,
@@ -104,26 +126,26 @@ export class WasmEngine {
       }
       return this.call(request);
     } finally {
-      for (const id of Object.values(ids)) this.releaseBuffer(id);
+      for (const id of allocated) this.releaseBuffer(id);
     }
   }
   dispatch(target, payload = {}) {
     return this.call({ op: "event", target, payload });
   }
-  progressHost(id, data) {
-    return this.call({ op: "host_progress", id, data });
+  progressHost(id, data, instance) {
+    return this.call(withInstance({ op: "host_progress", id, data }, instance));
   }
-  completeHost(id, response) {
-    return this.call({ ...response, op: "host_result", id });
+  completeHost(id, response, instance) {
+    return this.call(withInstance({ ...response, op: "host_result", id }, instance));
   }
-  completeHttp(id, response) {
-    return this.call({ op: "http_result", id, ...response });
+  completeHttp(id, response, instance) {
+    return this.call(withInstance({ op: "http_result", id, ...response }, instance));
   }
-  completeStorage(id, response) {
-    return this.call({ op: "storage_result", id, ...response });
+  completeStorage(id, response, instance) {
+    return this.call(withInstance({ op: "storage_result", id, ...response }, instance));
   }
-  completeDialog(id, response) {
-    return this.call({ op: "dialog_result", id, ...response });
+  completeDialog(id, response, instance) {
+    return this.call(withInstance({ op: "dialog_result", id, ...response }, instance));
   }
   storeBuffer(bytes) {
     if (!(bytes instanceof Uint8Array) || bytes.length > 1_000_000)
@@ -146,17 +168,19 @@ export class WasmEngine {
   releaseBuffer(id) {
     this.exports.buffer_free(id);
   }
-  completeFile(id, response) {
-    return this.completeBinary("file_result", id, response);
+  completeFile(id, response, instance) {
+    return this.completeBinary("file_result", id, response, instance);
   }
-  completeRpc(id, response) {
-    return this.completeBinary("rpc_result", id, response);
+  completeRpc(id, response, instance) {
+    return this.completeBinary("rpc_result", id, response, instance);
   }
-  completeBinary(op, id, response) {
+  completeBinary(op, id, response, instance) {
     const buffer =
       response.data instanceof Uint8Array ? this.storeBuffer(response.data) : undefined;
     try {
-      return this.call({ op, id, ...response, ...(buffer ? { data: null, buffer } : {}) });
+      return this.call(
+        withInstance({ op, id, ...response, ...(buffer ? { data: null, buffer } : {}) }, instance),
+      );
     } finally {
       if (buffer) this.releaseBuffer(buffer);
     }

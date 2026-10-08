@@ -138,6 +138,7 @@ export class ApplicationLoader {
         packages[child.href] = {
           screen: downloaded.screen,
           script: decoder.decode(downloaded.script),
+          descriptors: downloaded.descriptors,
         };
         await visit(downloaded.screen, child, depth + 1, [...stack, child.href]);
       }

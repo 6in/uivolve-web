@@ -23,9 +23,12 @@ function failure(error) {
 export class HostEffects {
   #adapters = new Map();
   #connections;
+  // Keyed by Instance path ("" = root): path -> name -> prepared operation.
   #operations = new Map();
+  // Keyed by Instance path ("" = root): path -> effect id -> active request.
   #active = new Map();
-  #lastId = 0;
+  // Keyed by Instance path ("" = root): path -> last seen effect id.
+  #lastId = new Map();
   #generation = 0;
   #delivery = Promise.resolve();
   #disposed = false;
@@ -89,13 +92,19 @@ export class HostEffects {
   }
 
   reset(prepared = new Map()) {
+    this.resetInstances(new Map([["", prepared]]));
+  }
+
+  resetInstances(prepared = new Map()) {
     this.#generation++;
-    for (const active of this.#active.values()) {
-      active.stopProgress();
-      active.controller.abort();
+    for (const byId of this.#active.values()) {
+      for (const active of byId.values()) {
+        active.stopProgress();
+        active.controller.abort();
+      }
     }
     this.#active.clear();
-    this.#lastId = 0;
+    this.#lastId.clear();
     this.#operations = prepared;
   }
 
@@ -105,8 +114,9 @@ export class HostEffects {
   }
 
   async #request(effect) {
+    const path = effect.instance ?? "";
     if (effect.kind === "host_cancel" && effect.v === 1 && safeName.test(effect.operation)) {
-      for (const active of this.#active.values()) {
+      for (const active of this.#active.get(path)?.values() ?? []) {
         if (active.operation === effect.operation) {
           active.stopProgress();
           active.controller.abort();
@@ -123,8 +133,8 @@ export class HostEffects {
       this.onError(new Error("Invalid host effect"));
       return;
     }
-    if (effect.id <= this.#lastId) return;
-    this.#lastId = effect.id;
+    if (effect.id <= (this.#lastId.get(path) ?? 0)) return;
+    this.#lastId.set(path, effect.id);
     const generation = this.#generation;
     const controller = new AbortController();
     let progressTimer;
@@ -144,7 +154,7 @@ export class HostEffects {
       const delivery = this.#delivery.then(() => {
         if (ended || this.#disposed || generation !== this.#generation) return;
         try {
-          return this.progress?.(effect.id, data);
+          return this.progress?.(effect.id, data, effect.instance);
         } catch (error) {
           this.onError(error);
         }
@@ -170,10 +180,15 @@ export class HostEffects {
       }
     };
     const active = { controller, operation: effect.operation, stopProgress, promise: null };
-    this.#active.set(effect.id, active);
+    let activeById = this.#active.get(path);
+    if (!activeById) {
+      activeById = new Map();
+      this.#active.set(path, activeById);
+    }
+    activeById.set(effect.id, active);
     let timer;
     let response;
-    const resolved = this.#operations.get(effect.operation);
+    const resolved = this.#operations.get(path)?.get(effect.operation);
     const transfer =
       resolved?.connection.adapter === "http" &&
       ["http.download", "http.upload", "http.multipart"].includes(resolved.operation.action);
@@ -181,7 +196,7 @@ export class HostEffects {
     let cancellation;
     try {
       if (!resolved) throw hostError("UNSUPPORTED", "ホスト操作が登録されていません");
-      if (this.#active.size > 8) throw hostError("LIMIT", "同時ホスト操作は8件までです");
+      if (activeById.size > 8) throw hostError("LIMIT", "同時ホスト操作は8件までです");
       const timeout = new Promise((_, reject) => {
         timer = setTimeout(
           () => {
@@ -246,13 +261,13 @@ export class HostEffects {
     } finally {
       stopProgress();
       clearTimeout(timer);
-      if (generation === this.#generation) this.#active.delete(effect.id);
+      if (generation === this.#generation) this.#active.get(path)?.delete(effect.id);
     }
     // Delivery is serialized, but child effects are run outside this queue to avoid deadlock.
     const delivery = this.#delivery.then(() => {
       if (this.#disposed || generation !== this.#generation) return;
       try {
-        return this.complete(effect.id, response);
+        return this.complete(effect.id, response, effect.instance);
       } catch (error) {
         this.onError(
           Object.assign(new Error(`ホスト完了handlerに失敗しました: ${error.message}`), {
