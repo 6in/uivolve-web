@@ -2,6 +2,7 @@ use rhai::{Dynamic, Engine, Scope, AST};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::rc::Rc;
 mod abi;
 pub use abi::{input_alloc, input_free, request, response_len};
 mod theme;
@@ -1150,7 +1151,18 @@ impl Runtime {
         }
         let mut instances = BTreeMap::new();
         for (path, instance) in &self.components {
-            instances.insert(path.clone(), (instance.ui.clone(), instance.state_json()?));
+            // A child only moves through `apply`, which clears this; until then every layout
+            // pass reuses the tree and the serialized state the first one built.
+            let mut snapshot = instance.snapshot.borrow_mut();
+            let shared = match snapshot.as_ref() {
+                Some(shared) => shared.clone(),
+                None => {
+                    let shared = Rc::new((instance.ui.clone(), instance.state_json()?));
+                    *snapshot = Some(shared.clone());
+                    shared
+                }
+            };
+            instances.insert(path.clone(), shared);
         }
         Ok(Some(composition::enter_layout(instances)))
     }
@@ -1622,6 +1634,7 @@ impl instance::Instance {
     fn apply(&mut self, state: Dynamic, ui: Node) {
         self.state = state;
         self.ui = ui;
+        *self.snapshot.borrow_mut() = None;
     }
 }
 

@@ -5,7 +5,9 @@ use super::{
 };
 use rhai::{Dynamic, Engine, Scope, AST};
 use serde_json::Value;
+use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::rc::Rc;
 
 /// One loaded screen package: its own script engine, resolved component tree, state and
 /// request queues. The queues shared across a whole screen (dialogs, pages) stay on `Runtime`.
@@ -26,6 +28,9 @@ pub(crate) struct Instance {
     pub(crate) rpc: rpc::Requests,
     /// What a child handler announced to its parent. Never registered on a root engine.
     pub(crate) emits: composition::Emits,
+    /// Ui and serialized state as the last layout pass saw them. `apply` is the only thing that
+    /// moves an instance, so it is also the only thing that has to clear this.
+    pub(crate) snapshot: RefCell<Option<Rc<(Node, Value)>>>,
 }
 
 impl Instance {
@@ -251,6 +256,7 @@ impl Instance {
             files,
             rpc,
             emits,
+            snapshot: RefCell::new(None),
         })
     }
 

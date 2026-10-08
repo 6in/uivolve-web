@@ -315,11 +315,7 @@ impl Drop for LayoutScope {
 }
 
 /// Open a layout scope over the instance tree of a screen.
-pub fn enter_layout(instances: BTreeMap<String, (Node, Value)>) -> LayoutScope {
-    let instances = instances
-        .into_iter()
-        .map(|(path, instance)| (path, Rc::new(instance)))
-        .collect();
+pub fn enter_layout(instances: BTreeMap<String, Rc<(Node, Value)>>) -> LayoutScope {
     LAYOUT.with(|scope| {
         *scope.borrow_mut() = Some(Scope {
             instances,

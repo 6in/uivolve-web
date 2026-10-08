@@ -1161,7 +1161,9 @@ fn list_bundle() -> HashMap<String, (Package, String)> {
 fn set_state(instance: &mut instance::Instance, key: &str, value: Value) {
     let mut state = instance.state_json().expect("an instance state");
     state[key] = value;
-    instance.state = rhai::serde::to_dynamic(state).expect("a state map");
+    let next = rhai::serde::to_dynamic(state).expect("a state map");
+    let ui = instance.ui.clone();
+    instance.apply(next, ui);
 }
 
 fn keys(scene: &Scene) -> Vec<String> {
@@ -1384,6 +1386,92 @@ fn a_composed_screen_lays_out_at_every_viewport_width() {
     }
     // The scope of a finished layout is closed, so no instance tree outlives its pass.
     assert!(composition::with_component("b", |_, _| ()).is_none());
+}
+
+/// The ui and state a layout pass last snapshotted for one instance, or `None` while no pass
+/// has serialized it yet. Identity is the point: the `Rc` tells reuse from re-serialization.
+fn snapshot_of(runtime: &Runtime, path: &str) -> Option<Rc<(Node, Value)>> {
+    runtime.components[path].snapshot.borrow().clone()
+}
+
+#[test]
+fn two_layout_passes_over_the_same_state_reuse_the_snapshot_of_every_child() {
+    let runtime = reporting_screen(json!([
+        filter_field(),
+        component("report", "bound", json!({"query": {"bind": "query"}})),
+        component("report", "fixed", json!({"status": "受注"})),
+    ]));
+    // Loading serializes nothing for the layout: the first pass is what fills the cache.
+    assert!(snapshot_of(&runtime, "bound").is_none());
+    assert!(snapshot_of(&runtime, "fixed").is_none());
+    runtime.layout(800.0).expect("a scene");
+    let bound = snapshot_of(&runtime, "bound").expect("bound after one pass");
+    let fixed = snapshot_of(&runtime, "fixed").expect("fixed after one pass");
+    runtime.layout(640.0).expect("a scene");
+    for (path, before) in [("bound", &bound), ("fixed", &fixed)] {
+        let after = snapshot_of(&runtime, path).expect(path);
+        assert!(Rc::ptr_eq(before, &after), "{path} was serialized again");
+    }
+}
+
+#[test]
+fn a_dispatch_drops_the_snapshot_of_the_instances_it_moved_and_leaves_the_rest() {
+    let mut runtime = reporting_screen(json!([
+        filter_field(),
+        component("report", "bound", json!({"query": {"bind": "query"}})),
+        component("report", "fixed", json!({"status": "受注"})),
+    ]));
+    runtime.layout(800.0).expect("a scene");
+    let bound = snapshot_of(&runtime, "bound").expect("bound after one pass");
+    let fixed = snapshot_of(&runtime, "fixed").expect("fixed after one pass");
+    // An event inside one child moves that child only.
+    runtime
+        .dispatch("bound/orders", json!({"id": 2}))
+        .expect("the grid event of the child");
+    assert!(snapshot_of(&runtime, "bound").is_none());
+    assert!(Rc::ptr_eq(
+        &fixed,
+        &snapshot_of(&runtime, "fixed").expect("fixed")
+    ));
+    runtime.layout(800.0).expect("a scene");
+    let moved = snapshot_of(&runtime, "bound").expect("bound after the event");
+    assert!(!Rc::ptr_eq(&bound, &moved));
+    // Moving the root reconfigures the child bound to what changed, and only that one.
+    runtime
+        .dispatch("filter", json!({"value": "山田"}))
+        .expect("the root textfield");
+    assert!(snapshot_of(&runtime, "bound").is_none());
+    assert!(Rc::ptr_eq(
+        &fixed,
+        &snapshot_of(&runtime, "fixed").expect("fixed")
+    ));
+    // The pass after the event sees the moved state, not the one it cached before it.
+    runtime.layout(800.0).expect("a scene");
+    let reconfigured = snapshot_of(&runtime, "bound").expect("bound after the root moved");
+    assert!(!Rc::ptr_eq(&moved, &reconfigured));
+    assert_eq!(reconfigured.1["config"], json!({"query": "山田"}));
+    assert_eq!(reconfigured.1["picked"], json!(2));
+}
+
+#[test]
+fn a_rejected_layout_leaves_no_scope_behind_for_the_next_one() {
+    let runtime = reporting_screen(json!([component("report", "a", json!({}))]));
+    // `Scene` is not `Debug`, so the rejection goes through `err` instead of `expect_err`.
+    assert_eq!(
+        runtime
+            .layout(100.0)
+            .err()
+            .expect("a width below the floor"),
+        "Viewport width must be between 240 and 4096"
+    );
+    assert!(composition::with_component("a", |_, _| ()).is_none());
+    let scene = runtime.layout(800.0).expect("a scene");
+    assert!(
+        keys(&scene).iter().any(|key| key.starts_with("a/")),
+        "{:?}",
+        keys(&scene)
+    );
+    assert!(composition::with_component("a", |_, _| ()).is_none());
 }
 
 // --- routing an event to the instance that owns it ---

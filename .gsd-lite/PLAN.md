@@ -126,7 +126,7 @@ bun scripts/probe-composition.mjs --candidate public/engine.wasm   # 候補の�
     - A: テーブル JSON + Rust 側（対象: `tests/helpers/component-scope-cases.json`, `engine/src/composition.rs`, `engine/src/lib.rs`, `engine/src/composition_tests.rs`）。テーブルは A が最初に書き、B はその形（本 PLAN の列名）に従う
     - B: JS 側（対象: `src/component-tree.js`, `src/application-loader.js`, `tests/components-loader.test.js`）。テーブルは A が書いたものを読む（無ければ本 PLAN の例で仮に作り、親がマージ時に A のものへ揃える）
 
-- [ ] T6: layout の子スナップショットのキャッシュ（R8 / P12）
+- [x] T6: layout の子スナップショットのキャッシュ（R8 / P12）
   - 完了基準:
     - `Instance` に `snapshot: RefCell<Option<Rc<(Node, Value)>>>`（`instance.rs` のフィールド末尾。`load` で `None`）。`Instance::apply`（`lib.rs:1400-1403`）で `None` に戻す。`Runtime::layout_scope`（`:1091-1100`）は `None` なら `Rc::new((ui.clone(), state_json()?))` を作って入れ、`Some` ならその `Rc` を clone して渡す。`composition::enter_layout` の引数を `BTreeMap<String, Rc<(Node, Value)>>` に変える（`:357-369` の `Rc::new` を呼び出し側へ移すだけ）
     - `composition_tests.rs:923-927` の `set_state` を `instance.apply(state, instance.ui.clone())` 経由に直す（`apply` は `lib.rs` の `impl instance::Instance` 内の private fn。`composition_tests` は `lib.rs` の子モジュールなので呼べる）
