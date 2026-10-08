@@ -1,6 +1,6 @@
 # 画面合成（コンポーネント）
 
-状態: 実装済み契約（段階3）。方式の選定理由・却下案・段階計画は[部品化の計画・検討](components-plan.md)にあるが、現行仕様の根拠は本文書とコードとする。
+状態: 実装済み契約（段階4）。方式の選定理由・却下案・段階計画は[部品化の計画・検討](components-plan.md)にあるが、現行仕様の根拠は本文書とコードとする。
 
 画面パッケージは別の画面パッケージを埋め込める。埋め込まれた側はエンジン内で独立したInstance（自分のRhaiエンジン・AST・state・確定UIツリー）になり、Sceneは1つ、確定は1トランザクション。単体の画面の契約は[画面契約](screen-format.md)、Instanceと確定の流れは[アーキテクチャ](architecture.md)を参照。
 
@@ -9,7 +9,7 @@
 - **コンポーネント**: 親の`components`で宣言し、`xtype`に宣言名を書いて埋め込む別の画面パッケージ。1つの配置が1つのInstance。同じパッケージを2か所に置けばInstanceは2つ。
 - **ウィジェット（組み込み部品）**: エンジンが持つ48種の`xtype`（`container`・`grid`・`button`など）。本リポジトリで「部品」と呼ぶのはこちらで、追加は[部品開発ガイド](component-development.md)。
 - **componentノード**: `xtype`が宣言名のノード。自分の`items`を持たず、その矩形に子Instanceの確定UIツリーが入る。
-- **接頭辞付きitemId**: `"<componentノードのitemId>/<子の中のitemId>"`。Instanceの識別パス、Sceneの`key`、イベントの`target`に共通で使う。rootのパスは空文字列。
+- **接頭辞付きitemId**: `"<componentノードのitemId>/<子の中のitemId>"`。Instanceの識別パス、Sceneの`key`、イベントの`target`、効果と完了の`instance`に共通で使う。rootのパスは空文字列。
 
 ## 宣言`components`
 
@@ -24,7 +24,10 @@
 "components": { "orderList": { "url": "parts/order-list.json" } }
 ```
 
-実例は`public/screens/order-dashboard.json` / `.rhai`（親）と`public/screens/parts/order-list.json` / `.rhai`（子）。
+実例は2つある。
+
+- `public/screens/order-dashboard.json` / `.rhai`（親）と`public/screens/parts/order-list.json` / `.rhai`（子）。同じ子を2か所に置いて接頭辞で区別する最小の形。
+- `public/screens/parts-lab.json` / `.rhai`（親。`components`のキーは`products`→`http-grid.json`、`note`→`parts/note-pad.json`、`approval`→`parts/approval.json`）と、`public/screens/parts/note-pad.json` / `.rhai`（自分の`storage`で保存し`emit("saved", …)`する子）、`public/screens/parts/approval.json` / `.rhai`（自分で`confirm`を出し`emit("answered", …)`する子）。子が自分で効果を出す形はこちら。
 
 ## componentノードの許可属性
 
@@ -98,6 +101,99 @@ emitは**上方向のみ**、configは**下方向のみ**に連鎖する。emit�
 
 途中のcomponentノードが`visibleBind`で隠れている、または親の無効・折りたたみ・非表示タブ・モーダル背後に入っている場合、イベントは**捨てる**。stateも`revision`も動かない。
 
+## 効果
+
+子は非同期効果を自分で出せる。効果関数（`alert`・`confirm`・`file_list`・`file_mkdir`・`file_read_bytes`・`file_read_text`・`file_remove`・`file_stat`・`file_write_bytes`・`file_write_text`・`host_call`・`host_cancel`・`http_get`・`navigate`・`prompt`・`rpc_call`・`storage_read`・`storage_remove`・`storage_write`）はすべてrootと同じに子でも使え、バイト列を作る純粋なコンストラクタの`file_bytes`（効果を積まない）も子で使える。
+
+トップレベルの効果宣言のうち`requests` / `operations` / `storage` / `files` / `rpc` / `pages`の6種は子でも宣言できる。残る`webmcp`だけが据え置き。
+
+### effectの形
+
+- 全kindが`kind`キーを持つ。`http`・`storage`・`file`・`rpc`・`dialog`・`navigate`・`host`・`host_cancel`のどれも`kind`で振り分ける。
+- **子のeffectには`instance: "<接頭辞付きitemId>"`が付く。rootのeffectには`instance`キーが無い**。hostはこのキーだけを見て、完了をどのInstanceへ返すかを決める。
+- JSONのキー順はアルファベット順（`serde_json`の`BTreeMap`由来）。キー順に依存した読み方をしてはならない。
+
+### 連結順
+
+`take_effects`が返す配列は2段に並ぶ。
+
+1. rootの7連結。`http` → `storage` → `files` → `rpc` → `dialogs` → `pages` → `host`。
+2. 続いて子を**パス順**（`BTreeMap`のキー順）に、各Instanceごとに`http` → `storage` → `files` → `rpc` → `host`。
+
+dialogs / pagesのキューは画面で1本なのでrootの位置に並び、子が出したものもそこに`instance`付きで出る。
+
+### 完了opの`instance`
+
+`http_result` / `storage_result` / `file_result` / `rpc_result` / `dialog_result` / `host_result` / `host_progress`の7 opが`instance`を受ける。
+
+- **子の完了には必須**。`instance`キーの省略がroot宛という意味になる。
+- 受理する形は「1つ以上の空でない要素を`/`で繋いだもの。`:`を含まない」（正規表現なら`^[^/:]+(/[^/:]+)*$`）。rootを空文字列で名乗ることはできず、キーを省略して名乗る。
+- 形から外れた値は`Invalid component instance`。形は合うが存在しないパスは`Unknown component instance: {instance}`。
+
+`dialog_result`も同じ規則で名乗る。ダイアログのスタックは画面のものだが、**どのInstanceのhandlerが走るかは「効果を出したInstance」（リクエスト側）が決める**。hostはeffectに載っていた`instance`をそのまま名乗る契約で、違うInstanceを名乗ると他人のダイアログを食べずに拒否される。
+
+### 完了ハンドラのトランザクション
+
+完了もイベントと同じ1トランザクション。子のhandler → その子のemit → 親のlisteners → configの下方向連鎖 → 全Instanceの検証 → 1 commitで`revision`を1つ進める。どこかで失敗すれば**全Instanceが不変で`revision`も動かない**。
+
+- handlerの失敗は完了を消費する（既存どおり）。同じidで二度目を返しても`Unknown or completed …`になる。
+- 不正な完了（宛先違い・消費済み）はpendingを**不変**のまま残す。別のInstanceを名乗った完了が、名乗られた側の待ちを壊すことはない。
+
+### 相対URLの基準
+
+子の`requests` / `rpc` / `pages` / `operations`の相対URLは、**その子のパッケージURL基準**で解決する。親のURL基準ではない。同じ子をURLの違う2つの親へ置いても、子の相対URLの意味は変わらない。
+
+### ABIの`descriptors`
+
+`load`の`components[url]`には任意の`descriptors`（`{名前: bufferId}`）を置ける。これが子のRPC descriptorになる。検査はrootの`descriptors`と同じで、objectでなければ`Invalid descriptors`、9件以上は`At most 8 descriptors`、idが不正なら`Invalid descriptor buffer`。
+
+## 保存領域のscope
+
+Instanceの保存領域scopeは「`<rootパッケージのid>`に、パスの`/`を`__`へ置き換えたものを`__`で繋いだもの」。root自身はidそのまま。storage / filesの保存先はこのscopeで分かれる。
+
+- **各要素に`__`を含めてはならない**。含めると2つの配置が同じscopeを組めてしまう。
+- 各要素と連結後のscopeが`[A-Za-z0-9_-]`のみ。連結後は80バイト以内。
+- 同じ子を2か所に置けば`host__a`と`host__b`のように別scopeになる。片方の保存が他方に見えることはない。
+
+**RustとJSの2段構え**になっている。
+
+- Rustはload時に検証だけを行う。外れると`Component {path}: storage scope {scope} requires 1–80 ASCII letters, digits, - or _ without "__" in any part`。検証するのは`storage`か`files`を宣言する子だけで、データを持たない子はscope規則の外に置ける`itemId`でもよい。
+- JSは実際にscopeを組んでstorage / filesの呼び出しに使う。検査は子を取得する経路で、Rustと同じく`storage`か`files`を宣言する子だけに掛ける。外れたら`コンポーネント {path} の保存領域 {scope} が不正です（英数字・-・_ で80バイト以内、各要素に __ を含めない）`。
+
+scope規則の定義は本節が唯一で、他の文書はここを参照する。
+
+## 据え置きの拒否
+
+子に許していないのは次の4つだけ。
+
+**子の`webmcp`**。`webmcp`を宣言する子は`webmcp is not available in components (reserved for a later stage)`。画面全体のツール面はrootのもの。
+
+**子uiの`window`**。`window is not available in components (reserved for a later stage)`。画面全体のモーダル層とフォーカスはrootのもの。正規化が`window`へ書き換える`messagebox` / `msgbox`も同じエラーで拒否される。判定はload時に解決済みUIツリーへ掛けるので、`visibleBind`などで条件付きに現れるwindowも通らない。
+
+**配信キャッシュ**。`components`を宣言する画面は`network-first`で取得できず、保存版からの復元もできない。`componentsを持つ画面は配信キャッシュ（network-first）に対応していません`。マニフェストが1パッケージ1本のため。
+
+**エディタの「変更を適用」**。直前の`load`で取得した子をそのまま再利用する。編集した定義の宣言URLが、再利用できる子のURLと一致しなければ`コンポーネント {名前} の本体がありません（URLから読み込んでください）`。子を差し替えたいときは「URLから読み込む」で取り直す。
+
+## エラー文言
+
+合成で増えた文言はここにまとめる。
+
+英語（Rust）。
+
+- `Invalid component instance`
+- `Unknown component instance: {instance}`
+- `Component {path}: Unknown or completed {HTTP request|storage request|file request|RPC call|host call|dialog request}`
+- `Component {path}: storage scope {scope} requires 1–80 ASCII letters, digits, - or _ without "__" in any part`
+- `webmcp is not available in components (reserved for a later stage)`
+- `Host operation has no progress handler`
+
+日本語（JS）。
+
+- `コンポーネント {path} の保存領域 {scope} が不正です（英数字・-・_ で80バイト以内、各要素に __ を含めない）`
+- `コンポーネント {instance} の配送先が未登録です`。root由来のeffectだと`{instance}`が空文字になり、文中に空白が2つ並ぶ。
+
+`Component {path}: `の前置は失敗したInstanceを名乗るためのもので、rootの失敗には前置が付かない。2 MB・Instance数・入れ子の深さ・循環参照の文言は「制限」節にある。
+
 ## 制限
 
 Instanceごとの既存上限はそのまま。1画面分の予算を部品が食い潰さないので、既存画面を無改修で部品にできる。
@@ -112,33 +208,26 @@ Instanceごとの既存上限はそのまま。1画面分の予算を部品が�
 | ABIの1リクエスト          | 2 MB（子を同梱した合計。据え置き）   |
 | ABIの`components`エントリ | 8パッケージ                          |
 
+効果の上限は所属が2通りに分かれる。
+
+| 対象                           | 上限 | 所属     | 超過時                                                                                                                                                                        |
+| ------------------------------ | ---- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| pendingのダイアログ            | 8    | 画面全体 | `At most 8 pending dialogs`                                                                                                                                                   |
+| 1トランザクションの遷移        | 1    | 画面全体 | `At most one navigation per handler`                                                                                                                                          |
+| 未配送の遷移                   | 8    | 画面全体 | `At most 8 undelivered navigations`                                                                                                                                           |
+| pendingの非同期要求            | 8    | Instance | `At most 8 pending HTTP requests` / `At most 8 pending storage requests` / `At most 8 pending file requests` / `At most 8 pending host calls` / `At most 8 pending RPC calls` |
+| 1handlerのホスト / RPC呼び出し | 8    | Instance | `At most 8 host calls per handler` / `At most 8 RPC calls per handler`                                                                                                        |
+| RPC定義 / descriptor           | 8    | Instance | `At most 8 RPC definitions/descriptors`                                                                                                                                       |
+| 同時ホスト操作（JS側）         | 8    | Instance | `同時ホスト操作は8件までです`                                                                                                                                                 |
+
+- **Instanceごとの上限は画面全体では足し合わさる**。pendingの非同期要求は1Instanceで8件までだが、画面はInstance数×8件まで同時に抱えうる。
+- `host_cancel`は**同じInstanceが出した操作だけ**を取り消す。他のInstanceの同名操作には届かない。
 - 超過時のエラーは`At most 8 instances per screen (root included); exceeded at component {path}`、`Component {path}: nesting depth exceeds 3`、`UI exceeds 200 nodes or 20 nesting levels`、`Script exceeds 100 KB`、`State exceeds 1 MB`、`Request exceeds 2 MB`、`At most 8 component packages`。
 - Instance数と同梱パッケージ数は別物。同じURLの子は1回だけ同梱され、置いた回数だけInstanceになる。
 - 2MBはJS側とRust側の2段構え。JS側は子を同梱した後のバイト数を数え、超えたら`リクエストが2 MBを超えています（同梱後 {総バイト数} バイト。最大の子: {URL} {バイト数} バイト）`で、どの子が大きいかまで出す。Rust側は入力長だけを見て`Request exceeds 2 MB`を返す。Instance数・入れ子の深さ・循環参照も同じ2段構えで、JS側は取得中に日本語（`コンポーネントの数が8を超えています（rootを含む）: {URL}`、`コンポーネントの入れ子が3段を超えています: {URL}`、`コンポーネント {名前} の循環参照: {URL}`）、Rust側はload時に英語（上記と`Component {path}: circular reference to {url}`）で拒否する。
 - `itemId`は`/`を予約する。componentノードでも通常のウィジェットでも使えない。接頭辞付きパスとの区別がつかなくなるため。
 - 宣言していないxtypeを置いた、または同梱されていないURLを宣言したときは`Component {path}: {xtype} is not declared`、`Component {path}: package {url} was not bundled`。
 - JSローダーは**宣言単位**で循環・深さを検査し、uiに置かれていない宣言も取得・検査する。Rustは**配置単位**で検査する。したがってraw ABIでは通る「置かれていない自己参照の宣言」は、ローダーでは拒否される。
-
-## 拒否
-
-段階3の子は同期処理だけを行う。非同期効果と画面全体に関わる宣言は拒否する。
-
-**効果関数19個**。`alert`・`confirm`・`file_list`・`file_mkdir`・`file_read_bytes`・`file_read_text`・`file_remove`・`file_stat`・`file_write_bytes`・`file_write_text`・`host_call`・`host_cancel`・`http_get`・`navigate`・`prompt`・`rpc_call`・`storage_read`・`storage_remove`・`storage_write`。
-
-拒否は2段。
-
-1. load時の`AST::walk`走査。スクリプトのどこか（クロージャの中を含む）にこれらの名前の呼び出しがあれば、`{name} is not available in components (line {行}, position {桁})`でコンパイル直後に落とす。
-2. 実行時のstub。子のエンジンには本物の登録をせず、全呼び出し形を受けて`{name} is not available in components`を返すstubを登録する。
-
-**拒否の根拠は実行時である**。1は早く分かりやすいエラーを出すための先回りにすぎない。`Fn("navigate")`のように文字列から関数ポインタを作る呼び出しはload時の走査では拾えず、stubが呼ばれて初めて拒否される。走査だけを根拠にしてはならない。
-
-**子の宣言7種**。`requests`・`operations`・`storage`・`files`・`rpc`・`pages`・`webmcp`のいずれかを持つ子は`requests, operations, storage, files, rpc, pages and webmcp are not available in components (reserved for a later stage)`。
-
-**子uiの`window`**。`window is not available in components (reserved for a later stage)`。画面全体のモーダル層とフォーカスはrootのもの。正規化が`window`へ書き換える`messagebox` / `msgbox`も同じエラーで拒否される。判定はload時に解決済みUIツリーへ掛けるので、`visibleBind`などで条件付きに現れるwindowも通らない。
-
-**配信キャッシュ**。`components`を宣言する画面は`network-first`で取得できず、保存版からの復元もできない。`componentsを持つ画面は配信キャッシュ（network-first）に対応していません`。マニフェストが1パッケージ1本のため。
-
-**エディタの「変更を適用」**。直前の`load`で取得した子をそのまま再利用する。編集した定義の宣言URLが、再利用できる子のURLと一致しなければ`コンポーネント {名前} の本体がありません（URLから読み込んでください）`。子を差し替えたいときは「URLから読み込む」で取り直す。
 
 ## stateSchema
 
@@ -150,13 +239,8 @@ Instanceごとの既存上限はそのまま。1画面分の予算を部品が�
 - **handlerの`false`戻り値に意味は無い**。handlerはstateオブジェクトを返す契約で、`false`を返せば`Handler must return a state object`。伝播や既定動作を止める手段としては使えない。
 - **`scope`は無い**。`listeners`は「emit名→同じパッケージ内の関数名」の対応表だけ。実行文脈を差し替える指定は持たない。
 
-## 実装上の注意
+## 段階5以降の課題
 
-load時の走査はrhaiの`internals` featureで公開される`AST::walk`と`Expr` / `Stmt`を使う。このAPIに安定性の約束は無いため、`engine/Cargo.toml`のrhaiはバージョンを固定したままにする。
-
-## 段階4以降の課題
-
-- 子の非同期効果。effectと`*_result` opに`instance`を持たせ、完了を正しいInstanceへ返す。storage / filesのscope区切り文字も同時に決める。
 - 子の`window`。画面全体のモーダル層を親子で共有する方式。
 - 配信キャッシュ。子を含む画面のマニフェストと`network-first` / 復元。
 - WebMCPの合成。子の`webmcp`を画面1登録へまとめる方式。子ノードの`webmcp`は検証されるが登録されない（段階6）。
@@ -165,4 +249,4 @@ load時の走査はrhaiの`internals` featureで公開される`AST::walk`と`Ex
 
 ## 検証
 
-合成の挙動は、合成の無いビルドとは応答照合できない。証跡ファイルは`target/engine-compare/composition.json`。検査の手順と、どの変異が検出されるべきかは[検証基準](testing.md)を参照する。
+合成の挙動は、合成の無いビルドとは応答照合できない。証跡ファイルは`target/engine-compare/composition.json`。probe（`scripts/probe-composition.mjs`）は6列・54ステップで、列IDは`order-dashboard` / `child-effect-written-out` / `child-effect-through-a-pointer` / `child-dialog-carries-its-instance` / `child-webmcp-refused` / `parts-lab`。部品ラボの列が効果の`instance`・完了のルーティング・宛先違い / 2 MB / 再load後の遅延完了の拒否を押さえる。検査の手順と、どの変異が検出されるべきかは[検証基準](testing.md)を参照する。

@@ -107,7 +107,7 @@ WebMCPでは`ui_get_screen.dialog`でid・操作名・メッセージ・指定�
 - `src/dom-renderer.js` / `src/canvas-renderer.js`：各領域での描画、キーボード、IME連携、フォーカス。
 - `src/dialog-icons.js`：共有パス定義、任意文字／画像の検証とURL解決、各描画方式と画像失敗時の代替表示。
 
-通常の回答は`event` ABIでエンジンへ届く。追加ABIの`dialog_result`とJSの`WasmEngine.completeDialog`も、独自ホストが依頼を完了させるために維持する。`kind=dialog`のeffectsは発行通知として残すが、比較デモでは外部の表示アダプターへ振り分けずSceneを描画する。WASMのブラウザimportは増やさない。
+通常の回答は`event` ABIでエンジンへ届く。追加ABIの`dialog_result`とJSの`WasmEngine.completeDialog(id, response, instance)`も、独自ホストが依頼を完了させるために維持する。`instance`はeffectに載っていた値をそのまま渡し、root由来なら省略する（`undefined`）。`kind=dialog`のeffectsは発行通知として残すが、比較デモでは外部の表示アダプターへ振り分けずSceneを描画する。WASMのブラウザimportは増やさない。
 
 複数フィールドや選択一覧を加える際は、エンジンのパターン・引数・回答契約と両レンダラーを一緒に拡張する。現在は3種類だけで、任意のdialog DSLやフォームスキーマは未実装。既存の[messagebox/window](uivolve-gallery.md)も各描画領域内の部品で、同じmodal層の仕組みを使う。
 

@@ -1,7 +1,7 @@
 # 画面パッケージの部品化計画
 
-状態: 段階3（同期のみの合成）は2026-10のマイルストーンで完了し、現行の契約は[部品化の契約](components.md)にある。本文書は計画・検討記録。現行APIの判断は[ドキュメント案内](README.md)から各契約を参照し、この文書を現行仕様の根拠にしない。
-2026-10-07。この計画を書いた時点では段階1・2が本マイルストーンの範囲で、段階3以降は方式と設計決定を固定しただけの検討だった。段階3はその後、同じマイルストーンで実装した。
+状態: 段階4（子Instanceの非同期効果）まで2026-10のマイルストーンで完了し、現行の契約は[部品化の契約](components.md)にある。本文書は計画・検討記録。現行APIの判断は[ドキュメント案内](README.md)から各契約を参照し、この文書を現行仕様の根拠にしない。
+2026-10-07。この計画を書いた時点では段階1・2が本マイルストーンの範囲で、段階3以降は方式と設計決定を固定しただけの検討だった。段階3・段階4はその後、同じマイルストーンで実装した。
 
 ## 目的と前提
 
@@ -88,15 +88,15 @@ fn pick(s, e) {
 
 備考。
 
-- 子のstorage / files scopeの区切り文字は`storage::safe_key`（`storage.rs:49`。`/`を許さない）と合わせて段階4で決める
-- `http`のeffectだけ`kind`を持たない（`{id, request, url}`。storageは`kind: "storage"`）ので、段階4で`instance`を追加するときに揃える
+- 段階4で決めた: 子のstorage / files scopeは`/`を使わず、rootパッケージidとパスを`__`で繋ぐ。規則は[部品化の契約](components.md)にある
+- 段階4で決めた: `http`のeffectにも`kind: "http"`を付け、全kindがkindキーを持つ形に揃えた
 
 ## 段階計画
 
 1. 段階1（設計文書の固定）。本マイルストーンで完了。本文書で方式・設計決定8論点・Instanceのフィールド一覧を固定した。
 2. 段階2（挙動不変リファクタ）。本マイルストーンで完了。`engine/src/instance.rs`を新設し`Runtime`からInstanceを切り出した。公開シグネチャとABIの応答JSONは不変で、mainのビルドとの応答照合で確かめた。証跡は`target/engine-compare/`の照合JSON。
-3. 段階3（同期のみの合成）。componentノードのレイアウト + dispatchルーティング + `emit` / `config`。子の非同期効果は禁止。
-4. 段階4（効果のinstanceルーティング）。effectと`*_result` opに`instance`を追加。storage / files scopeの区切り文字と`http` effectの`kind`もここで決める。
+3. 段階3（同期のみの合成）。本マイルストーンで完了。componentノードのレイアウト + dispatchルーティング + `emit` / `config`。この段階では子の非同期効果を禁止していた。
+4. 段階4（効果のinstanceルーティング）。本マイルストーンで完了。子の効果に`instance`を載せ、完了opが`instance`で正しいInstanceへ返る形にした。storage / files scopeの区切り文字と`http` effectの`kind`もここで決めた。
 5. 段階5（ローダー）。子パッケージの再帰取得・キャッシュ・入力2MB上限の扱い。
 6. 段階6（WebMCP）。契約文書[components.md](components.md)とデモ画面は段階3で用意した。
 
@@ -142,6 +142,4 @@ Instanceのメソッドは3本。
 
 ## 残課題
 
-- 子のstorage / files scopeの区切り文字。`storage::safe_key`が`/`を許さない
-- `http` effectの`kind`欠落。段階4で揃えるか決める
 - WASMインスタンス単位の`thread_local`（`abi.rs`のRUNTIMEスロット、`dialogs.rs`のSEQUENCE、`buffers.rs`のバッファ、`files.rs`のBYTE_USAGE、`theme.rs`の現在テーマ）が、Instance木になったときにどこへ属するか。`dialogs::SEQUENCE`は`load`をまたいで増え続ける採番で、Instance / Runtimeのフィールドへ移すとダイアログidの採番が変わるため本マイルストーンでは触っていない

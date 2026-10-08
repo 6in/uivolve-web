@@ -107,4 +107,4 @@ stateに入った配列を既存のGridが描画する。サンプルは8件を5
 - 画面切替・再取得・再コンパイルの成功時に以前の要求を中止し、遅れて届いた応答を破棄する。失敗した画面置換では元の画面を維持する。
 - 完了handlerも通常のイベントと同じstate・部品検証を通す。handler自身が例外や不正stateを返した場合は変更を破棄し、ホストのエラー欄へ表示する。その要求は完了扱いになるので、自動で繰り返し実行しない。
 
-WASMが返すload/event/http_resultの結果には、要求がある場合だけ`effects: [{ id, request, url }]`を追加する。ホストは取得後に`{ op: "http_result", id, ok, data, error }`で戻す。公開WASM関数とブラウザimport不要の構成は維持し、業務処理はページのRhaiへ置く。
+WASMが返すload/event/http_resultの結果には、要求がある場合だけ`effects: [{ kind: "http", id, request, url }]`を追加する。子Instanceが出したeffectなら`instance`も付き、相対URLはその子のパッケージURL基準で解決する。ホストは取得後に`{ op: "http_result", id, ok, data, error }`（子宛はeffectの`instance`も添える。省略はroot宛）で戻す。公開WASM関数とブラウザimport不要の構成は維持し、業務処理はページのRhaiへ置く。

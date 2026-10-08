@@ -14,7 +14,7 @@ files:
     handler: fileDone
 ```
 
-`access`は`read`または`readwrite`。宣言は最大8件。領域名と画面idは1〜80文字の英数字・`_`・`-`。保存先は`uivolve-web/fs/<pageId>/<volume>/`。既存のJSON保存先とエンジンの配信キャッシュは別領域。名前を変えると別の保存先になる。同じoriginのJavaScriptに対するセキュリティ境界ではない。
+`access`は`read`または`readwrite`。宣言は最大8件。領域名と画面idは1〜80文字の英数字・`_`・`-`。保存先は`uivolve-web/fs/<pageId>/<volume>/`。子Instanceでは`pageId`が保存領域scopeになり、規則は[部品化の契約](components.md)にある。既存のJSON保存先とエンジンの配信キャッシュは別領域。名前を変えると別の保存先になる。同じoriginのJavaScriptに対するセキュリティ境界ではない。
 
 | Rhai関数                                | 成功時の`response.data`                                                                               |
 | --------------------------------------- | ----------------------------------------------------------------------------------------------------- |
@@ -27,7 +27,7 @@ files:
 | `file_stat(volume, path)`               | `{ exists, kind, size, lastModified }`。未存在は`{ exists: false }`、ディレクトリにサイズ・日時はない |
 | `file_remove(volume, path)`             | unit。ファイルまたは空ディレクトリを削除                                                              |
 
-各関数は依頼を発行するだけで、内容を同期で返さない。完了は宣言した`handler(state, response) → state`で受け取る。`response`は`ok / data / error / volume / path / operation`を持つ。
+各関数は依頼を発行するだけで、内容を同期で返さない。完了は宣言した`handler(state, response) → state`で受け取る。`response`は`ok / data / error / volume / path / operation`を持つ。effectは`kind: "file"`で、子Instanceが出したものには`instance`が付き、ホストは`file_result`へ同じ`instance`を添えて返す（省略はroot宛。[部品化の契約](components.md)を参照）。
 
 ```rhai
 fn prepareDrafts(state, event) {
@@ -125,7 +125,7 @@ rpc:
     idempotent: true
 ```
 
-`protocol`は`connect`またはバイナリ`grpc-web`。`idempotent`の既定値はfalse。最大8宣言・8進行中依頼、同じ名前に1件。URLとDescriptor URLは元の画面URLに対する相対指定を許可する。Descriptorのservice/methodを読み込み時に確認し、Streamingのメソッドは拒否する。
+`protocol`は`connect`またはバイナリ`grpc-web`。`idempotent`の既定値はfalse。最大8宣言・8進行中依頼、同じ名前に1件。URLとDescriptor URLは元の画面URLに対する相対指定を許可する。effectは`kind: "rpc"`で、子Instanceが出したものには`instance`が付き（相対URLはその子のパッケージURL基準で解決する）、ホストは`rpc_result`へ同じ`instance`を添えて返す（省略はroot宛。[部品化の契約](components.md)を参照）。Descriptorのservice/methodを読み込み時に確認し、Streamingのメソッドは拒否する。
 
 ```rhai
 fn send(state, event) {

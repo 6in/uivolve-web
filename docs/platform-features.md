@@ -94,9 +94,9 @@ fn stored(state, response) {
 }
 ```
 
-関数は保存依頼をキューへ置く。同期で値を返さない。state/UI検証が通ったときだけ`effects`としてホストへ渡す。JSのStorageClientがブラウザAPIを呼び、`storage_result` ABIでWASMへ戻す。完了handlerには**最新のstate**と`{ok, data, error, request, operation}`を渡す。requestは宣言名、operationはread/write/remove。存在しない値のread、成功したwrite/removeのdataはnull（Rhaiの`()`）。保存JSON自体がnullの場合と未保存は区別しない。
+関数は保存依頼をキューへ置く。同期で値を返さない。state/UI検証が通ったときだけ`effects`としてホストへ渡す。JSのStorageClientがブラウザAPIを呼び、`storage_result` ABIでWASMへ戻す。`storage_result`はeffectに載っていた`instance`を添えて返し、子Instance宛では必須、省略はroot宛を意味する。完了handlerには**最新のstate**と`{ok, data, error, request, operation}`を渡す。requestは宣言名、operationはread/write/remove。存在しない値のread、成功したwrite/removeのdataはnull（Rhaiの`()`）。保存JSON自体がnullの場合と未保存は区別しない。
 
-宣言名、key、保存を使うページidは1〜80文字のASCII英数字・`-`・`_`。同じ方式・同じkeyを指す別名も含め、同一レコードの同時要求は1件まで。handlerごとの依頼と進行中の依頼はそれぞれ最大8件。JSONは1,000,000 UTF-8バイト以内。readは保存されたJSON、write/removeは完了確認を返す。データの型確認はページ側で行い、stateへ戻すとstateSchemaも検証する。ホストで中止できない処理が残っている場合も、同じStorageClientの同一レコードを完了までロックし、再要求は通常の失敗で返す。
+宣言名、key、保存を使うページidは1〜80文字のASCII英数字・`-`・`_`。子Instanceの保存領域scope（下記の保存先で`pageId`に当たる値）は[部品化の契約](components.md)を参照する。同じ方式・同じkeyを指す別名も含め、同一レコードの同時要求は1件まで。handlerごとの依頼と進行中の依頼はそれぞれ最大8件。JSONは1,000,000 UTF-8バイト以内。readは保存されたJSON、write/removeは完了確認を返す。データの型確認はページ側で行い、stateへ戻すとstateSchemaも検証する。ホストで中止できない処理が残っている場合も、同じStorageClientの同一レコードを完了までロックし、再要求は通常の失敗で返す。
 
 保存先:
 

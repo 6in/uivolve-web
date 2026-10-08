@@ -43,7 +43,7 @@ UIのWASMから別のWASMへ直接リンクしない。JavaScriptが各SDK、Wor
 | `src/adapters/db/pglite.js` / `duckdb.js` | SDKとWorkerの差異の吸収                                              |
 | `src/media-registry.js`                   | ライブ映像の参照・表示・スナップショット                             |
 
-当初は新機能だけをHostEffectsへ配送する。`kind`省略のGET、storage/file/rpc/dialog/navigateと既存ABIは維持する。既存実装の統合は同じ振る舞いを確認できた機能から行う。
+当初は新機能だけをHostEffectsへ配送する。`kind: "http"`のGET、storage/file/rpc/dialog/navigateと既存ABIは維持する。既存実装の統合は同じ振る舞いを確認できた機能から行う。
 
 ## 宣言とホスト登録
 
@@ -127,7 +127,7 @@ effectの提案形:
 { "kind": "host", "v": 1, "id": 42, "operation": "listOrders", "args": { "params": ["open"] } }
 ```
 
-ホストはWASMから来たoperationを確定済み宣言へ照合する。結果のABIは`host_result`、継続通知は`host_event`。配送時にホストがscreenTokenとengine世代を保持し、完了時に照合する。WASMもpending id、操作、handle、イベント種別を検証する。起動時に対応プロトコルと機能を照合し、必要機能がない画面は置換前に失敗させる。
+ホストはWASMから来たoperationを確定済み宣言へ照合する。結果のABIは`host_result`、継続通知は`host_event`。完了を返すときはeffectに載っていた`instance`をそのまま添え、`instance`がなければroot宛として送る。配送時にホストがscreenTokenとengine世代を保持し、完了時に照合する。WASMもpending id、操作、handle、イベント種別を検証する。起動時に対応プロトコルと機能を照合し、必要機能がない画面は置換前に失敗させる。
 
 単発の成功は`{ok:true,data:...,error:null}`、失敗は`{ok:false,data:null,error:{code,message,retryable,outcome}}`。error.codeは`UNSUPPORTED / PERMISSION_DENIED / USER_GESTURE_REQUIRED / INVALID_ARGUMENT / TIMEOUT / CANCELLED / NETWORK / CLOSED / LIMIT / DATABASE`を基準にする。元の例外や認証情報は直接公開しない。
 
