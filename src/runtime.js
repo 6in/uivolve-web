@@ -244,7 +244,7 @@ export class UiRuntime {
   runEffects(effects = []) {
     if (this.disposed) return Promise.resolve();
     const task = Promise.all([
-      this.httpEffects.run(effects.filter((effect) => !effect.kind || effect.kind === "http")),
+      this.httpEffects.run(effects.filter((effect) => effect.kind === "http")),
       this.storageEffects.run(effects.filter((effect) => effect.kind === "storage")),
       this.fileEffects.run(effects.filter((effect) => effect.kind === "file")),
       this.rpcEffects.run(effects.filter((effect) => effect.kind === "rpc")),
