@@ -995,6 +995,121 @@ fn the_per_instance_limits_of_a_child_name_the_component_that_broke_them() {
     );
 }
 
+// --- the storage scope of an instance ---
+
+/// One row of `tests/helpers/component-scope-cases.json`, the table the JS side reads as well.
+/// A `scope` of `null` is a pair the rule has to refuse.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ScopeCase {
+    root_id: String,
+    path: String,
+    scope: Option<String>,
+}
+
+const STORING_SCRIPT: &str = "fn init(s) { s } fn landed(s, r) { s }";
+
+/// A child package keying a storage request of its own, so its placement needs a scope. With
+/// `json!({})` it declares neither storage nor files and the rule leaves it alone.
+fn storing(declarations: Value) -> Package {
+    serde_json::from_value(json!({
+        "version": 1, "id": "part", "title": "part", "script": "part.rhai",
+        "state": {"value": 0},
+        "storage": declarations,
+        "ui": {"xtype": "container", "items": [
+            {"xtype": "metric", "text": "件数", "bind": "value"},
+        ]},
+    }))
+    .expect("the storing child package")
+}
+
+fn stored() -> Value {
+    json!({"draft": {"backend": "opfs", "key": "draft", "handler": "landed"}})
+}
+
+/// A screen whose id (`orders`) heads the scope of every instance below it. One itemId places
+/// the child on the root; two place it under a middle instance, at the path they spell.
+fn scoped(item_ids: &[&str], declarations: Value) -> Result<Runtime, String> {
+    let (deepest, above) = item_ids.split_last().expect("at least one itemId");
+    let placement = json!([component("part", deepest, json!({}))]);
+    let mut parts = vec![("part.json", storing(declarations), STORING_SCRIPT)];
+    let (url, items) = match above {
+        [] => ("part.json", placement),
+        [item_id] => {
+            parts.push((
+                "mid.json",
+                part(
+                    "mid",
+                    json!({}),
+                    json!({"part": {"url": "part.json"}}),
+                    placement,
+                ),
+                CHILD_SCRIPT,
+            ));
+            ("mid.json", json!([component("part", item_id, json!({}))]))
+        }
+        _ => panic!("at most two levels"),
+    };
+    compose(
+        part("orders", json!({}), json!({"part": {"url": url}}), items),
+        bundle(parts),
+    )
+}
+
+#[test]
+fn the_storage_scope_of_an_instance_is_the_root_id_joined_with_its_path() {
+    let cases: Vec<ScopeCase> = serde_json::from_str(include_str!(
+        "../../tests/helpers/component-scope-cases.json"
+    ))
+    .expect("the component scope cases");
+    assert!(!cases.is_empty(), "the table has rows");
+    for case in cases {
+        let scope = composition::component_scope(&case.root_id, &case.path);
+        let named = format!("{} + {}", case.root_id, case.path);
+        match case.scope {
+            Some(expected) => assert_eq!(scope, Ok(expected), "{named}"),
+            None => assert!(scope.is_err(), "{named}: {scope:?}"),
+        }
+    }
+}
+
+#[test]
+fn a_child_keying_storage_cannot_be_placed_at_an_item_id_carrying_the_scope_separator() {
+    assert_eq!(
+        scoped(&["a__b"], stored())
+            .err()
+            .expect("expected a load error"),
+        "Component a__b: storage scope orders__a__b requires \
+         1–80 ASCII letters, digits, - or _ without \"__\" in any part"
+    );
+    // The same child reached through two levels composes the same scope legibly.
+    let runtime = scoped(&["a", "b"], stored()).expect("a composed screen");
+    assert_eq!(runtime.components.keys().collect::<Vec<_>>(), ["a", "a/b"]);
+}
+
+#[test]
+fn a_child_keying_nothing_is_placed_at_any_item_id_the_template_allows() {
+    let runtime = scoped(&["a__b"], json!({})).expect("a composed screen");
+    assert_eq!(runtime.components.keys().collect::<Vec<_>>(), ["a__b"]);
+}
+
+#[test]
+fn a_composed_storage_scope_stops_at_eighty_bytes() {
+    // `orders__` leaves 72 bytes for the itemId of the placement.
+    let fits = "p".repeat(72);
+    assert!(scoped(&[&fits], stored()).is_ok(), "80 bytes");
+    let overflows = "p".repeat(73);
+    assert_eq!(
+        scoped(&[&overflows], stored())
+            .err()
+            .expect("expected a load error"),
+        format!(
+            "Component {overflows}: storage scope orders__{overflows} requires \
+             1–80 ASCII letters, digits, - or _ without \"__\" in any part"
+        )
+    );
+}
+
 // --- laying out an instance tree ---
 
 /// `list.json` — a child tall enough to move what follows it, holding an itemId (`search`) its

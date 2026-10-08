@@ -1,6 +1,7 @@
 import { OpfsDirectory, withFileLock } from "./opfs.js";
 import { packageFormat, parsePackage } from "./package-format.js";
 import { httpUrl } from "./http-policy.js";
+import { instanceTable, scopeProblem } from "./component-tree.js";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -63,22 +64,6 @@ function withoutComponents(candidate) {
     throw new Error("componentsを持つ画面は配信キャッシュ（network-first）に対応していません");
   candidate.components = Object.create(null);
   return candidate;
-}
-// Counts the Instances the engine will build: every node whose xtype names a declaration of the
-// screen it belongs to adds that declaration's own Instance count. The root counts as one.
-function countInstances(screen, packages, counter) {
-  const declarations = screen.components ?? {};
-  const walk = (node) => {
-    if (!node || typeof node !== "object") return;
-    if (typeof node.xtype === "string" && Object.hasOwn(declarations, node.xtype)) {
-      const href = declarations[node.xtype].url;
-      if (++counter.total > 8)
-        throw new Error(`コンポーネントの数が8を超えています（rootを含む）: ${href}`);
-      countInstances(packages[href].screen, packages, counter);
-    }
-    if (Array.isArray(node.items)) for (const item of node.items) walk(item);
-  };
-  walk(screen.ui);
 }
 export class ApplicationLoader {
   constructor({ resources, storage, locks } = {}) {
@@ -158,7 +143,16 @@ export class ApplicationLoader {
       }
     };
     await visit(screen, url, 1, [url.href]);
-    countInstances(screen, packages, { total: 1 });
+    // Only an Instance that keeps data of its own needs a scope, so a child declaring neither
+    // storage nor files may sit at an itemId the scope rules would refuse.
+    for (const [path, entry] of instanceTable(screen, url.href, packages)) {
+      const keeps =
+        Object.keys(entry.screen.storage ?? {}).length ||
+        Object.keys(entry.screen.files ?? {}).length;
+      if (!path || !keeps) continue;
+      const problem = scopeProblem(screen.id, path);
+      if (problem) throw new Error(problem);
+    }
     return packages;
   }
   async fetch(value, { mode = "network-only", signal } = {}) {

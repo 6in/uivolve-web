@@ -1,7 +1,7 @@
 //! Screen composition: a package may declare child packages under `components` and place them
 //! as nodes whose `xtype` is the declared name. This module owns the declaration rules and the
 //! shape of a component node; loading the children into an instance tree lives on `Runtime`.
-use super::{fields, metadata, Node, Package, Widget, XTYPES};
+use super::{fields, metadata, storage, Node, Package, Widget, XTYPES};
 use rhai::{Dynamic, Engine, EvalAltResult, ImmutableString};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -208,6 +208,26 @@ pub fn blame(origin: &str, error: impl std::fmt::Display) -> String {
 /// by an empty string, and `:` is rejected because the event targets of a screen use it.
 pub fn valid_instance_path(value: &str) -> bool {
     !value.is_empty() && !value.contains(':') && value.split('/').all(|segment| !segment.is_empty())
+}
+
+/// The storage scope of the instance at `path`: the id of the root package and the itemIds of
+/// the path joined by `__`, the root itself keeping its id. No part may carry `__` of its own,
+/// so two placements never compose the same scope out of different paths.
+pub fn component_scope(root_id: &str, path: &str) -> Result<String, String> {
+    let mut parts = vec![root_id];
+    if !path.is_empty() {
+        parts.extend(path.split('/'));
+    }
+    let scope = parts.join("__");
+    let safe = parts
+        .iter()
+        .all(|part| storage::safe_key(part) && !part.contains("__"));
+    match safe && storage::safe_key(&scope) {
+        true => Ok(scope),
+        false => Err(format!(
+            "storage scope {scope} requires 1–80 ASCII letters, digits, - or _ without \"__\" in any part"
+        )),
+    }
 }
 
 /// The one declaration a child package still may not carry: `webmcp` publishes the screen-wide

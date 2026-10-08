@@ -461,6 +461,8 @@ struct Composing<'a> {
     context: &'a extensions::ExtensionContext,
     dialogs: &'a mut dialogs::Requests,
     pages: &'a pages::Requests,
+    /// The id of the root package: the head of the storage scope of every instance below it.
+    root_id: String,
     /// URLs of the instances between the root and the one being loaded.
     loading: Vec<String>,
     loaded: BTreeMap<String, instance::Instance>,
@@ -520,6 +522,12 @@ impl Composing<'_> {
                 return Err(format!("Component {path}: Initial state must be an object"));
             };
             state.insert("config".into(), config);
+            // A child keying host effects of its own has to be told apart from every other
+            // placement, so its path has to compose a scope.
+            if !package.storage.is_empty() || !package.files.is_empty() {
+                composition::component_scope(&self.root_id, &path)
+                    .map_err(|error| format!("Component {path}: {error}"))?;
+            }
             // The same package placed twice gets its own copy: `rpc.initialize` consumes them.
             let child = instance::Instance::load(
                 package,
@@ -638,6 +646,7 @@ impl Runtime {
             context: &context,
             dialogs: &mut dialogs,
             pages: &pages,
+            root_id: root.package.id.clone(),
             loading: Vec::new(),
             loaded: BTreeMap::new(),
             count: 1,

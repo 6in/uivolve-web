@@ -113,7 +113,7 @@ bun scripts/probe-composition.mjs --candidate public/engine.wasm   # 候補の�
   - 依存: T3
   - 並列サブ作業: なし
 
-- [ ] T5: storage / files の子 scope（R5 / P1）— Rust と JS の 2 段と規則一致テスト
+- [x] T5: storage / files の子 scope（R5 / P1）— Rust と JS の 2 段と規則一致テスト
   - 完了基準:
     - 規則一致テーブル `tests/helpers/component-scope-cases.json`（新規）: `[{ "rootId": "orders", "path": "a/b", "scope": "orders__a__b" }, …]` の形で `ok` の例 6 件以上（`"orders"`+`""` → `"orders"`、`"orders"`+`"a"` → `"orders__a"`、`"orders"`+`"a/b"`、78 バイトちょうどになる組、`-` と `_` を含む itemId）と `error` の例 6 件以上（要素に `__` を含む（root id と itemId の両方の例）、合成後 81 バイト、非 ASCII の itemId、空白を含む itemId、`.` を含む itemId）。`scope` が `null` の行がエラー
     - Rust: `composition::component_scope(root_id: &str, path: &str) -> Result<String, String>`（`storage::safe_key` で検査し、要素に `__` があればエラー。文言は DECISIONS Round 5）。`Composing::load`（`lib.rs:450` の直前）で子 `package.storage` / `package.files` のどちらかが空でなければ `component_scope(&root_id, &path)` を呼び、`Err` は `Component {path}: ` 付きの文言で load エラー（root の `id` は `Composing` に持たせる）。storage / files を宣言しない子は検査しない（itemId に `__` があっても通る）。Rust 単体: テーブルを `include_str!("../../tests/helpers/component-scope-cases.json")` で読み全行を `component_scope` に流す + `Runtime` で「itemId `a__b` の子（storage 宣言あり）が load エラー、同じ子を `a` → `b` に置くと通り、`storage` 宣言の無い `a__b` も通る」+ 80 バイトちょうど / 81 バイトの境界（itemId を長くして合成後の長さで）
