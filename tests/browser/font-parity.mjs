@@ -1070,7 +1070,7 @@ export const canonicalXtype = (xtype) => {
 // silently shrinking the list it is compared against.
 export function engineXtypes() {
   const source = readFileSync(new URL("../../engine/src/lib.rs", import.meta.url), "utf8");
-  const block = source.match(/if !\[\n((?:\s+"[a-z]+",\n)+)\s*\]\n\s*\.contains\(&node\.xtype/);
+  const block = source.match(/const XTYPES: \[&str; \d+\] = \[\n((?:\s+"[a-z]+",\n)+)\];/);
   if (!block) throw new Error("engine/src/lib.rs の xtype 許可リストを読み取れない");
   return block[1].match(/"([a-z]+)"/g).map((quoted) => quoted.slice(1, -1));
 }

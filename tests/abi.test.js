@@ -56,6 +56,44 @@ it("accepts old clockless requests and validates raw clocks in WASM before state
   expect(raw(JSON.stringify({ op: "event", target: "add" })).data.state.count).toBe(2);
 });
 
+it("loads a screen with its component packages bundled and caps how many may be sent", () => {
+  const child = {
+    version: 1,
+    id: "part",
+    title: "部品",
+    script: "part.rhai",
+    state: { value: 0 },
+    ui: { xtype: "container", items: [{ xtype: "metric", text: "件数", bind: "value" }] },
+  };
+  const parent = {
+    ...screen,
+    components: { part: { url: "https://example.com/part.json" } },
+    ui: {
+      xtype: "container",
+      items: [
+        ...screen.ui.items,
+        { xtype: "part", itemId: "open", config: { status: { bind: "count" } } },
+      ],
+    },
+  };
+  const components = {
+    "https://example.com/part.json": { package: child, script: "fn init(s){s}" },
+  };
+  const loaded = raw(JSON.stringify({ op: "load", package: parent, script, components }));
+  expect(loaded).toMatchObject({ ok: true, data: { state: { count: 0 }, revision: 0 } });
+  expect(raw(JSON.stringify({ op: "event", target: "add", payload: {} })).data.state.count).toBe(1);
+  const many = Object.fromEntries(
+    Array.from({ length: 9 }, (_, i) => [
+      `https://example.com/part${i}.json`,
+      { package: child, script: "fn init(s){s}" },
+    ]),
+  );
+  const refused = raw(JSON.stringify({ op: "load", package: parent, script, components: many }));
+  expect(refused).toMatchObject({ ok: false, error: "At most 8 component packages" });
+  // The refused load leaves the screen that was already running untouched.
+  expect(raw(JSON.stringify({ op: "event", target: "add", payload: {} })).data.state.count).toBe(2);
+});
+
 it("exports the existing raw ABI without requiring browser imports", () => {
   expect(WebAssembly.Module.imports(module_)).toEqual([]);
   for (const name of ["input_alloc", "input_free", "request", "response_len"])

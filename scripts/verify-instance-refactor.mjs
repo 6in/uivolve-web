@@ -1,9 +1,11 @@
 // usage: bun scripts/verify-instance-refactor.mjs [--base-commit <rev>] [--skip-mutations]
 //
 // component-instance-refactor の最終判定。既存の全検査を順に回したあと、base コミットの
-// WASM と作業ツリーの WASM の応答を照合して差分 0 を要求し、続けて変異 M1〜M3 を
-// ビルドして照合が差分を見つける（exit 1）ことを要求する。変異で exit 0 になった場合は
-// 照合に歯が無いとして失敗にする。--skip-mutations は開発中の短縮用で最終判定では付けない。
+// WASM と作業ツリーの WASM の応答を照合して差分 0 を要求し、components を宣言する画面を
+// 候補のみの probe で確かめ、続けて変異 5 本をビルドして検査が差分を見つける（exit 1）ことを
+// 要求する。変異で exit 0 になった場合は検査に歯が無いとして失敗にする。変異に `probe` が
+// 付いていれば照合ではなくその probe で検査する（base には合成が無いため照合では見えない）。
+// --skip-mutations は開発中の短縮用で最終判定では付けない。
 
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -57,6 +59,21 @@ function compareStep(label, baseWasm, candidate, evidence, expect) {
   };
 }
 
+const PROBES = {
+  composition: (candidate, evidence) => [
+    "bun",
+    "scripts/probe-composition.mjs",
+    "--candidate",
+    candidate,
+    "--evidence",
+    evidence,
+  ],
+};
+
+function probeStep(label, probe, candidate, evidence, expect) {
+  return { label, expect, command: PROBES[probe](candidate, evidence) };
+}
+
 export function buildSteps(options, { exists = existsSync, rev = shortRev } = {}) {
   const base = rev(options.baseCommit);
   if (!base) return null;
@@ -78,9 +95,19 @@ export function buildSteps(options, { exists = existsSync, rev = shortRev } = {}
   steps.push(
     compareStep("compare candidate", baseWasm, "public/engine.wasm", `${SCRATCH}/compare.json`, 0),
   );
+  steps.push(
+    probeStep(
+      "probe composition",
+      "composition",
+      "public/engine.wasm",
+      `${SCRATCH}/composition.json`,
+      0,
+    ),
+  );
   if (options.skipMutations) return steps;
   for (const mutation of MUTATIONS) {
     const out = `${SCRATCH}/mutant-${mutation.name}.wasm`;
+    const evidence = `${SCRATCH}/mutant-${mutation.name}.json`;
     steps.push({
       label: `build ${mutation.name}`,
       expect: 0,
@@ -94,13 +121,9 @@ export function buildSteps(options, { exists = existsSync, rev = shortRev } = {}
       ],
     });
     steps.push(
-      compareStep(
-        `compare ${mutation.name}`,
-        baseWasm,
-        out,
-        `${SCRATCH}/mutant-${mutation.name}.json`,
-        1,
-      ),
+      mutation.probe
+        ? probeStep(`probe ${mutation.name}`, mutation.probe, out, evidence, 1)
+        : compareStep(`compare ${mutation.name}`, baseWasm, out, evidence, 1),
     );
   }
   return steps;
@@ -201,7 +224,7 @@ export async function runInstanceRefactorVerification({
       }
     }
     log(formatReport(results, Date.now() - started));
-    log("\nOK すべての手順が期待どおり（照合は差分 0、変異 M1〜M3 は差分あり）");
+    log("\nOK すべての手順が期待どおり（照合は差分 0、probe は期待どおり、変異 5 本は検出された）");
     return 0;
   } finally {
     signalTarget.removeListener("SIGINT", onInterrupt);

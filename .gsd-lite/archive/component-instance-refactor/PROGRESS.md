@@ -1,0 +1,90 @@
+# PROGRESS — component-instance-refactor
+
+恒常の注意（毎ターン写さない。変わったらここを直す）:
+
+- 入口は `gsd-lite-loop.sh --where`（本マイルストーンは mode=repo、`$MS` = `.gsd-lite`、`$TARGET` = `.`）。
+- lean-ctx フックが `.gsd-lite/` `scripts/` `tests/` 配下への `cat` / `sed` / `grep` / `tail` を「project root 外」で拒否する。読みは Read ツール、検索は `git grep`（追跡ファイル）/ `bun -e`（未追跡）。`sha256sum` / `cp` / `rm` / `cargo` / `bun` / `git worktree` は通る。lean-ctx の MCP ツール自体は未接続。
+- base（main = `35120e0`）の WASM は `.gsd-lite/logs/component-instance-refactor/base-main-35120e0.wasm` に保存済み（gitignore）。無ければ RESEARCH §3 の手順で 30 秒で再現できる。`bun run build:wasm` は `public/engine.wasm` を上書きするので base と混同しない。
+
+## turn 1 — research — 現状構造の棚卸し・画面一覧・照合の実測・Rhai 公式
+
+- やったこと: `Runtime` 全フィールドの利用箇所と thread_local を表にし、22 画面の handler / 非同期機能の一覧を Node 実行で作り、base と現行の WASM に 230 リクエストを流して差分 0 / 同一 WASM 2 インスタンスで差分 0 / 変異で差分 137 を実測。Rhai 1.26 の Engine / AST / call_fn / no_module を公式から確認。RESEARCH.md に落とし穴 14 件と検証方法、要件への提案 4 件を書いた。重大発見なし（BLOCKED しない）
+- 想定外: (1) 同一ソースを別 `--target-dir` で 3 回ビルドした WASM の sha256 が 3 つとも違う（1 byte 差）。バイト比較は照合に使えないことが確定。(2) `engine/` だけを写した変異コピーが `include_str!("../../public/themes/*.json")` で compile error。`public/themes` を足して解決。(3) lean-ctx フックが `cat scripts/build.mjs` 等を拒否（前回振り返りどおり）。(4) ランダムな `Engine` 生成コストや `no_module` の API 単位の影響は公式ページに明記が無く、「モジュール読み込み無効」の範囲でしか書けなかった
+- やり直し: 1 回（変異ビルド。`public/themes` 不足で compile error → 写して再ビルド 7 秒）
+- 次への注意: plan は RESEARCH §5 の P1〜P14 をタスクの完了基準に対応付ける。照合スクリプトは `scratch/turn-001-compare.mjs` を雛形にしつつ、差分表示を「最初に異なる JSON 経路」に変える（P7 の変異で先頭 200 文字では差分箇所が読めなかった）。空 payload で失敗する部品種（slider / checkbox / panel / window / grid / kanban）の代表 payload を plan で決める。`git worktree list` は 1 行（本ターンで後始末済み）、scratch の target dir も削除済み
+
+## turn 2 — plan — 4 タスク（T1 照合・変種ビルド script / T2 Instance リファクタ / T3 設計文書と追従 / T4 最終判定 runner と全検査）
+
+- やったこと: REQUIREMENTS / DECISIONS / RESEARCH と `lib.rs:362-1142` / `abi.rs` / 7 つの `Requests::clear` / docs の追従先を実物から読み、PLAN.md を作成。Instance の 12 フィールドとメソッド 3 本（`load` / `clear_queues` / `state_json`）、`commit_state` と `take_effects` を Runtime に残す理由、代表 payload 表、追加シーケンス 15 本、変異表 M1〜M3、落とし穴 P1〜P14 の担当表、振り返り提案の採否を「決めた事項」「メモ」に固定した。`abi.rs` は `revision` が `pub` のまま Runtime に残るので無改修で済む見込み
+- 想定外: (1) lean-ctx の MCP ツール（`ctx_*`）が ToolSearch で見つからず未接続。通常ツールで進めた（恒常注意どおり）。(2) スキル本文の `.gsd-lite/gsd-lite-loop.sh` 相対パスは存在せず、PATH 上の `gsd-lite-loop.sh --where` で解決（前回振り返りどおり）。(3) `git grep -A4` はオプション順の都合で失敗し、各 `clear` の本文は Read で 7 か所読んだ
+- やり直し: 1 回（ツール指定修正: `git grep ... -A4` のオプション位置でエラー → Read に切替）
+- 次への注意: T1 は base WASM を `scripts/build-engine-variant.mjs --commit 35120e0` で作り直して script 自体を実証する（research 保存分の `.gsd-lite/logs/.../base-main-35120e0.wasm` は比較用の予備）。変異 M1〜M3 の `from` 文字列は「ちょうど 1 回」を script が検査するので、refactor（T2）後に動いたら `from` だけ直して PLAN 決めた事項 9 に訂正行を書く。`public/screens/rpc-demo.pb` は `bun run build:wasm` が生成する（gitignore）ので照合の前に必ず 1 回回す
+
+## turn 3 — impl — T1 挙動照合スクリプトと WASM 変種ビルドスクリプト
+
+- やったこと: サブエージェント 2 本（A `compare-engine-behavior.mjs` / B `build-engine-variant.mjs`）で並行実装し、親が結合して完了基準 4 の実測を前景で回した。実測は base(35120e0) vs 作業ツリー `diffs = 0` / 同一 WASM 同士 `diffs = 0` / M1 `diffs = 165`（`layout:*` の `data.widgets[*].x`）・M2 `diffs = 2`（`dialog-prompt-input` の `data.revision`）・M3 `diffs = 1`（`abi-errors` の `event:unknown-target` の `error`）でいずれも exit 1。集計は `steps = 346` / `okResponses = 325` / `errorResponses = 21` / `sequences = 41`（`steps ≥ 230` 充足）。引数不備・WASM 不在は 4 形すべて exit 2、`--base` 単独 / `--candidate` 単独も exit 2（P8）。ハッシュ・バイト比較の不使用を `bun -e` の走査で確認（P5）。変種ビルドは cold 30.2s / 以降 約 8s、`git worktree list` 1 行・`git status --porcelain engine/` 空（P12 / P14）。`node --check` 2 本・`bun run check`・`bun run docs:check` green、`git diff --stat -- tests/ engine/` 空
+- 想定外: (1) `bun run check` が **T1 と無関係な既存の赤** だった。`.gsd-lite/{DECISIONS,PLAN,RESEARCH}.md` が oxfmt 未整形のまま turn 1〜2 でコミットされており、T1 の完了基準 6 を満たせない。過去にも同種のコミット（`2f79ddf` 「format management documents」）がある前例に従い `bunx vp fmt` を掛けた（表の桁揃えのみ・本文の変更なし）。(2) サブエージェント A が自分の作業後に `git checkout -- .gsd-lite/` を打ち、親が掛けた整形を巻き戻した（再実行して復旧。**サブエージェントへの依頼文に「`git checkout` / `git restore` を使わない」を明記すべきだった**）。(3) `git grep` は未追跡ファイルを見ないので、新規 script に対する P5 の走査が一度 空振りで「問題なし」に見えた。`bun -e` で読み直して確認した。(4) 実物の挙動が PLAN の決めた事項 8 と 5 点食い違い、PLAN を訂正した（下記）
+- やり直し: 2 回（(a) `.gsd-lite/` 整形の巻き戻しからの復旧 1 回、(b) サブエージェント A への追加依頼 1 回 = `host-result` / `file-result` が PLAN の意図した経路に届いていなかったので sequence を直させ、実測を全部取り直した）
+- PLAN 訂正（4 件。いずれも要件・決定には触れない）:
+  - T1 直下に「訂正（turn 3 / 実測）」= `steps 346 / ok 325 / error 21 / sequences 41`（完了基準 4 の要求どおり。T2・T4 の期待値）
+  - 決めた事項 8 に訂正 5 件: ①`host-result` の `host_result.data` は `null` → `{body: []}`、かつ `host_progress` を `host_result:refresh` の前へ（`null` だと `listed` が throw してロールバックし、`refreshOrders` が state 無変化で effect を出さず、progress が消費済み id に当たる）②`file-result` は `list` の直前に `file_result:bytes:2` を 1 歩追加（`busy()` 共有の `list` は直前 state が `loading` のままだと effect を出さない。`abi.rs:70` の「失敗完了は pending id を消費しない」も同時に実証）③`navigate` の fixture の handler 名は `go` → `combine`（`go` は Rhai 予約語）④`failed-load-keeps-previous` の不正 script は `fn init(s){throw "failed";s} fn add(s,e){s}`（`add` 欠落形は handler 検証で先に落ちる）⑤`theme` は先に `load` を 1 歩置く
+  - 決めた事項 9 に確定した `from` 3 本と実測差分数。M1 の「基本列で 137 以上」→ 実測は全列で 165
+- 既存テストの期待値変更: なし（`git diff --stat -- tests/ engine/` が空。`tests/` も `engine/` も 1 行も触っていない）
+- 次への注意: T2 で `self.ui` → `self.root.ui` に差し替えると **M1 の `from` が必ず動く**（M2 の `from` は `self.revision` だが `revision` は Runtime 残留なので動かない見込み）。動いたら `from` だけ直して PLAN 決めた事項 9 に訂正行を追記する。照合の期待値は上の 4 値（346 / 325 / 21 / 41）で、`diffs = 0` と**この 4 値の一致**の両方を確かめること（件数がずれていれば sequence が落ちている）。base は `target/engine-compare/base-35120e0.wasm` に既にある（再ビルド不要・cargo target-dir も温まっているので変種は約 8s）。サブエージェントに依頼するときは「`git checkout` / `git restore` / `git stash` を使わない」「`bun run fmt` ではなく対象ファイルだけを `bunx vp fmt <path>` で整形する」を依頼文に入れる（本ターンで巻き戻しを 1 回踏んだ）。新規・未追跡ファイルの検査に `git grep` を使わない（空振りする）
+
+## turn 4 — impl — T2 `Runtime` → `Instance` の挙動不変リファクタ
+
+- やったこと: `engine/src/instance.rs` を新設して 12 フィールドと `load` 本文（`lib.rs:409-569`）をそのままの順序で移し、`Instance::load` / `clear_queues` / `state_json` の 3 本を持たせた。`Runtime` は `root: Instance` / `dialogs` / `pages` / `pub revision` の 4 フィールドになり、残りのメソッドは本文を保ったまま Instance のフィールド参照を `self.root.<field>` に差し替えた（73 か所を機械置換 + 多行 `self\n.engine` チェーン 6 か所を手当て）。`commit_state` / `take_effects` は決めたとおり Runtime 残留、`clear` 7 連は `pages.clear()` → `root.clear_queues()` → `dialogs.clear()` に統一
+- 想定外: (1) 機械置換の正規表現が `let next = self` と `.engine` に行が分かれた 6 か所を拾えず E0609 が 6 件出た（cargo の提案どおり `.root` を 1 行挿入して解決）。(2) `load_with_clock` の `mut package: Package` は `package` に落ちた（`package` を `Instance::load` へ move するので `mut` が不要になり、残すと unused_mut 警告で `check` が赤くなる）。束縛の `mut` は呼び出し側から観測できず公開 API ではないので、PLAN 決めた事項 2 の形どおりとした（`pub fn` 行の差分は 0 行）。(3) `cargo fmt` が `layout` の `fold` 引数を再インデントした（`&self.root.ui` で行が伸びたため）。値は不変で `abi.rs` には波及していない
+- やり直し: 1 回（上記 (1) の E0609 6 件。ビルドし直して green）
+- 完了基準の根拠: ①`instance.rs` の `pub(crate)` フィールド 12 件を順序どおり確認、Runtime は 4 フィールド ②`git diff main -- engine/src/lib.rs` の `pub fn` 行の差分 0 行、`git diff main --stat -- engine/src/abi.rs` 空 ③`bunx vp test run` 631 passed / `bun run test:rust` 15 passed（`lib.rs` 内テスト 4 本を含む）・`git diff main --stat -- tests/ engine/src/extensions/` 空 ④照合 `diffs = 0` かつ `steps 346 / ok 325 / error 21 / sequences 41` が T1 の訂正行と一致 ⑤変異 M1 / M2 / M3 をリファクタ後のソースで再ビルドして 3 本すべて exit 1（`diffs = 165 / 2 / 1`、差分経路も `layout:* data.widgets[*].x` / `dialog-prompt-input data.revision` / `abi-errors event:unknown-target error` で T1 と同じ）⑥文字列リテラル集合が main と完全一致（**差 0**。全リテラル 199 件、`Err(` / `format!(` 由来 61 件の 2 通りで確認。`scratch/turn-004-strings.mjs`）⑦`components` / `HashMap<String, Instance>` / `instances` の走査が 0 行 ⑧`bun run check` green（`cargo fmt --check` 含む）・`bun run docs:check` green・数値リテラルの多重集合 143 件が main と一致（制限値の差分なし）。`git worktree list` 1 行
+- 既存テストの期待値変更: なし（`tests/` も `engine/src/extensions/` も 1 行も触っていない。`git diff main --stat` が空）
+- PLAN 訂正: 決めた事項 9 に「訂正（turn 4 / T2 後）」= M1 の `from` / `to` の 2 行目を `&self.ui,` → `&self.root.ui,`（turn 3 の申し送りどおり M1 だけ動いた。M2 / M3 は無変更、実測差分数は 3 本とも turn 3 と同一）
+- 次への注意: T3 は文書のみ。フィールド一覧は `git grep -n -E "^    pub\(crate\) [a-z_]+:" -- engine/src/instance.rs` が **12 行**なので表も 12 行にする（P10）。`instance.rs` は追跡済みになったので `git grep` が使える。`Instance` のメソッドは 3 本（`load` / `clear_queues` / `state_json`）、Runtime 残留の理由は「`prepare` 7 連の順序と『検証が全部通ってから代入』を動かさないため `commit_state` を Runtime に置いた」。追従 4 か所（`docs/README.md` / `docs/architecture.md` の責務表と `:59-61` の 1 文 / `README.md:98-99`）を忘れずに、`bun run docs:check` と `bunx vp fmt <path>` で締める。T3 はサブ作業 2 本（本文 / 追従）なのでサブエージェント可だが、依頼文に turn 3 の 2 点（`git checkout` 系を使わない・`bun run fmt` ではなく対象ファイルだけ `bunx vp fmt`）を必ず入れる
+
+## turn 5 — impl — T3 設計文書 `docs/components-plan.md` と追従
+
+- やったこと: サブエージェント 2 本（A `docs/components-plan.md` 本文 / B 追従 4 か所）で並行実装し、親が統合して検証した。本文は 8 節（状態の定型文 / 目的と前提と却下 3 案 / 使い方（YAML 最小例 + 子 Rhai の `emit`）/ Instance 木の構造 / 設計決定 8 論点の表 + 注記 2 件 / 段階計画 1〜6 / 本マイルストーンで確定した構造 / 残課題 3 件）。追従は `docs/README.md` の案内表に 1 行（「計画・検討」と明記して契約文書と区別）、`docs/architecture.md` の責務表に `instance.rs` 行追加と `lib.rs` 行の「Runtime（root 共通物）」化 + 「画面とイベントの確定」節の 2 文、`README.md:99` に 1 行。コードは 1 行も触っていない
+- 想定外: (1) 追従先チェックリスト 1 行目の確かめ方が `git grep "instance.rs" -- … engine/src/lib.rs` を 3 ファイルとも 1 行以上と要求していたが、Rust の `mod` 宣言は拡張子を書かないので `lib.rs` に `instance.rs` の文字列は原理的に現れない（実物は `lib.rs:21` の `mod instance;`）。PLAN の確かめ方を訂正した。(2) サブエージェント A が Runtime 4 フィールド表の型列に `root` = `Instance` / `revision` = `pub u32` と書いていた。実物は `root: instance::Instance` で、`pub` は型ではなく可視性なので親が 2 セルを直した（受け入れ基準 5 の文書とコードの一致のため）
+- やり直し: 1 回（PROGRESS の turn 4 エントリの固定項目名「次への注意」を「次への注意（turn 4 時点）」に書き換えてしまい、reflect が読む固定項目名を壊すので元に戻した）
+- 完了基準の根拠: ①冒頭が `platform-features-plan.md:3-4` と同じ定型（状態 / 根拠にしない / `components.md` を別に起こす + 日付行）②設計決定表は DECISIONS の 8 論点そのままで、注記 2 件（`storage::safe_key` の区切り文字 / `http` effect の `kind` 欠落）を表直下に置いた ③Instance フィールド表の行数が **12**（`git grep -c` も 12）で、名前・型・順序が `instance.rs:13-24` と一致。Runtime 4 フィールド表と「root 共通物を Runtime に残す理由」も記載（P10）④段階計画は段階 1・2（完了・何をしたか）と 3〜6 を R1 の内容どおり ⑤追従 4 か所すべて（`git grep "components-plan.md" -- docs/README.md` ちょうど 1 行、`git grep "instance.rs" -- README.md docs/architecture.md` 各 1 行、`architecture.md` の 2 文も差し替え済み）⑥`bun run docs:check` green（472 リンク / 58 ファイル）・`bun run check` green（260 ファイル整形済み・lint 0 件）・文書に生の実測値なし（証跡は `target/engine-compare/` の JSON を指す形）
+- 回帰の確認（文書のみの変更だが `tests/documented-*.test.js` が docs を読むため全部回した）: `bunx vp test run` 631 passed / `bun run test:rust` 15 passed / 照合 `diffs = 0`（`steps 346 / ok 325 / error 21 / sequences 41` が T1 の訂正行と一致）。`git diff main --stat -- tests/ src/` が空、本ターンの `git diff` は Markdown 4 ファイルのみ
+- 既存テストの期待値変更: なし（`tests/` を 1 行も触っていない）
+- PLAN 訂正: 追従先チェックリスト 1 行目の確かめ方に「訂正（turn 5 / 実測）」= `lib.rs` は `instance.rs` ではなく `mod instance;`（`lib.rs:21`）で確かめる。要件・決定には触れない
+- 次への注意: T4 は最終タスクでサブエージェントを起動せず前景で回す（PLAN T4 の並列サブ作業は「なし」）。`scripts/verify-instance-refactor.mjs` は `scripts/verify-transfer.mjs:7-15` の手順配列の形を流用し、**変異 M1〜M3 は exit 1 を要求**する（exit 0 なら歯なしとして失敗）点を間違えない。`docs/testing.md:83` の Playwright「3本」の記述は変えずに**別の文**で照合スクリプト 3 本を足す。base WASM は `target/engine-compare/base-35120e0.wasm` に既にあり cargo target-dir も温まっているので変異ビルドは 1 本約 8s、照合は 1 回約 0.7s。最終判定はクリーンな作業ツリー（`git status --porcelain` が空）で回す必要があるので、`verify-instance-refactor.mjs` と `docs/testing.md` を**先にコミットしてから** gate を回す順序にする
+
+## turn 6 — impl — T4 最終判定スクリプトと全検査
+
+- やったこと: `scripts/verify-instance-refactor.mjs` を新設（`verify-transfer.mjs:7-15` の手順配列 + 所要計測。変異表は `build-engine-variant.mjs` の `MUTATIONS` を import して二重定義を避けた）、`docs/testing.md:85` に照合スクリプト 3 本の用途・入口・所要を**別の段落**で追加（`:83` の Playwright「3本」は無変更）。先にこの 2 ファイルをコミットしてクリーンな作業ツリーにし、gate を前景で 1 回通して exit 0
+- 想定外: なし
+- やり直し: 1 回（PROGRESS の turn 5 の固定項目名「次への注意」を「次への注意（turn 5 → T4）」に書き換えてしまい、turn 5 と同じ失敗を踏んだので即戻した。**固定項目名は読み返し用の見出しであって追記しない**）
+- gate の実測（`bun scripts/verify-instance-refactor.mjs`、13 手順すべて期待どおり・exit 0）:
+  - 照合（base `35120e0` vs `public/engine.wasm`）: `steps 346 / diffs 0 / ok 325 / error 21 / sequences 41`（T1 の訂正行と一致）
+  - 変異: M1 `layout-x-offset` diffs 165（`layout:* data.widgets[*].x`）/ M2 `dialog-draft-revision` diffs 2（`dialog-prompt-input data.revision`）/ M3 `unknown-item-message` diffs 1（`abi-errors event:unknown-target error`）。3 本とも exit 1 で歯あり
+  - 手順別所要（秒）: build:wasm 0.2 / vp test run 5.4 / test:rust 0.2 / check 2.4 / docs:check 0.0 / build 0.5 / 照合 0.8 / M1 ビルド 7.7 + 照合 0.7 / M2 8.2 + 0.8 / M3 8.2 + 0.7。**合計 36.1**（base WASM は既存で再ビルドなし）
+- 受け入れ基準 1〜6 の根拠:
+  1. gate の第 1〜6 手順が green（`package.json:19` の `test` = `build:wasm && vp test run && test:rust` なので gate の先頭 3 手順と同一）。`bunx vp test run` 631 passed / 30 files、`bun run test:rust` 15 passed、`bun run check`（261 files 整形済み・lint 0）、`bun run docs:check`（472 リンク / 58 ファイル）、`bun run build` 成功。`git diff main --stat -- tests/ engine/src/extensions/` が空（期待値変更 0 件・ファイル変更 0 件）
+  2. `bun scripts/compare-engine-behavior.mjs` が `diffs = 0`（証跡 `target/engine-compare/compare.json`）、変異 3 本が exit 1（変異表 1 件以上の要求に対し 3 件）
+  3. `git diff main --stat -- engine/src/abi.rs` が空、`tests/abi.test.js` は `tests/` 無改修に含まれ green
+  4. `git diff main -- engine/src/lib.rs` の `pub fn` 行の差分 0 行、`lib.rs` 内テスト 4 本を含む cargo test 15 passed
+  5. `git grep -c -E "^    pub\(crate\) [a-z_]+:" -- engine/src/instance.rs` = **12**、`docs/components-plan.md` の Instance フィールド表も **12 行**で名前・順序が一致（T3-3 の比較を再実行）
+  6. `git grep -c -E "components|HashMap<String, Instance>|instances" -- engine/src/lib.rs engine/src/instance.rs` が 0 行（exit 1 = 不一致）
+- 既存テストの期待値変更: なし（`tests/` を 1 行も触っていない。`git diff main --stat -- tests/` が空）
+- PLAN 訂正: なし
+- 後始末: `git worktree list` 1 行、`git status --porcelain` 空（証跡は gitignore 済みの `target/engine-compare/` のみ。変異 WASM と JSON 4 本はそこに残置）
+- 次への注意: 全タスク完了。verify は `bun scripts/verify-instance-refactor.mjs` 1 本で基準 1・2 を再現できる（クリーンな作業ツリーが前提。約 36 秒。base WASM が消えていれば +30 秒で自動再ビルドする）。基準 5 の文書とコードの一致は上記 5 の 2 つの数（12 / 12）を再実行して確かめる。基準 3・4・6 は `git diff main` と `git grep` の 3 本で、いずれも上に実コマンドを書いてある。PLAN の訂正行（T1 直下の 4 値、決めた事項 8 の 5 件、決めた事項 9 の `from` と turn 4 の M1 更新、追従先チェックリスト 1 行目）は実測を正とした結果なので、verify はそれを前提に読むこと
+
+## turn 7 — verify — 合格 / 指摘 0 件（残留リスク 4 件）/ push + PR #1 作成
+
+- やったこと: コードレビューとセキュリティチェックを読み取り専用サブエージェント 2 本で並行させ、親が最終判定 `bun scripts/verify-instance-refactor.mjs` をクリーンな作業ツリーで前景実行（exit 0、13 手順、合計 37.2 秒。照合 346 / 0 / 325 / 21 / 41、変異 165 / 2 / 1）。受け入れ基準 1〜6 と PLAN「追従先チェックリスト」5 行を実コマンドで再照合、文字列集合（199 / 61 差 0）を再実行、3 スクリプトの引数不備 6 形が exit 2 であることをプローブ。VERIFICATION.md を書いてコミット → `git push -u origin` → `gh pr create` で PR <https://github.com/6in/uivolve-web/pull/1>
+- 想定外: (1) lean-ctx の MCP ツール未接続（恒常注意どおり通常ツール）。`cat .gsd-lite/state.json` もフックで拒否され Read で読んだ。(2) Read ツールが `scripts/build-engine-variant.mjs` / `verify-instance-refactor.mjs` を「このセッションで読了済み」として中身を返さなかった（サブエージェントの読みと重複判定された模様）。`git show HEAD:<path>` で取得した。(3) コードレビューのサブエージェントが約 8 分かかり、セキュリティ側（約 2.5 分）の 3 倍。待ち時間は `sleep` の背景実行で埋めた
+- やり直し: 0 回
+- 判定の根拠: 差し戻し 0 件。レビューが挙げた「`rpc-result` 列が `complete_rpc` の handler 経路に届かない」「`handlerNodes` が `menu` / `bbar` / `tbar` / `buttons` を走査しない」は、PLAN 決めた事項 8 が「デコード失敗ならそのエラーを照合」と明示して受け入れた形で、要件に堅牢性・網羅性の基準が無く、dispatch 経路は他の 137 handler で差分 0 のため残留リスクとした（verify が要件を追加しない）
+- 次への注意: reflect は PR #1 のマージを待たない（マージは人間 / CI）。振り返りの材料: (a) 照合列の設計時に「handler が実際に Rhai まで届くか」を base の応答で 1 度確かめる手順を T1 の完了基準に入れると、RPC の decode 失敗のような空振りを plan 段階で拾える。(b) サブエージェントのレビューは観点を絞るほど速い（セキュリティ 2.5 分 vs 汎用コードレビュー 8 分）。(c) 恒常注意の「`.gsd-lite/` の `cat` 拒否」は verify でも再現。(d) Read ツールの読了済み判定が親子で共有されるので、サブエージェント起動後に同じファイルを親が読むときは `git show` を使う
+
+## turn 8 — reflect — component-instance-refactor
+
+- やったこと: 振り返りを .gsd-lite/reflect/20261007-1205-component-instance-refactor.md に作成（提案 11 件）。計測は turns.jsonl を `jq` で集計（7 試行・92.1 分・52.98 USD・リトライ 0・権限拒否 0・BLOCKED 0・差し戻し 0）。前回の提案 11 件の反映を確認（守られた 7 / 該当なし 2 / 守られなかった 1 = lean-ctx フック root / 入口誤り 0）。PR #1 は OPEN・CI `build` は IN_PROGRESS（マージは人間 / CI）
+- 想定外: `cat .gsd-lite/logs/.../turns.jsonl` が lean-ctx フックに拒否（root が別プロジェクト）。`jq` と Read で読んだ（恒常注意どおり。Minus に 1 件として記録）
+- やり直し: 0 回
+- 次への注意: 次の plan は「照合列を PLAN に固定する前に base WASM へ 1 度流す」「research / plan もコミット前に `bunx vp fmt <path>`」「サブエージェント依頼文に `git checkout` 系の禁止を固定」を採否表で扱う。lean-ctx フック root の修正はマイルストーンの外（ループ運用側）で起票する

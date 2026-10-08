@@ -1,220 +1,334 @@
-# PLAN — component-instance-refactor
+# PLAN — component-composition
 
 - 作成: 2026-10-07 / gsd-lite-plan（turn 2）
-- 入力: REQUIREMENTS.md / DECISIONS.md / RESEARCH.md / `.gsd-lite/reflect/` 直近 2 件
-- `$MS` = `.gsd-lite`、`$TARGET` = `.`（mode=repo）。対象側の `CLAUDE.md` / `AGENTS.md` は無い（`ls` で確認）。規約は `CONTRIBUTING.md` と `docs/testing.md`（検証コマンド）に従う
+- 入力: REQUIREMENTS.md / DECISIONS.md / RESEARCH.md / `.gsd-lite/reflect/` 直近 2 件 / 本ターンのプローブ `.gsd-lite/logs/component-composition/scratch/turn-002-sequences-probe.mjs`（base WASM `target/engine-compare/base-ef582d5.wasm` へ流した結果。§「決めた事項」8）
 
 ## 検証コマンド
 
-impl の各ターンがテストに使うコマンド（リポジトリルートで実行。`docs/testing.md:7-13` のコマンド列 + 本マイルストーンの照合）:
+impl の各ターンがテストに使うコマンド（対象リポジトリのルート `.` で実行）:
 
 ```bash
-bun run build:wasm                      # public/engine.wasm と public/screens/rpc-demo.pb を生成（照合の前提）
-bunx vp test run                        # Vitest（既存テストファイルは無改修・期待値変更 0）
-bun run test:rust                       # cargo test（lib.rs 4 本 + extensions 系が無改修 green）
-bun run check                           # oxlint/oxfmt + cargo fmt --check
-bun run docs:check                      # Markdown リンク検査
-bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-35120e0.wasm --candidate public/engine.wasm
-                                        # T1 以降。応答 JSON の差分 0 で exit 0
+bun run build:wasm                 # Rust を触ったら必ず先に（Vitest は public/engine.wasm を直接読む）
+bunx vp test run                   # Vitest 全体（tests/**/*.test.js）
+bunx vp test run tests/<file>      # 1 ファイルだけ
+bun run test:rust                  # cargo test --manifest-path engine/Cargo.toml
+bun run check                      # vp check + cargo fmt --check
+bun run docs:check                 # Markdown のローカルリンク
+bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-ef582d5.wasm --candidate public/engine.wasm   # 差分 0 で exit 0（約 1 秒）
 ```
 
-- 環境の初期化（テストの前に毎回）: `bun run build:wasm`（`public/engine.wasm` を作業ツリーから再生成。`rpc-demo.pb` も生成される）。base WASM が無ければ `bun scripts/build-engine-variant.mjs --commit 35120e0 --out target/engine-compare/base-35120e0.wasm`（T1 以降。約 30 秒）。T1 より前は `.gsd-lite/logs/component-instance-refactor/base-main-35120e0.wasm`（research が保存済み）を `cp` して使ってよい
-- 最終判定（クリーンな状態から全検査。verify と最終タスクが使う）: `bun scripts/verify-instance-refactor.mjs`（T4 で作る。build:wasm → vp test → test:rust → check → docs:check → build → base ビルド（無ければ）→ 照合 → 変異 M1〜M3 の非 0 確認、手順ごとの所要と合計を最後に出力、exit code を返す）。T4 完了までは上のコマンド列を順に手で回す
-- base コミット: `main` = `35120e0`（`git log --oneline -1 main`）。DECISIONS「`main` = `github/main` = `35120e0`」と一致
+- 環境の初期化（テストの前に毎回）: なし。base WASM `target/engine-compare/base-ef582d5.wasm` が無ければ 1 回だけ `bun scripts/build-engine-variant.mjs --commit main --out target/engine-compare/base-ef582d5.wasm`（`main` = `ef582d5`。`git rev-parse --short main` で確認。約 35 秒。`target/` は gitignore）
+- 整形: 変更した Markdown / JS は `bunx vp fmt <path>`、Rust は `cargo fmt --manifest-path engine/Cargo.toml`。コミット前に `bun run check`
+- 最終判定（クリーンな状態から全検査。verify と T12 が使う）: `bun scripts/verify-instance-refactor.mjs`（T10 で候補のみ列と変異 M4 / M5 を組み込んだ後の形。既存 6 検査 → base 照合 差分 0 → 候補のみ probe exit 0 → 変異 M1〜M3 の照合 exit 1 → 変異 M4 / M5 の probe exit 1）
 
 ## 追従先チェックリスト
 
-| 変更の種類                                 | 直す場所                                                                                                                                                                                                                                                                      | 確かめ方                                                                                                                                                                                                                                                                                                                |
-| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `engine/src/instance.rs` を足す            | `lib.rs` の `mod` 一覧（`lib.rs:5-28`）、`docs/architecture.md:25-55` の責務表（`場所 \| 担当` 2 列）、`README.md:98-99`（ルート README の engine ファイル箇条書き）、`docs/architecture.md:59-61`（「Runtime は…保持する」「成功した Runtime だけをスロットへ」の 1 文追従） | `git grep -n "instance.rs" -- README.md docs/architecture.md` が 2 ファイルとも 1 行以上、かつ `git grep -n "mod instance" -- engine/src/lib.rs` が 1 行（**訂正（turn 5 / 実測）**: Rust の `mod` 宣言は拡張子を書かないので `lib.rs` に `instance.rs` の文字列は現れない。`lib.rs:21` の `mod instance;` を確かめる） |
-| 文書 `docs/components-plan.md` を足す      | `docs/README.md:11-42` の表（`やりたいこと \| 読む文書` 2 列。検討書は「計画」「検討」と明記して契約と区別）                                                                                                                                                                  | `git grep -n "components-plan.md" -- docs/README.md` が 1 行。`bun run docs:check` green                                                                                                                                                                                                                                |
-| `scripts/` に恒久スクリプトを足す          | `docs/testing.md:83` の恒久スクリプト段落（Playwright 3 本の件数は変えず、**別の文**で照合スクリプト 3 本（compare / build-engine-variant / verify-instance-refactor）の用途と入口を足す）                                                                                    | `git grep -n -E "compare-engine-behavior                                                                                                                                                                                                                                                                                | verify-instance-refactor | build-engine-variant" -- docs/testing.md` が 3 名とも 1 行以上。`3本` の記述は Playwright 用のまま |
-| `Runtime` の公開 API 名を使う文書          | `docs/native-extensions.md:83-91`（`load_with_extensions` / `load_with_clock`）、`docs/date-functions.md:59`（`load_with_clock` / `with_clock`）、`docs/component-development.md:39`（`Runtime::load` / `Runtime::dispatch`）、`docs/dialogs.md:106`（`lib.rs` の記述）       | 公開シグネチャは維持するので**変更しない**。`git diff main --stat -- docs/native-extensions.md docs/date-functions.md docs/component-development.md docs/dialogs.md` が空                                                                                                                                               |
-| エラー文字列（`lib.rs` の `Err(` 41 か所） | 移す先の `instance.rs`。文字列は 1 字も変えない                                                                                                                                                                                                                               | main の `lib.rs` と HEAD の `lib.rs`+`instance.rs` から `"..."` リテラルを抽出した集合が一致（T2 の完了基準。`git grep -c "Err(" -- engine/src/lib.rs` は main で 41）                                                                                                                                                  |
+| 変更の種類                                                           | 直す場所                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | 確かめ方                                                                                                                                   |
+| -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| 画面カタログに 1 件足す（`order-dashboard`）                         | `src/screen-catalog.js`（22 → 23 件）。`README.md:25`「21画面」と `README.md:110`「12画面」は既に古い値なので「23画面」に直す。`tests/widget-contract.test.js:59-74` / `tests/distribution.test.js:68-86` は自動で追従。`bun run build:wasm` が manifest を生成（`scripts/build.mjs:11-12`）                                                                                                                                                                               | `rg -n '21画面\|12画面\|22画面' README.md docs` が 0 件。`bunx vp test run tests/widget-contract.test.js tests/distribution.test.js` green |
+| Package / Node の属性を足す（`components` / `config` / `listeners`） | `docs/screen-format.md:5`（トップレベル任意属性の列挙）、`:74`（対応属性・未知属性・`itemId` の予約文字）。契約の本文は新設 `docs/components.md` に置き、screen-format からリンク                                                                                                                                                                                                                                                                                          | `rg -n 'components' docs/screen-format.md` が 2 件以上。`bun run docs:check` green                                                         |
+| ABI `load` 入力を広げる（`request.components`）                      | `docs/architecture.md:84`（操作と入力上限の段落）、`docs/architecture.md:60-68`（Instance 木）、`docs/components.md`（ABI 節）                                                                                                                                                                                                                                                                                                                                             | `rg -n 'request.components\|components' docs/architecture.md` が 1 件以上                                                                  |
+| 文書を新設する（`docs/components.md`）                               | `docs/README.md:28` の行を「設計を知る → components-plan.md」から「組み込む → components.md、検討記録 → components-plan.md」へ。`docs/components-plan.md:3` の「状態:」行に段階 3 完了と `components.md` への参照                                                                                                                                                                                                                                                          | `bun run docs:check` green。`rg -n 'components.md' docs/README.md docs/components-plan.md` が各 1 件以上                                   |
+| 照合スクリプトの列を増やす・候補のみ probe を足す                    | `docs/testing.md:85`（照合の段落: `handlerNodes` の走査範囲、新列 3 本、`components` 画面の除外、候補のみ証跡 `target/engine-compare/composition.json`、verify の手順と変異 5 本）。`scripts/verify-instance-refactor.mjs:1-6` のヘッダコメント                                                                                                                                                                                                                            | `rg -n 'composition.json' docs/testing.md scripts/verify-instance-refactor.mjs` が各 1 件以上                                              |
+| テストファイルを足す                                                 | `docs/testing.md:25-41` の表に `tests/components-loader.test.js` / `tests/components-demo.test.js` / `engine/src/composition_tests.rs` の行                                                                                                                                                                                                                                                                                                                                | `rg -n 'components-loader\|components-demo\|composition_tests' docs/testing.md` が 3 件                                                    |
+| Rhai の feature を足す（`internals`）                                | `engine/Cargo.toml:10-16`。版固定の注意を `docs/components.md` の制限節に 1 行（RESEARCH §3: `internals` の API は安定性の明記なし）                                                                                                                                                                                                                                                                                                                                       | `rg -n 'internals' engine/Cargo.toml docs/components.md` が各 1 件                                                                         |
+| 子で拒否する効果関数を足す / 減らす                                  | `engine/src/composition.rs` の stub 表（名前 × 引数の数）と load 時走査の禁止名集合。正は `git grep -n register_fn engine/src`（RESEARCH §1.5 の表: `http_get`1 / `host_call`2 / `host_cancel`1 / `storage_read`1 / `storage_remove`1 / `storage_write`2 / `file_read_text`〜`file_remove` 各 2 / `file_write_text` 3 / `file_write_bytes` 3（Blob / FileBytes の 2 overload とも 3 引数）/ `rpc_call`2 / `alert`1・2・3 / `confirm`2・3 / `prompt`2・3・4 / `navigate`1） | `engine/src/composition_tests.rs` の「全関数 × 全 arity」テストが表を列挙し、`register_fn` の grep 件数と突き合わせる（P7）                |
+| `validate` の xtype 固定リストの書き方を変える                       | `tests/browser/font-parity.mjs:1073` の正規表現が `lib.rs` から許可リストを読み取っている（`const XTYPES: [&str; <n>] = [...]` の形に追従させる）                                                                                                                                                                                                                                                                                                                          | `bunx vp test run tests/font-parity-runner.test.js` green（読み取れないと throw する）                                                     |
+| `handlerNodes` の走査キーを広げる                                    | `scripts/compare-engine-behavior.mjs:152-156`。`tests/browser/font-parity.mjs:1485` の `NODE_CHILD_KEYS` と同じ集合（`items / columns / menu / tbar / bbar / buttons / lanes`）                                                                                                                                                                                                                                                                                            | 両ファイルの集合が一致（目視）。`compare.json` の `steps` が base 照合で増えて差分 0                                                       |
+| 変異を足す（M4 / M5）                                                | `scripts/build-engine-variant.mjs:9-31` の `MUTATIONS`、`scripts/verify-instance-refactor.mjs:82-105` の手順生成、`docs/testing.md:85`「変異3本」                                                                                                                                                                                                                                                                                                                          | `rg -n '変異3本\|M1〜M3' docs scripts` が 0 件（「変異5本」「M1〜M5」に揃える）                                                            |
 
 ## Tasks
 
-- [x] T1: 挙動照合スクリプトと WASM 変種ビルドスクリプト（受け入れ基準 2 の道具。変異表つき）
-  - **訂正（turn 3 / 実測）**: `steps = 346` / `okResponses = 325` / `errorResponses = 21` / `sequences = 41`（22 画面 + font-parity 4 + 追加 15）。T2・T4 はこの 4 値を期待値として使う
+- [x] T1: 照合列の拡張（R9 (a)(b)）と base 証跡
   - 完了基準:
-    1. `scripts/compare-engine-behavior.mjs` が `--base <wasm> --candidate <wasm>`（**両方必須**。既定値で `public/engine.wasm` を base と見なさない = P8）と `--evidence <json>`（既定 `target/engine-compare/compare.json`）を取り、「決めた事項 6〜8」のリクエスト列を 2 つの WASM に流し、応答 JSON の**文字列一致**を数える。差分は `DIFF <画面id> <label> <最初に異なる JSON 経路（例 data.widgets[3].x）>` と両者の値（各 120 文字まで）で表示する（RESEARCH §3「先頭 200 文字では読めない」への対応）。最後に 1 行 JSON `{steps, diffs, okResponses, errorResponses, sequences, durationMs}` を出し、`diffs = 0` なら exit 0、`> 0` なら exit 1、引数不備・WASM 不在は exit 2。判定に WASM のハッシュを使わない（P5）
-    2. 全リクエスト（load / event / `*_result` / host_progress）に固定 `clock`（決めた事項 6）を付ける（P6）。`rpc` 定義を持つ画面は `buffer_store` で `public/screens/rpc-demo.pb` を入れてから `load`（P9）。集計行の `okResponses` / `errorResponses` を証跡 JSON に残す
-    3. `scripts/build-engine-variant.mjs` が (a) `--commit <rev> --out <wasm>`: `git worktree add --detach <scratch>/worktree-<rev> <rev>` → `cargo build --release --target wasm32-unknown-unknown --locked --manifest-path <wt>/engine/Cargo.toml --target-dir <scratch>/cargo-target` → `.wasm` を `--out` へ `cp` → `git worktree remove --force` の順で base を作れる。(b) `--mutation <name> --out <wasm>`: 決めた事項 9 の変異表から 1 件を選び、`engine/`（`target/` を除く）と `public/themes/`（`theme.rs:41,59` の `include_str!` が要る = P14）を `<scratch>/mutant-<name>/` へ写し、`from` 文字列が**ちょうど 1 回**出現することを確かめてから置換してビルドする（0 回・2 回以上は exit 2 で止まる）。作業ツリーの `engine/` は触らない（`git status --porcelain engine/` が空のまま）。どちらも所要秒を出力する。`<scratch>` の既定は `target/engine-compare/`（`.gitignore:1` の `target/` で無視される）。cargo の target-dir は変種間で共有し 2 回目以降を速くする
-    4. 実測（証跡は `target/engine-compare/*.json` と PROGRESS の集計行のみ。生の値を他の文書へ写さない）:
-       - base（`--commit 35120e0`）vs 作業ツリーの `public/engine.wasm`: `diffs = 0`
-       - 同一 WASM 同士: `diffs = 0`（決定性。P6）
-       - 変異 M1 / M2 / M3（決めた事項 9）: それぞれ exit 1 かつ `diffs > 0`。M1 は `layout:*` label の差分、M2 は `dialog-prompt-input` label の `data.revision`、M3 は `event:unknown-target` label の `error` を含むこと（P2 / P3 / P7 の歯）
-       - `steps ≥ 230`（RESEARCH §3 の基本列と同数以上）。実測の `steps` / `okResponses` / `errorResponses` を PLAN の本タスク直下に「訂正（turn N / 実測）」として 1 行追記する（T2・T4 が期待値として使う）
-    5. 後始末: `git worktree list` が 1 行（P12）。`target/engine-compare/` は残してよい（base WASM の再利用のため）
-    6. `node --check scripts/compare-engine-behavior.mjs` / `node --check scripts/build-engine-variant.mjs` を通し、`bun run check`（oxlint/oxfmt）green。既存テストは触らない
-  - 対象: `scripts/compare-engine-behavior.mjs`（新規）、`scripts/build-engine-variant.mjs`（新規）
+    - `scripts/compare-engine-behavior.mjs` の `handlerNodes`（`:152-156`）が `items / columns / menu / tbar / bbar / buttons / lanes` を走査する（`tests/browser/font-parity.mjs:1485` の `NODE_CHILD_KEYS` と同じ集合）。これで `uivolve-gallery` の `saveAs / saveDraft / sendMessage / clearChat` が baseSteps に入る（プローブ `handlerNodesExtra` の 4 件。他 21 画面と font-parity 4 組は 0 件）
+    - `buildPlan()` に次の 3 列を追加（決めた事項 8 の到達条件どおり）: `rpc-result-decodable`（`rpc-lab` load → `connect` → `rpc_result` ok + `@bufbuild/protobuf` で作った `uivolve.demo.EchoResponse` 15 バイト。`scripts/rpc-schema.mjs` の `registry`、`sequenceId: 7n`）、`gallery-menu`（load → `saveSplit-menu` `{action:"toggle"}` → `saveDraft` → layout 800 → `saveSplit-menu` toggle → `saveAs` → layout 800）、`gallery-bbar`（load → `galleryViews` `{action:"tab", value: <「会話」タブの index。pkg から算出>}` → `clearChat` → `chatInput` `{value:"x"}` → `sendMessage` → `sendMessage`（空入力で handler が throw する error 応答も列に残す））
+    - `buildPlan()` の最初のループ（`:263-264`）で `pkg.components` が空でない画面は base 照合から除外する分岐がある（P10。T9 以降に効く）
+    - `bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-ef582d5.wasm --candidate public/engine.wasm` が差分 0（現在の作業ツリーは main と同じソース）。`compare.json` の `records` に上記 3 列の label があり、`rpc_result:decodable` / `event:saveDraft`（toggle 後）/ `event:saveAs`（toggle 後）/ `event:clearChat`（tab 後）/ `event:sendMessage`（入力後）が `ok: true`。到達の根拠（revision の増分）は PROGRESS に label 単位で書く（P11）
+    - `docs/testing.md:85` の照合段落を列の追加に合わせて更新（文の追加のみ）
+  - 対象: `scripts/compare-engine-behavior.mjs`, `docs/testing.md`
   - 依存: なし
-  - 並列サブ作業:
-    - A: `compare-engine-behavior.mjs`（リクエスト列の生成・部品種別 payload・インライン fixture・JSON 経路差分・集計・exit code）（対象: `scripts/compare-engine-behavior.mjs`）
-    - B: `build-engine-variant.mjs`（worktree ビルド・変異コピービルド・target-dir 共有・後始末）（対象: `scripts/build-engine-variant.mjs`）
-    - 親が両方を結合して 4 の実測を前景で回す（各ビルド約 30 秒、2 回目以降は約 10 秒）
+  - 並列サブ作業: なし
 
-- [x] T2: `Runtime` → `Instance` の挙動不変リファクタ
+- [x] T2: 宣言とノード属性のパース・検証（R1 / R2 の `/` 予約 / P1 / P3 / P14）
   - 完了基準:
-    1. `engine/src/instance.rs` 新設。「決めた事項 1〜5」の構造どおり（`Instance` の 12 フィールドを `lib.rs:363-374` の順で、`Instance::load` / `clear_queues` / `state_json` を持つ）。`lib.rs` の `Runtime` は `root: Instance` / `dialogs` / `pages` / `pub revision` の 4 フィールド
-    2. `Runtime` の公開シグネチャ（`load` / `load_with_extensions` / `load_with_descriptors` / `load_with_clock` / `with_clock` / `dispatch` / `progress_host` / `complete_host` / `complete_http` / `complete_storage` / `complete_file` / `complete_rpc` / `complete_dialog` / `take_effects` / `state_json` / `layout`、`lib.rs:381-991`）は 1 字も変えない。`abi.rs` は**無改修**（`git diff main --stat -- engine/src/abi.rs` が空。`revision` が `pub` のまま Runtime に残るため差し替えも不要 = REQUIREMENTS「差し替えのみ」の 0 件）
-    3. `bunx vp test run` / `bun run test:rust` が green で、`git diff main --stat -- tests/ engine/src/extensions/` が空（既存テスト無改修）。`lib.rs` 内テスト 4 本（`lib.rs:1667,1694,1723,1733`）は無改修のまま `mod tests` に残す（P4 の `event_failure_rolls_back_and_execution_is_bounded` / `host_progress_and_cancel_roll_back_without_consuming_completion` を含む）
-    4. 照合: `bun run build:wasm` 後、`bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-35120e0.wasm --candidate public/engine.wasm` が `diffs = 0`、`steps` / `okResponses` / `errorResponses` が T1 の訂正行と一致（P1 / P2 / P3 / P4 / P6 の実証）
-    5. 変異 M1〜M3 を**リファクタ後のソース**で再ビルドして exit 1（`from` 文字列が refactor で動いた場合は `build-engine-variant.mjs` の変異表の `from` だけを直し、PLAN 決めた事項 9 に訂正行を書く）
-    6. エラー文字列の集合一致（P3）: `.gsd-lite/logs/component-instance-refactor/scratch/turn-NNN-strings.mjs` で `git show main:engine/src/lib.rs` と HEAD の `engine/src/lib.rs` + `engine/src/instance.rs` から `"..."` リテラル（`Err(` 行と `format!(` 行）を抽出し、集合の差が空であることを出力で確認（結果は PROGRESS に「差 0」とだけ書く）
-    7. 受け入れ基準 6: `lib.rs` の `load_with_clock` / `dispatch` に Instance を選ぶ分岐・`HashMap<_, Instance>`・`components` が無い（`git grep -n -E "components|HashMap<String, Instance>|instances" -- engine/src/lib.rs engine/src/instance.rs` が 0 行）
-    8. `bun run check` green（`cargo fmt` は `engine/src/instance.rs` と `lib.rs` に掛けてよいが、`abi.rs` に波及しないこと = P11）。制限値（`lib.rs:423` 100 KB、`:455-460` Engine 上限、`:470,488,509` 8 件、`abi.rs:33` 8 descriptors、`abi.rs:139` 2 MB、`dynamic_ui` の 200 / 20）の数値に差分が無いこと（`git diff main -- engine/src | grep -E "^[-+].*[0-9]"` を目視し、動いた行は移動のみであること）
-  - 対象: `engine/src/instance.rs`（新規）、`engine/src/lib.rs`
+    - `Package` に `components: BTreeMap<String, composition::Declaration>`（`#[serde(default, skip_serializing_if = "BTreeMap::is_empty")]`。`Declaration { url: String }` は `deny_unknown_fields`）、`Node` に `config: Value`（既定 Null）と `listeners: BTreeMap<String, String>`（既定空）を追加（`lib.rs:32-57, 59-273`。既存 22 画面の JSON は無改修で通る）
+    - 新モジュール `engine/src/composition.rs` に `validate_declarations(&Package) -> Result<BTreeSet<String>, String>`: 宣言名は `^[A-Za-z][A-Za-z0-9]{0,39}$`、`url` は空でなく 2048 バイト以下、衝突判定は「`validate` の固定リスト 48 件（`lib.rs:1020-1069`。`const XTYPES` に切り出す）に含まれる」または「`xtype` に宣言名を入れたダミー `Node` へ `fields::normalize(&mut n, "probe")` を通すと `xtype` が変わる / `port_kind` が付く」のいずれかでエラー（一覧を二重管理しない）
+    - `validate`（`lib.rs:1009`）が宣言名集合と親 xtype を受け取り、component ノード（xtype ∈ 宣言名）に対して: `itemId` 必須、親は `container / panel / fieldset / window` のいずれか（toolbar / menu / tabpanel 直下・`columns[].editor` は不可）、`config` は Null か object、`config` の値が `{ "bind": "<key>" }`（キーが `bind` 1 つの object）なら `<key>` は空でなくドットを含まない、`visibleBind` はドットを含まない。component ノードには `port_kind = "component"` を付ける（layout / dispatch の判別に使う）
+    - component ノードの許可属性は `xtype / itemId / config / listeners / flex / width / visibleBind` のみ。検査は `Instance::load` の `fields::normalize` より前（`instance.rs:54`）に template を `items` 走査して行い、「許可属性だけを写した既定 `Node` と `serde_json::to_value` で一致するか」で判定する（フィールド一覧を列挙しない）。同じ走査で `tbar / bbar / buttons / menu`（`Value`）と `columns[].editor` の中に宣言名の `xtype` があればエラー
+    - `validate_handlers`（`lib.rs:1130`）が `node.listeners` の各値も `functions` で検査する（無ければ `"{itemId}: listener {event} references undefined handler: {handler}"`）
+    - `itemId` に `/` を含むとエラー（`lib.rs:1080` の `:` 検査の隣に新しい文字列で 1 行。既存の `:` の文言は不変）
+    - `dynamic_ui::expand`（`dynamic_ui.rs:42-53`）が itemsBind 由来のノードで「xtype が宣言名」「`config` が Null でない」「`listeners` が空でない」のいずれかならエラー（P3）
+    - `Runtime::load_with_clock` は `package.components` が空でなければ本タスクでは `"Component packages were not bundled"` を返す（T4 で置き換える）。既存 `lib.rs` のテスト 4 本は無改修で通る
+    - `engine/src/composition_tests.rs`（`lib.rs` に `#[cfg(test)] mod composition_tests;`）: 宣言名の規則違反 / 固定リスト 48 件と別名（`fields.rs:30-45` の 11 件 + `extras.rs:63-74` の 12 件 + port 化する 4 件 `splitbutton / messagebox / codeeditor / htmleditor`）を宣言名にして全部エラー（テストは match 腕の文字列を列挙せず `fields::normalize` の結果で判定する） / 不正属性（`bind` / `handler` / `items` / `layout` / `disabled` の各 1 件 + 列挙外 1 件 `text`） / `itemId` 欠落 / toolbar 直下 / `columns[].editor` / `config` が配列 / `bind` がドット付き / `listeners` の handler 無し / `/` を含む itemId / itemsBind 由来の component xtype（親 handler が `{xtype: "<宣言名>"}` を push → エラー応答で state 不変）
+    - `bun scripts/compare-engine-behavior.mjs ...` 差分 0（P2: 既存経路の文字列は追加のみ）
+  - 対象: `engine/src/lib.rs`, `engine/src/composition.rs`（新規）, `engine/src/composition_tests.rs`（新規）, `engine/src/dynamic_ui.rs`, `engine/src/instance.rs`
   - 依存: T1
-  - 並列サブ作業: なし（`instance.rs` と `lib.rs` は互いに依存し、借用の整合を 1 人で取る方が早い）
+  - 並列サブ作業: なし（`validate` のシグネチャ変更が全ファイルに波及する）
 
-- [x] T3: 設計文書 `docs/components-plan.md` と追従（R1）
+- [x] T3: 子 Instance の実行環境（R5 / R1 子宣言の拒否 / R3 子 window の拒否 / P6 / P7 / P8 / P13 / init 中 emit）
   - 完了基準:
-    1. `docs/components-plan.md` を新設。冒頭は `docs/platform-features-plan.md:3` と同じ定型（「状態: 計画・検討記録。現行 API の判断は[ドキュメント案内](README.md)から各契約を参照し、この文書を現行仕様の根拠にしない。合成が実装された段階で契約文書 `components.md` を別に起こす」）。節構成は「決めた事項 10」のとおり
-    2. 「設計決定」表は DECISIONS.md「設計決定」の 8 論点をそのまま載せ、備考に (a) 子の storage / files scope の区切り文字は `storage::safe_key`（`storage.rs:49`、`/` 不可）と合わせて段階 4 で決める、(b) `http` effect だけ `kind` を持たない（`{id, request, url}`）ので段階 4 の `instance` 追加時に揃える、の 2 注記を入れる（RESEARCH §6）
-    3. 「Instance のフィールド一覧」は `engine/src/instance.rs` の struct 定義から**名前・型・順序**を機械的に写した 12 行（`git grep -n -E "^    pub\(crate\) [a-z_]+:" -- engine/src/instance.rs` の行数と表の行数が一致 = P10）。続けて Runtime 側の 4 フィールド（root / dialogs / pages / revision）と「root 共通物を Runtime に残す理由」（DECISIONS「リファクタの構造」）を表にする
-    4. 「段階計画」は段階 1・2（本マイルストーンで完了。何をしたか）、3（同期のみの合成）、4（効果の instance ルーティング）、5（ローダー再帰・キャッシュ・2 MB）、6（WebMCP・契約文書・デモ）。REQUIREMENTS R1 の各段階の内容を落とさない
-    5. 追従: `docs/README.md` 表に 1 行、`docs/architecture.md` 責務表に `engine/src/instance.rs` 行（`lib.rs` 行の「Runtime」を「Runtime（root 共通物）」に、新行を「Instance（1 画面パッケージの package / 確定ツリー / Rhai Engine・AST / state / 依頼キュー）」に）、`docs/architecture.md:59-61` の 1 文追従、`README.md:98-99` に `engine/src/instance.rs` の 1 行（追従先チェックリスト 1〜2 行目）
-    6. `bun run docs:check` green。`bun run check`（oxfmt が Markdown を整形対象にするなら整形済みであること）green。文書に生の実測値（steps 件数・sha256 など）を書かない（検討記録は判定と理由だけ。証跡は `target/engine-compare/` の JSON を指す）
-  - 対象: `docs/components-plan.md`（新規）、`docs/README.md`、`docs/architecture.md`、`README.md`
-  - 依存: T2（フィールド一覧を実物から写すため）
-  - 並列サブ作業:
-    - A: `docs/components-plan.md` 本文（対象: `docs/components-plan.md`）
-    - B: 追従 4 か所（対象: `docs/README.md`、`docs/architecture.md`、`README.md`）
-    - 親が `docs:check` / `check` を回してコミット
+    - `engine/Cargo.toml` の rhai features に `internals` を追加（`--locked` のまま通る）。`bun run build:wasm` が通り、`public/engine.wasm` のサイズ増は +14,142 バイト（内訳は PROGRESS turn 5。feature 単体 ~2,499・`AST::walk` の実体化 3,957・合成コード ~7,686）
+    - `Instance::load` が `effects: bool` と `context: &extensions::ExtensionContext` を受け取る（`declared` は自分の `package.components` から作るので引数にしない）。`effects == false`（子）では `http / host / storage / files / rpc` の `register` と `dialogs.register` / `pages.register` を呼ばず、代わりに `composition::register_stubs(&mut engine)` を呼ぶ。stub は追従先チェックリストの表の全関数 × 全 arity を `Dynamic` 引数で登録し、`Err("{name} is not available in components")` を返す（P7）
+    - `composition::Emits`（`pages::Requests` と同形: `Rc<RefCell<Vec<(String, Value)>>>`、`register` / `take` / `clear`）。`emit(name: ImmutableString, payload: Dynamic)` は `rhai::serde::from_dynamic` に失敗したら `"emit {name}: payload must be JSON-serializable"`（P15）、9 件目で `"At most 8 emits per handler"`。root（`effects == true`）には登録しない（root の `emit` は Rhai の関数未定義エラー）
+    - 子の `init` 後にキューが空でなければ `"emit is only available in event handlers, not init"`（`instance.rs:184-186` と同形）
+    - `effects == false` のとき compile 後に `ast.walk` で `ASTNode::Expr(Expr::FnCall | Expr::MethodCall)` / `ASTNode::Stmt(Stmt::FnCall)` の `call.name` を stub 表の名前集合と照合し、最初の一致で `"{fn} is not available in components (line {l}, position {p})"`（P8。`scratch/turn-001-walk-probe.rs:10-21` の形）
+    - 子パッケージの `requests / operations / storage / files / rpc / pages / webmcp` が空でなければ `"requests, operations, storage, files, rpc, pages and webmcp are not available in components (reserved for a later stage)"`（`operations` は REQUIREMENTS R1 の列挙外だが `host_call` 拒否と整合するため加える。メモ参照）
+    - 子の `validate` 後に ui 全体（`items` 再帰。`collect_windows` と違い state を見ない）を走査し `xtype == "window"`（messagebox 由来の `port_kind == "messagebox"` を含む）があれば `"window is not available in components (reserved for a later stage)"`（P13）
+    - `ExtensionContext` は `Runtime::load_with_*` で 1 つ作り、全 Instance に clone を渡す（`extensions/mod.rs:17-20` の `Rc<Cell>` を共有）。`Runtime::with_clock`（`lib.rs:418-425`）は無改修で全 Engine に効く（P6）
+    - `composition_tests.rs`: 表の全関数 × 全 arity を子 handler から 1 回ずつ直接呼ぶ script は load 時に落ち、文言に関数名が含まれる / `Fn("<name>").call(...)` は load を通り、event で実行時拒否され文言に関数名と「not available in components」が含まれ state 不変（表の全関数） / `emit("x", Fn("init"))` が event エラー / 9 件の emit がエラー / init 中の emit が load エラー / 子の深さ 3 に `window` と `messagebox` を置いて load エラー / 子の `requests` 等 7 種それぞれで load エラー / 子 handler の `date_today()` が固定 clock の日付（P6）。これらは本タスクでは `Instance::load` を直接呼ぶ（Runtime の木は T4）
+    - 照合 差分 0（root の経路は `effects == true` で無変更）
+  - 対象: `engine/Cargo.toml`, `engine/src/instance.rs`, `engine/src/composition.rs`, `engine/src/composition_tests.rs`, `engine/src/lib.rs`（`load_with_*` の context 生成）
+  - 依存: T2
+  - 並列サブ作業: なし
 
-- [x] T4: 最終判定スクリプトと全検査（gate は前景・並列なし）
+- [x] T4: Runtime の Instance 木と同梱ロード（R2 / R1 の config 注入 / R6 の Rust 側 / P12 の Rust 側）
   - 完了基準:
-    1. `scripts/verify-instance-refactor.mjs` を新設。`scripts/verify-transfer.mjs:7-15` の手順配列の形を流用し、手順は順に `bun run build:wasm` → `bunx vp test run` → `bun run test:rust` → `bun run check` → `bun run docs:check` → `bun run build` → base WASM が無ければ `bun scripts/build-engine-variant.mjs --commit <base> --out target/engine-compare/base-<base>.wasm` → `bun scripts/compare-engine-behavior.mjs --base … --candidate public/engine.wasm`（exit 0 を要求）→ 変異 M1 / M2 / M3 を順にビルドして照合（**exit 1 を要求**。exit 0 なら歯なしとして失敗）。`--base-commit <rev>`（既定 `main`）、`--skip-mutations`（開発中の短縮用。最終判定では付けない）。各手順の所要秒と合計を最後に表形式で出力し、exit code を返す（振り返り「gate 所要の食い違い」への対応）
-    2. `docs/testing.md:83` の段落の後に、照合スクリプト 3 本の用途・入口・所要の目安を 1 段落追加（追従先チェックリスト 3 行目。Playwright「3本」の記述は変えない）
-    3. クリーンな作業ツリー（`git status --porcelain` が空）で `bun scripts/verify-instance-refactor.mjs` を前景で 1 回通し、exit 0。出力の集計行（steps / diffs / ok / error、M1〜M3 の diffs、手順別所要と合計）を PROGRESS の本ターンに写す（PROGRESS 以外には写さない）
-    4. 受け入れ基準 1〜6 を順に確認して PROGRESS に「満たした根拠（コマンド名と結果）」を 1 行ずつ書く。基準 5（文書とコードの一致）は T3 の 3 の `git grep` 行数比較を再実行する
-    5. `git worktree list` が 1 行、`git status --porcelain` が空（証跡は `target/` 配下のみ）
-  - 対象: `scripts/verify-instance-refactor.mjs`（新規）、`docs/testing.md`
+    - `Runtime` に `components: BTreeMap<String, Instance>`（キー = 接頭辞付き itemId パス `"a"` / `"a/b"`。BTreeMap の理由はメモ）。`pub fn load_with_components(package, script, descriptors, clock, components: HashMap<String, (Package, String)>, register)` を追加し、既存 `load / load_with_extensions / load_with_descriptors / load_with_clock` は空の map でそれを呼ぶ（公開シグネチャ不変。受け入れ基準 6）
+    - ロード順: root `Instance::load`（init まで）→ root の template（`package.ui`）を `items` 走査して component ノードを文書順に列挙 → 各ノードで `composition::evaluate_config(node, &parent_state_json)`（`{bind}` は親 state の最上位キー。無ければ `"Component {path}: config bind {key} is not in the parent state"`）→ 同梱本体 `components[decl.url]` を引き（無ければ `"Component {path}: package {url} was not bundled"`）、子 `Package` の `state["config"]` に評価済み config を入れてから子 `Instance::load`（`effects == false`。`init` は `state.config` を読める。`config` handler は呼ばない）→ 子の宣言で再帰（パスは `"a/b"`）
+    - 制限: 深さ > 3 で `"Component {path}: nesting depth exceeds 3"`、Instance 総数 > 8（root 含む）で `"At most 8 instances per screen (root included); exceeded at component {path}"`、ロード中スタックに同じ `url` があれば `"Component {path}: circular reference to {url}"`。node 200 / 深さ 20 / script 100KB / state 1MB / Rhai 上限は `Instance::load` が Instance ごとに検査（既存。子の失敗は `"Component {path}: "` を前置）
+    - `abi.rs` の `load` が `request.components`（`{ "<url>": { "package": {...}, "script": "..." } }`、8 件まで。超えたら `"At most 8 component packages"`、形が違えば `"Invalid components"`）を `HashMap<String, (Package, String)>` に変換して `load_with_components` へ渡す。既存 op の応答形式・エラー文字列は不変
+    - `Runtime::state_json` は root のみ（既存のまま）
+    - `composition_tests.rs`: 同じ子を `a` / `b` に置き、`a` の中に `c`（深さ 3）→ `components` のキーが `a` / `a/c` / `b`、各 `state.config` が注入値 / 深さ 4 でエラー / 9 Instance でエラー（8 ちょうどは通る）/ 循環（子が自分の url を宣言）でエラー / 本体未同梱 / `config` の bind 先キーが親 state に無い / 子 script 100,001 バイトでエラー文言に `Component {path}` / 子 node 201 でエラー / どのエラーでも `Runtime::load_with_components` は `Err` を返し（前画面は `abi.rs:39-41` が保つ）panic しない
+    - `tests/abi.test.js` に raw ABI で `components` 付き `load` が `ok` になるケースと 9 件で `ok: false` のケースを追加（既存ケースの期待値は不変）
+    - 照合 差分 0
+  - 対象: `engine/src/lib.rs`, `engine/src/abi.rs`, `engine/src/composition.rs`, `engine/src/composition_tests.rs`, `tests/abi.test.js`
   - 依存: T3
-  - 並列サブ作業: なし（最終タスク。振り返りの提案どおり gate は前景で回し、サブエージェントを起動しない）
+  - 並列サブ作業: なし
+
+- [x] T5: レイアウトの合成（R3 / P4 / P5 / P14）
+  - 完了基準:
+    - 方式 (H): `composition::LayoutScope`（thread_local `RefCell<Option<Scope>>`、`Scope { instances: BTreeMap<String, (Node, Value)>, stack: Vec<String> }`）とガード。`Runtime::layout` は `self.components` が空でないときだけ各子の `ui` clone と `state_json` でスコープを張る（既存画面はコスト 0）
+    - `measure`（`lib.rs:1209`）と `arrange_sized`（`lib.rs:1293`）の先頭に `node.port_kind == "component"` の分岐を 1 つずつ足す。`measure`: `visibleBind` があり親 state で false なら 0、そうでなければ接頭辞を push → 子 `ui` を子 state で `measure` → pop。`arrange_sized`: 同じ条件で子を `arrange_sized(&child.ui, &child.state, x, y, width, "root", allocated_height, widgets)` し、戻ったら `widgets[start..]` の `key` に `"{path}/"` を前置、`target` は空でないものだけ前置（`payload` は触らない）。`Runtime::layout` の `arrange(&self.root.ui, &state, 16.0,` の行（M1 の対象 `build-engine-variant.mjs:13`）は変えない
+    - `collect_windows` / `find_path`（webmcp 付与 `lib.rs:957-966`）は無改修（子に window は無く、接頭辞付き target は見つからない = root のみ）
+    - `composition_tests.rs`: 親子で同じ itemId `search` を持つ画面の layout で `widgets` の key が全件一意、子の key が `"<itemId>/"` で始まり target も `"<itemId>/search"`（P4）/ 同じ子を `a` / `b` に置き `a` の中に `c` → key に `a/c/` と `b/` が出て、`a` と `b` の state が独立に変わる（P5）/ 子の高さ（grid の行数）が親の vbox の後続ノードの `y` に反映 / `visibleBind` false の component は widgets 0 件で高さ 0 / 幅 240 と 4096 で全 widget の座標が有限・寸法が非負 / disabled な親 panel の下の子 widget が `disabled`（`lib.rs:1487-1491` の伝播）
+    - 照合 差分 0
+  - 対象: `engine/src/lib.rs`, `engine/src/composition.rs`, `engine/src/composition_tests.rs`
+  - 依存: T4
+  - 並列サブ作業: なし
+
+- [x] T6: dispatch のルーティングと Instance ごとの確定（R4 前半 / P2）
+  - 完了基準:
+    - `Runtime::dispatch`（`lib.rs:427-550`）の「`find_path` から `call_fn` まで」を `impl instance::Instance` ブロックとして **`lib.rs` 内に**移動する（`"Unknown itemId: {target}"` が `lib.rs` に 1 回だけ残り、M3 `build-engine-variant.mjs:27` が壊れない）: `fn run_event(&self, target: &str, payload: Value) -> Result<Option<Dynamic>, String>`（`None` = 捨てた）と、捨てる条件のブロック（`lib.rs:452-469`）を `fn blocked(&self, path: &[&Node], state: &Value, target: &str) -> bool` に分ける。本文は移動のみで順序を変えない
+    - `Runtime::route(&self, target) -> Result<Option<(String, String)>, String>`: `target` を最初の `/` で分け、前半を現在の Instance の ui で `find_path`（無ければ `Unknown itemId: {target}`（全体の文字列））、ノードが component でなければ同じエラー、`blocked` または component の `visibleBind` が false なら `Ok(None)`、該当子 Instance へ後半を渡して繰り返す。`/` が無ければ `(現在の Instance のキー, target)`
+    - `commit_state`（`lib.rs:762-819`）の前半を `Instance::prepare_commit(&self, next: Dynamic) -> Result<(Dynamic, Node), String>`、代入を `Instance::apply(&mut self, state, ui)` に分け、`Runtime::commit_all(&mut self, root_next: Dynamic, children: Vec<(String, Dynamic)>)` が root の prepare → 子の prepare → root のキュー prepare / navigate 排他 / `buffers::capacity` → root apply → 子 apply（キー順）→ `revision += 1` を行う。既存 `commit_state(next)` は `commit_all(next, vec![])`（順序不変）
+    - `dispatch`: `route` の結果が子なら子の `run_event` → `Some(next)` なら `commit_all(root の現在 state, vec![(key, next)])`（emit / config は T7）。子の失敗は `"Component {path}: "` を前置
+    - `composition_tests.rs`: 子 grid への `"a/orders"` event で子の `selected` が変わり `revision` が 1 だけ進む / 親の disabled panel の下の子への event は捨てられ revision 不変 / `visibleBind` false の component への event は捨てられる / 深さ 3 の `"a/c/button"` が届く / `"a/nope"` と `"nope/x"` が `Unknown itemId` / 子 handler の throw で親子とも state 不変
+    - 照合 差分 0（root の経路は移動のみ）。`git diff main -- engine/src` の `"..."` 文字列集合が追加のみ（PROGRESS に確認方法と結果）
+  - 対象: `engine/src/lib.rs`, `engine/src/instance.rs`, `engine/src/composition_tests.rs`
+  - 依存: T5
+  - 並列サブ作業: なし
+
+- [x] T7: emit / listeners / config のトランザクション（R4 後半 / R10 の listener・config 系）
+  - 完了基準:
+    - 順序（DECISIONS Round 1）: 子 handler → 子の `Emits::take()` を順に → 各 emit について親 Instance の template から該当 component ノード（`item_id == 子のキー末尾`）の `listeners[name]` を引き、あれば親 handler を `(親の候補 state, #{ target: "<component itemId>", action: "<emit 名>", value: <payload> })` で呼ぶ（無ければ無視）。親が root でなければ親の emit をさらにその親へ（上方向のみ、深さ 3 で打ち切り）→ 候補 state が変わった各 Instance について、その直下の component ノードの `evaluate_config` を「候補 state」と「現在の確定 state」で比べ、変わった子だけ `state.config` を更新し、子の `functions` に `config` があれば `config(state, #{ config: <map> })` を呼ぶ（子の候補 state があればそれに対して。emit 元自身を含む）。`config` 後に子の emit キューが空でなければ `"emit is not available in config"`。config 更新は下方向へ再帰 → `commit_all`。どこかで失敗したら親子とも変更なし、revision 不変
+    - 親 handler のエラー文言は既存形 `"{script} / {itemId} / {handler}: {e}"`、子 config のエラーは `"Component {path}: {script} / config: {e}"`
+    - `composition_tests.rs`: 子 grid 選択 → `emit("selected", #{...})` → 親 listener が `notice` を書き換え、revision +1 / `listeners` に無い emit は無視され revision は +1（子 state は確定）/ 親 handler が `query` を変える → bind した 2 つの子の `state.config.query` が変わり各 `config` handler が走る、変わらない子は呼ばれない（呼び出し回数を state に記録して検証）/ 親 listener の throw で親子とも不変 / 子 `config` の throw で親子とも不変 / `config` 内の emit がエラー / 深さ 3 で `a/c` の emit → `a` の listener → `a` の emit → root の listener が順に届く / 子 state は `state_json`（root）に現れず、子から親 state は見えない（`config` 以外のキーが無い）
+    - 照合 差分 0
+  - 対象: `engine/src/lib.rs`, `engine/src/composition.rs`, `engine/src/composition_tests.rs`
+  - 依存: T6
+  - 並列サブ作業: なし
+
+- [x] T8: JS ローダー・エンジン・ランタイム（R6 / P9 / P12）
+  - 完了基準:
+    - `ApplicationLoader.fetch`（`application-loader.js:93-111`）の `network-only` で descriptors の後に子を再帰取得する: `screen.components` の各 `url` を `httpUrl(decl.url, url)` で解決 → 本文 → `parsePackage` → script（子 URL 基準）→ descriptors → さらにその子。取得した `screen.components[name].url` は絶対 `href` に書き換え、`candidate.components = { "<href>": { screen, script } }` を返す。同じ `href` は 1 回だけ取得。制限: 取得中スタックに同じ `href` → `コンポーネント <name> の循環参照: <href>`、深さ > 3 → `コンポーネントの入れ子が3段を超えています: <href>`、配置数（`ui.items` を再帰し xtype が宣言名のノードを数える。root を 1 と数える）> 8 → `コンポーネントの数が8を超えています（rootを含む）: <href>`。`network-first`（`:112-148`）と `restore` は `screen.components` が空でなければ `componentsを持つ画面は配信キャッシュ（network-first）に対応していません`
+    - `WasmEngine.load`（`engine.js:70-88`）が `options.components`（`{ href: { screen, script } }`）を `request.components = { href: { package: screen, script } }` に入れる。`components` が空でないときだけ同梱後の JSON バイト数を先に測り、2,000,000 超なら `リクエストが2 MBを超えています（同梱後 <n> バイト。最大の子: <href> <m> バイト）` を throw（`call` の既存文言 `:53` は不変）
+    - `UiRuntime.compile`（`runtime.js:308-350`）に `components` オプション。`resolveComponents(screen, source, bundled, clock)` が `screen.components[name].url` を `source` 基準の絶対 `href` に書き換え、`bundled[href]` が無ければ `コンポーネント <name> の本体がありません（URLから読み込んでください）`。各子 `screen` にも `prepareScreen(child, childUrl, clock)`（P9）。`engine.load(..., { clock, components })` 成功後に `this.components = components`。`load` は `candidate.components` を渡し、エディタの「変更を適用」（`main.js:187-189` 経由。引数なし）は `this.components` を再利用する
+    - `tests/components-loader.test.js`（`tests/files-cache-rpc.test.js:225-253` の `responses` Map 方式）: 親 + 子 2 つ + 孫の再帰取得と URL の書き換え / 循環 / 深さ 4 / 配置 9（8 は通る）/ `network-first` 拒否 / 子の script 100KB 超（`application-loader.js:104` の既存文言）/ `WasmEngine.load` の 2MB 事前検査（子 2 つの `state` を各約 1.1MB にして超過。文言に `href`、`layout` が前画面のまま）/ `UiRuntime.compile` で子の `datepicker` に固定 clock の `today` が入る（P9。`tests/runtime.test.js:145-167` の `host` fixture を流用）/ 「変更を適用」の再利用（`compile` を `components` なしで呼ぶ → 直前の子で `ok`、url を変えると本体なしエラー）
+    - `bunx vp test run` green、`bun run check` green
+  - 対象: `src/application-loader.js`, `src/engine.js`, `src/runtime.js`, `tests/components-loader.test.js`（新規）, `tests/abi.test.js`（T4 で足した分の調整があれば）
+  - 依存: T7
+  - 並列サブ作業:
+    - A: ローダーの再帰取得・制限・`network-first` 拒否（対象: `src/application-loader.js`, `tests/components-loader.test.js` のローダー節）
+    - B: `WasmEngine.load` の `components` と 2MB 事前検査、`UiRuntime.compile` の `components` / `prepareScreen` / 再利用（対象: `src/engine.js`, `src/runtime.js`, `tests/components-loader.test.js` のエンジン・ランタイム節。A と同じテストファイルに書くときは `describe` を分け、親がマージする）
+
+- [x] T9: デモ画面（R7）と Vitest
+  - 完了基準:
+    - 子 `public/screens/parts/order-list.json` + `order-list.rhai`: `orders.json:7-18` と同じ 4 件を `state.orders`、`state.config = { status: "", query: "" }`、ui は metric（件数）+ grid `itemId: "orders"`（`bind: "visible"`, `selectedBind: "selected"`, `handler: "select"`、列は 受注番号 / 顧客名 / 金額）。rhai: `refresh` が `state.config.status`（空なら全件）と `state.config.query`（顧客名・受注番号の部分一致）で絞る、`fn init(s) { refresh(s) }`、`fn config(s, e) { refresh(s) }`、`fn select(s, e) { s.selected = e.id; emit("selected", #{ id, number, customer }); s }`。`id` は `order-list`、title「受注一覧（部品）」。カタログには載せない
+    - 親 `public/screens/order-dashboard.json` + `order-dashboard.rhai`: `id: "order-dashboard"`, `title: "受注ダッシュボード"`, `components: { "orderList": { "url": "parts/order-list.json" } }`, state `{ query: "", notice: "部品の一覧から受注を選んでください。" }`, ui は vbox: textfield `filter`（`bind: "query"`, `handler: "filterChanged"`）/ hbox に component ノード 2 つ `itemId: "open"`（`config: { status: "受注", query: { bind: "query" } }`）と `itemId: "shipped"`（`config: { status: "出荷済", query: { bind: "query" } }`）、どちらも `listeners: { selected: "onSelected" }` / label `bind: "notice"`。rhai: `fn init(s) { s }`、`fn filterChanged(s, e) { s }`、`fn onSelected(s, e) { s.notice = (if e.target == "open" { "受注" } else { "出荷済" }) + " の部品で " + e.value.number + " / " + e.value.customer + " を選択しました。"; s }`
+    - `src/screen-catalog.js` に `{ id: "order-dashboard", title: "受注ダッシュボード", category: "apps", description: "..." }` を `orders` の次に追加。`README.md:25` / `:110` の画面数を「23画面」に。`bun run build:wasm` の manifest 生成が親で壊れない（`publish-packages.mjs:9-56` は `components` を読まない）
+    - `tests/components-demo.test.js`: raw ABI（`tests/abi.test.js:14-28` の `raw`）で親 + 子を同梱した `load` が `ok`、`layout` 240 / 800 / 4096 で key が一意かつ `open/orders:header` と `shipped/orders:header` がある / `filter` `{value:"山田"}` 後に `open/orders:row:*` が減る（受注側のみ一致）/ `open/orders` `{id:1}` 後に `state.notice` に「受注」「SO-001」「山田商事」、`shipped/orders` `{id:2}` 後に「出荷済」「SO-002」/ 各 event で `revision` が 1 ずつ進む / `UiRuntime`（`tests/runtime.test.js:68-144` のモックレンダラーと `:145-167` の `host` を流用）で `load("screens/order-dashboard.json")` が両 surface の scene に `open/...` と `shipped/...` の widget を持つ（DOM / Canvas 両レンダラーへ同じ Scene が渡ることの検証。実ブラウザは任意）
+    - `bunx vp test run tests/widget-contract.test.js tests/distribution.test.js tests/components-demo.test.js` green、`bun run build` green
+  - 対象: `public/screens/parts/order-list.json`, `public/screens/parts/order-list.rhai`, `public/screens/order-dashboard.json`, `public/screens/order-dashboard.rhai`, `src/screen-catalog.js`, `README.md`, `tests/components-demo.test.js`（新規）
+  - 依存: T8
+  - 並列サブ作業:
+    - A: 子・親パッケージ 4 ファイルとカタログ・README（対象: `public/screens/parts/*`, `public/screens/order-dashboard.*`, `src/screen-catalog.js`, `README.md`）
+    - B: `tests/components-demo.test.js`（A のファイル名・itemId・期待文言は本 PLAN の記述に従う。対象: `tests/components-demo.test.js`）
+
+- [x] T10: 候補のみ照合の証跡と最終判定スクリプト（R9 候補のみ列 / P10 / 変異 M4・M5）
+  - 完了基準:
+    - 新規 `scripts/probe-composition.mjs --candidate <wasm> [--evidence target/engine-compare/composition.json]`: 固定 clock（`compare-engine-behavior.mjs:12` と同じ）で 1 本の列を流し、各ステップの `{label, ok, error, revision, bytes}` と要約を証跡 JSON に書き、期待に外れたら exit 1。列: `order-dashboard` を `parts/order-list` 同梱で load → layout 240 / 800 / 4096（key 一意、`open/orders:header` と `shipped/orders:header`）→ `filter` `{value:"山田"}`（revision 1）→ layout 800（`open/orders:row:*` が 1 件・`shipped/orders:row:*` が 0 件。行は `event` 応答に出ないので layout を 1 歩足す）→ `open/orders` `{id:1}`（revision 2、`state.notice` に「SO-001」）→ `shipped/orders` `{id:2}`（revision 3、「SO-002」）→ 拒否の列: 子 handler に `Fn("http_get").call("x")` を持つ fixture を load（ok）→ event で `ok: false`、error に `http_get` と `not available in components`、その後の layout が前と同じ → 子に `http_get("x")` を直書きした fixture の load が `ok: false`
+    - `scripts/build-engine-variant.mjs` の `MUTATIONS` に M4 `emit-skips-listener`（emit を取り出しても親 listener を呼ばない）と M5 `config-diff-ignored`（config の差分判定を常に「変化なし」にする）を追加（`from` は T7 のコードから一意に出現する行を選ぶ。`probe: "composition"` を付ける）
+    - `scripts/verify-instance-refactor.mjs` の `buildSteps` が compare の後に `probe composition`（expect 0）を足し、`MUTATIONS` のうち `probe` 付きは compare ではなく probe（expect 1）で検査する
+    - `bun scripts/verify-instance-refactor.mjs` が OK（既存 6 検査 → base 差分 0 → probe 0 → M1〜M3 の照合 1 → M4 / M5 の probe 1）。所要の表を PROGRESS に写す（値は表のまま）
+    - `docs/testing.md:85` を手順の形に合わせて更新（変異 5 本、候補のみ証跡のファイル名）
+  - 対象: `scripts/probe-composition.mjs`（新規）, `scripts/build-engine-variant.mjs`, `scripts/verify-instance-refactor.mjs`, `docs/testing.md`
+  - 依存: T9
+  - 並列サブ作業: なし
+
+- [x] T11: 契約文書と追従（R8）
+  - 完了基準:
+    - 新設 `docs/components.md`（冒頭に「状態: 実装済み契約（段階 3）」）: 用語（コンポーネント / ウィジェット（組み込み部品）/ component ノード / 接頭辞付き itemId）/ 宣言 `components`（名前の規則・衝突・url）/ component ノードの許可属性 / `config`（固定値・`{bind}`・`state.config` への注入・`config(state, event)` の引数と呼び出し時機）/ `emit` と `listeners`（event map の 3 キー・未登録 emit の無視・上限 8・init / config 中の禁止・root での未定義）/ トランザクション順序（子 handler → emit → listener → config 差分 → 検証 → 親 → 子の代入、revision 1 つ、失敗時は親子とも不変）/ Scene と event の接頭辞 / 制限（Instance 8・深さ 3・Instance ごとの既存上限・2MB 据え置き・`/` 予約）/ 拒否（子の効果関数 19 種は load 時走査 + 実行時 stub。「拒否の根拠は実行時」と `Fn("name")` の注意（P8）、子の宣言 7 種、子の `window`、`network-first`、エディタ適用は直前の子を再利用）/ stateSchema を持つ子は `additionalProperties: false` なら `config` を `properties` に含める（`state_schema.rs:224-231`）/ ExtJS との違い（bubbling・`false` 戻り値・`scope` は無い）/ `internals` feature の版固定注意 / 段階 4 以降の課題（子の非同期効果、window、キャッシュ、WebMCP 合成、`with_clock` の context 共有を前提にすること、連鎖深さ 4 → 本構造では 2 段で打ち切り）/ 証跡はファイル名を指す（`target/engine-compare/composition.json`。生の値は写さない）
+    - `docs/components-plan.md:3-4` の冒頭に段階 3 完了（2026-10 のマイルストーン）と `components.md` への参照を足す。`:74`「本マイルストーンでは components の HashMap は追加しない」は検討記録として残し、冒頭の注記で現状を指す
+    - `docs/screen-format.md:5` に `components` を、`:74` に `config / listeners` と `/` の予約を追加し `components.md` へリンク。`docs/architecture.md:60-68`（Instance 木・ロード順）と `:84`（`load` 入力の `components`）を追従。`docs/README.md:28` の行を更新（`components.md` を先に）。`README.md` に「受注ダッシュボード」の 1 行（`:65` の受注一覧の次）。`docs/testing.md` の表に新テスト 3 本の行
+    - `bun run docs:check` green。Markdown 表の桁揃えで差分が膨らんだファイルは `git diff -w --stat` の値を PROGRESS に併記
+  - 対象: `docs/components.md`（新規）, `docs/components-plan.md`, `docs/screen-format.md`, `docs/architecture.md`, `docs/README.md`, `README.md`, `docs/testing.md`
+  - 依存: T10
+  - 並列サブ作業:
+    - A: `docs/components.md` 新設（対象: `docs/components.md`）
+    - B: 既存文書の追従 6 ファイル（対象: `docs/components-plan.md`, `docs/screen-format.md`, `docs/architecture.md`, `docs/README.md`, `README.md`, `docs/testing.md`）
+
+- [x] T12: 最終判定と R10 の総点検
+  - 完了基準:
+    - `bun scripts/verify-instance-refactor.mjs` が OK（所要の表を PROGRESS に写す）
+    - R10 の 18 ケースそれぞれに対応するテスト名（Rust の `fn` 名 / Vitest の `it` 文言）を表にして PROGRESS に書く（対応先の無いケースが 0 件）。REQUIREMENTS §受け入れ基準 1〜7 も同様に「どのコマンド / テストで確かめたか」を 1 行ずつ
+    - `bun run fmt` 相当（`bunx vp fmt` / `cargo fmt`）済みで `bun run check` green、`git status` がクリーン
+  - 対象: `.gsd-lite/PROGRESS.md`（コードの変更は原則なし。失敗があればそのタスクに戻す）
+  - 依存: T11
+  - 並列サブ作業: なし
+
+- [x] F1: 子 Instance の emit キューの残留（完了経路での誤拒否。verify round 1 の差し戻し）
+  - 背景: `dispatch` だけが子の `clear_queues()` を回し、`progress_host` / `complete_host` / `complete_http` / `complete_storage` / `complete_file` / `complete_rpc` / `complete_dialog` は `self.root.clear_queues()` のみ。子 handler が `emit` した後に失敗（throw / stub 拒否 / 非 object 戻り）すると emit がキューに残り、次の完了処理（`http_result` 等）で root の bind 先キーが変わって `reconfigure` が走ると `child.emits.take()` が残留分を拾い `Component {path}: emit is not available in config` で応答全体を失う（id は消費済みで再送できない）。`.gsd-lite/logs/component-composition/scratch/turn-015-stale-emit.mjs` が ABI で再現する（VERIFICATION.md 指摘 1）
+  - 完了基準:
+    - `Runtime` に `fn clear_queues(&self)`（root と `components` 全部の `clear_queues()`）を置き、上記 7 関数と `dispatch` の計 8 か所の `self.root.clear_queues()`（`dispatch` は子ループごと）をそれに置き換える。各関数内での呼び出し位置・順序は変えない
+    - `reconfigure` が `config` handler を呼ぶ**前**に `child.emits.clear()` を行う（「config 中の emit」の判定が、その config 呼び出しで積まれた分だけを見るようにする。二重防御）
+    - 期待結果（本タスクの表。テストの期待値はこの表を参照する）:
+      | 条件                                                                                                                          | 結果                                                                                                                                       |
+      | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+      | root の http 要求が進行中に、子（`config` 定義あり、bind 付き config）の handler が `emit` 後に throw → root へ `http_result` | `complete_http` が `Ok`、revision 1 → 2、root の bind 先キーが新値、その子の `state.config` も新値、子の `config` 呼び出し回数 +1          |
+      | 同じ列で子 handler が `emit` 後に `Fn("http_get").call("x")` で stub 拒否される                                               | 同上                                                                                                                                       |
+      | 子の `config` handler 自身が `emit` する                                                                                      | 従来どおり `Component {path}: emit is not available in config`、親子とも不変、revision 不変（既存テスト `a_child_cannot_announce_…` 維持） |
+      | root の handler が bind 先キーを変え、middle の `config` が自分の子（leaf）へ bind している自分の state キーを書き換える      | leaf の `config` が 1 回呼ばれ leaf の `state.config` が新値、middle・leaf の state とも確定、revision +1（1 イベントで 1 つだけ）         |
+    - `engine/src/composition_tests.rs` に 2 本: `a_stale_announcement_does_not_poison_a_later_completion`（表 1〜2 行目。root は `requests: { ping: { url, handler: "pong" } }` を持ち `pong` が bind 先キーを変える。`dispatch("fetch")` → `take_effects()[0]["id"]` → `dispatch("a/<button>")` が `Err` → `complete_http(id, json!({"ok": true, "data": {}}))`。`lib.rs` の既存テスト `host_progress_and_cancel_roll_back_without_consuming_completion` の呼び方に倣う）/ `a_configuration_travels_down_three_levels_at_run_time`（表 4 行目。`RELAY_SCRIPT` 相当の middle に `config(s, e)` を足して自分の子への bind キーを書き換える）
+    - `docs/components.md` の「トランザクション順序」節に 1 文: 失敗したイベントで子が積んだ `emit` は捨てられ、次のイベント・完了処理に持ち越さない
+    - 検査: `bun run build:wasm` → `bunx vp test run` → `bun run test:rust` → `bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-ef582d5.wasm --candidate public/engine.wasm` 差分 0 → `bun scripts/probe-composition.mjs --candidate public/engine.wasm` exit 0 → `bun run check` → `bun run docs:check`。`git diff main -- engine/src` で削除のみの文字列リテラル 0 件、M1〜M5 の `from` が各 1 回（`.gsd-lite/logs/component-composition/scratch/turn-015-strings.mjs` を再実行）。`bun .gsd-lite/logs/component-composition/scratch/turn-015-stale-emit.mjs` の 4 変種がすべて `http_result true`
+  - 対象: `engine/src/lib.rs`, `engine/src/composition_tests.rs`, `docs/components.md`
+  - 依存: T12
+  - 並列サブ作業: なし
+
+- [x] F2: 宣言の形の検査（JS）と文書・テストの軽微な追従（verify round 1 の差し戻し。軽微な指摘を 1 つにまとめる）
+  - 完了基準:
+    - `src/application-loader.js` の `#components` と `src/runtime.js` の `resolveComponents`: `declaration` が object でない、または `declaration.url` が string でないとき、取得・URL 解決の前に `コンポーネント <name> の宣言が不正です（url を文字列で指定してください）` を throw する（現状は `<base>/undefined` を取りに行く、または `TypeError` が出る）
+    - 期待結果（本タスクの表）:
+      | 条件                                                                                                           | 結果                                                                                            |
+      | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+      | `components: { a: {} }` / `{ a: null }` / `{ a: { url: 5 } }` の親を `ApplicationLoader.fetch`（network-only） | throw `コンポーネント a の宣言が不正です（url を文字列で指定してください）`、子 URL の取得 0 回 |
+      | 同じ 3 形の `screen` を `UiRuntime.compile` に直接渡す                                                         | 同じ文言で throw、前画面（`runtime.screen.id` / `layout`）は不変                                |
+      | 両 surface を同じ幅（400）にして `UiRuntime.load("screens/order-dashboard.json")`                              | dom / canvas の最後の `render` 引数の `widgets` が `toEqual`、かつ `open/` と `shipped/` を含む |
+    - `tests/components-loader.test.js` に上の表 1〜2 行目を 1 本ずつ（ローダー節とランタイム節。`reads` Map で子の取得 0 回を確かめる）
+    - `tests/components-demo.test.js` の `hands the same composed scene to the dom and the canvas renderer`: 2 つの stage を同じ幅にし、表 3 行目の `toEqual` を足す（名前どおり「同じ Scene」を確かめる。既存の `open/` / `shipped/` の assert は残す）
+    - `docs/components.md` に 3 文を足す: (i) 「制限」節 — JS ローダーは**宣言単位**で循環・深さを検査し、ui に置かれていない宣言も取得・検査する。Rust は**配置単位**。したがって raw ABI では通る「置かれていない自己参照の宣言」はローダーでは拒否される (ii) 「段階 4 以降の課題」節 — 子ノードの `webmcp` は検証されるが登録されない（WebMCP 合成は段階 6） (iii) 「componentノードの許可属性」節 — `layout: accordion` の親の `items` に置いた component ノードは折りたたみの対象にならない（accordion には置かない）
+    - `bunx vp test run tests/components-loader.test.js tests/components-demo.test.js` green、`bun run check` green、`bun run docs:check` green。Rust は触らない（`build:wasm` 不要）
+  - 対象: `src/application-loader.js`, `src/runtime.js`, `tests/components-loader.test.js`, `tests/components-demo.test.js`, `docs/components.md`
+  - 依存: F1
+  - 並列サブ作業: なし
 
 ## 決めた事項
 
-1. **`Instance` の構造**（`engine/src/instance.rs`、新規。根拠: REQUIREMENTS R2、`lib.rs:362-378` の現行フィールド順）:
-   ```rust
-   pub(crate) struct Instance {
-       pub(crate) package: Package,
-       pub(crate) ui: Node,
-       pub(crate) functions: HashSet<String>,
-       pub(crate) engine: Engine,
-       pub(crate) extension_context: extensions::ExtensionContext,
-       pub(crate) ast: AST,
-       pub(crate) state: Dynamic,
-       pub(crate) http: http::Requests,
-       pub(crate) host: host::Requests,
-       pub(crate) storage: storage::Requests,
-       pub(crate) files: files::Requests,
-       pub(crate) rpc: rpc::Requests,
-   }
-   ```
-   `lib.rs` の `Runtime` は `root: Instance` / `dialogs: dialogs::Requests` / `pages: pages::Requests` / `pub revision: u32` の 4 フィールド（この順。`revision` は `pub` のまま = `abi.rs:115` が無改修で通る）。`functions` は `ast.iter_functions()` から再計算できるが**フィールドとして残す**（差分最小。RESEARCH §4）。`lib.rs` の `mod` 一覧には `mod instance;` を `mod http;`（`lib.rs:20`）の次に入れる
-2. **`Instance` のメソッド**（これ以外は Runtime に残す）:
-   - `pub(crate) fn load(package: Package, script: &str, descriptors: HashMap<String, Vec<u8>>, clock: Option<extensions::Clock>, register: impl FnOnce(&mut Engine), dialogs: &mut dialogs::Requests, pages: &pages::Requests) -> Result<Self, String>`: `lib.rs:409-569` の本文を**そのままの順序**で移す（`extension_context.enter(clock)?` が最初、version → state → webmcp → pages::validate → schema → 100 KB → normalize → validate → resolve → … → `init` → … → prepare 7 連 → `buffers::capacity` → commit 6 連）。`dialogs.register(&mut engine)` / `pages.register(&mut engine)` の位置（`lib.rs:450-453`）と `dialogs.prepare(&ast)` / `pages.prepare(...)`（`lib.rs:557-560`）/ `dialogs.commit(...)`（`:569`）は引数で受けた root 共通物に対して同じ位置で呼ぶ。`Runtime::load_with_clock` は `let mut dialogs = dialogs::Requests::default(); let pages = pages::Requests::default(); let root = Instance::load(…, &mut dialogs, &pages)?; Ok(Self { root, dialogs, pages, revision: 0 })` だけになる（`Requests::default()` は `#[derive(Default)]`（`dialogs.rs:119`）で副作用なし。`pages.rs:13` も同様か impl が確認）
-   - `pub(crate) fn clear_queues(&self)`: `http` → `host` → `storage` → `files` → `rpc` の順に `clear()`。7 本の `clear` はいずれも自分の `queue.borrow_mut().clear()` だけ（`http.rs:44` / `host.rs:105` / `storage.rs:87` / `files.rs:191` / `rpc.rs:106` / `pages.rs:50` / `dialogs.rs:219` を読んで確認済み）なので相対順序は観測不能。Runtime 側は各メソッドで `self.pages.clear(); self.root.clear_queues(); self.dialogs.clear();` の順に統一する（`dispatch` / `progress_host` / `complete_host` / `complete_rpc` / `complete_dialog` は現状と同順。`complete_http` / `complete_storage` は `pages.clear()` → `consume` → `clear_queues()` → `dialogs.clear()` と、`consume` の位置（`lib.rs:778,802`）を現状どおり `pages.clear()` の直後に保つ。`complete_file` のみ `pages.clear()` が 3 番目から 1 番目に動くが観測不能）
-   - `pub(crate) fn state_json(&self) -> Result<Value, String>`: `lib.rs:987-989` の本文。`Runtime::state_json` は `self.root.state_json()` に委譲
-3. **Runtime に残すメソッドの書き換え方**: `dispatch` / `progress_host` / `complete_*` / `take_effects` / `commit_state` / `layout` / `with_clock` は本文を保ち、Instance のフィールド参照を `self.root.<field>` に置き換えるだけ。`call_fn` は現行どおり `self.root.engine.call_fn(&mut Scope::new(), &self.root.ast, …)`（`call_fn_with_options` に変えない = RESEARCH §4）。`commit_state` は Runtime に残す（`prepare` 7 連の順序 `lib.rs:952-958` と「検証がすべて通ってから代入 `lib.rs:974-983`」を変えない = P4。RESEARCH §1.3 の推奨）。`take_effects` の連結順 `http → storage → files → rpc → dialogs → pages → host`（`lib.rs:912-927`）は**応答の effects 配列の順序そのもの**なので変えない。`dialogs.prepare(&self.root.ast)`（`lib.rs:957`）は root の AST を渡す
-4. **自由関数の可視性**: `lib.rs` の `validate` / `initialize_ui` / `validate_ui_state` / `check_state` / `validate_handlers`（`lib.rs:1144-1293`）は private のまま `instance.rs` から `use super::{…}` で呼ぶ（子モジュールは親の private 項目を参照できる）。`pub` に変えない
-5. **`abi.rs` は無改修**（REQUIREMENTS「差し替えのみ」の 0 件が成立するため。`git diff main --stat -- engine/src/abi.rs` 空が T2 の完了基準）
-6. **照合の固定値**（根拠: `scratch/turn-001-compare.mjs:9`、`tests/abi.test.js:14-28`）: `clock = {nowMs: 1759800000000, tzOffsetMinutes: 540}` を load / event / `*_result` / host_progress の全リクエストに付ける。画面の読み込みは `src/screen-catalog.js` の `SCREEN_CATALOG` / `screenFile` と `src/package-format.js` の `parsePackage(text, packageFormat(file))`。1 シーケンス = 新しい WASM インスタンス（`WebAssembly.instantiate(module_, {})`）。動的な id（dialog / http / storage / file / rpc / host の effect `id`）は **base の応答から取り、同じリクエストを candidate にも流す**（candidate で id が違えば effect の差分として表示される）
-7. **代表 payload（部品種別）**（根拠: `fields.rs:12-20,245-252`（入力 xtype と `event_value`）、`grid.rs:250-407`、`kanban.rs:106`、`navigation.rs:301-334`、`lib.rs:662-688`）。走査は `pkg.ui` の生ツリー（正規化前）で `handler` と `itemId` を持つノード:
-   | xtype（別名含む）                                              | payload                                                                            |
-   | -------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-   | button / splitbutton / xtype なし（menu item）/ その他         | `{}`                                                                               |
-   | textfield / textarea / textareafield / combobox / combo        | `{value: "x"}`（combobox は選択肢外でエラーなら、そのエラー応答を照合）            |
-   | numberfield / slider / sliderfield                             | `{value: 1}`                                                                       |
-   | checkbox / checkboxfield                                       | `{value: true}`                                                                    |
-   | panel（`collapsedBind` あり）                                  | `{action: "toggle"}`（無ければ `{}` でエラー応答を照合）                           |
-   | window / messagebox                                            | `{action: "close"}`                                                                |
-   | grid / gridpanel                                               | `{action: "sort", column: <node.columns[0].dataIndex>}`（columns が無ければ `{}`） |
-   | kanban / tree / treepanel / datepicker / pagingtoolbar         | `{}`（エラー応答の文字列一致を照合。id を要するため）                              |
-   | 各 event の後に `layout` 800 を 1 回流す（RESEARCH §3 と同形） |
-8. **追加シーケンス**（画面の基本列 22 本 + `tests/browser/font-parity-{edit,states,surface,text}.json|rhai` 4 本に加える。label は固定文字列で、T1 の 4 と変異 M2 / M3 の判定に使う）:
-   - `reload`: `dialogs` 画面の基本列を流した**同じインスタンス**で再 `load` → `showAlert` event → `layout` 800（P1: `dialogs::SEQUENCE` の採番継続）
-   - `dialog-confirm-ok`: `dialogs` → `showConfirm` → `:dialog:<id>:ok` → `layout` 800
-   - `dialog-prompt-input`: `dialogs` → `showPrompt` → `:dialog:<id>:input` `{value:"x"}`（Draft、revision +1 = P2）→ `:dialog:<id>:ok`
-   - `dialog-result-op`: `dialogs` → `showAlert` → `{op:"dialog_result", id, ok:true, data:null}`
-   - `http-result`: `http-grid` → `loadProducts` → `http_result {id, ok:true, data:[{"id":1,"name":"x","price":1}]}` → `http_result {id:<同じ id>}`（消費済み id のエラー）→ `loadProducts` → `http_result {ok:false, error:"boom"}`
-   - `storage-result`: `storage-lab` → `saveProfile` → `storage_result ok` → `restoreProfile` → `storage_result {ok:true, data:{…}}` → `removeProfile` → `storage_result ok`
-   - `file-result`: `file-lab` → `save` → `file_result ok` → `binaryRead` → `file_result {ok:true, buffer:<buffer_store した 4 byte>}` → `binaryRead` → `file_result {ok:false, error:"x", buffer:<id>}`（`abi.rs:70` のエラー）→ `list` → `file_result {ok:true, data:[]}`
-   - `rpc-result`: `rpc-lab` → `connect` → `rpc_result {ok:true, buffer:<4 byte>}`（デコード失敗ならそのエラーを照合）→ `connect` → `rpc_result {ok:false, error:"x"}`
-   - `host-result`: `worker-orders` → `load` の effects の host id に `host_result {ok:true, data:null, error:null}` → `refreshOrders` → `host_result ok` → `host_progress {id, data:{operation, transferred:0, total:null}}`（progressHandler 無しのエラー文字列を照合）
-   - `host-progress`（インライン fixture = `tests/abi.test.js:163-176` の定義と script）: `load` → `host_progress` 不正 3 種（`abi.test.js:178-182`）→ 正常 progress → `host_result` → 再 progress（消費済みエラー）
-   - `navigate`: `page-navigation` → `openDetails`（`navigate` effect）。インライン fixture: handler が `navigate("detail")` と `alert("x")` を同時に呼ぶ → `"Navigation cannot be combined with other effects in the same handler"`（`lib.rs:967-969` = P3）
-   - `rollback`: インライン fixture（`lib.rs:1734` と同じ `fail` handler: 代入後 `while true {}`）: `load` → `fail` event（operations 上限エラー）→ `layout` 800 → 正常 event（state が load 直後と同じ = P4）。もう 1 本 `throw "bad"` 版
-   - `failed-load-keeps-previous`: `abi.test.js:29-43` の定義で `load` → `add` → 不正 script で `load`（エラー）→ `add`（前の Runtime が残り count が進む）
-   - `theme`: `{op:"theme", theme:{version:1, mode:"dark"}}` → `layout` 800（`Scene.theme`）→ 不正 theme（エラー）→ `layout` 800
-   - `abi-errors`: 未 load で `{"op":"event","target":"x"}` / `{"op":"layout","width":800}`（`No screen loaded`）、`{}`、`{"op":"nope"}`、load 後に `layout 100`（幅エラー）、`event:unknown-target`（`{"op":"event","target":"nope"}` → `Unknown itemId: nope`。M3 の判定に使う）
-   - **訂正（turn 3 / 実測。実物を正とした 5 件。label と M1〜M3 の判定経路は不変）**:
-     1. `host-result`: `host_result` の `data` は `null` ではなく `{body: []}`。`null` だと `listed` が `r.data.body` で throw してロールバックし、続く `refreshOrders` が state 無変化で host effect を出さないため、progress が消費済み id に当たってしまう。順序も `load` → `host_result:load` → `refreshOrders` → `host_progress`（progressHandler 無しのエラー）→ `host_result:refresh` に変更（progress を生きた id に当てるため）
-     2. `file-result`: `list` の直前に `file_result:bytes:2`（`read_bytes` id の成功完了）を 1 歩追加。`busy()` を共有する `mkdir` / `list` / `save` は直前の state が `loading = true` のままだと state 無変化で effect を出さないので、`list` が自分の effect を出せない。この 1 歩は `abi.rs:70` の「失敗完了は pending id を消費しない」も同時に実証する
-     3. `navigate` のインライン fixture の handler / itemId 名は `go` ではなく `combine`（`go` は Rhai の予約語）
-     4. `failed-load-keeps-previous` の不正 script は `fn init(s){throw "failed";s} fn add(s,e){s}`（`abi.test.js:107` の形）。`add` を欠いた形は handler 検証（`add references undefined handler: add`）で先に落ちて init throw 経路に届かない
-     5. `theme`: 先に `load` を 1 歩置く（load 前の `layout` は `No screen loaded` になる）
-9. **変異表**（`build-engine-variant.mjs` の `MUTATIONS` 定数。`from` は**ちょうど 1 回**出現すること。refactor で動いたら `from` だけ直し、ここに訂正行を書く）:
-
-   | 名前                       | ファイル            | from → to（意図）                                                                                                                         | 期待する差分                                         |
-   | -------------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-   | M1 `layout-x-offset`       | `engine/src/lib.rs` | `layout` の root `arrange(...)` 呼び出しの x `16.0` → `17.0`（RESEARCH §3 と同じ変異。`from` は `arrange(` 直後の数行を含めて一意にする） | `layout:*` の `data.widgets[*].x`。基本列で 137 以上 |
-   | M2 `dialog-draft-revision` | `engine/src/lib.rs` | `dialogs::Event::Draft` 分岐の `self.revision += 1;` を削除（`from` は `Draft => {` を含めて一意にする）                                  | `dialog-prompt-input` の `data.revision`             |
-   | M3 `unknown-item-message`  | `engine/src/lib.rs` | `"Unknown itemId: {target}"` → `"Unknown item: {target}"`                                                                                 | `abi-errors` の `event:unknown-target` の `error`    |
-
-   **訂正（turn 3 / 実測）**: 確定した `from`（いずれも `lib.rs` にちょうど 1 回）と実測差分数は次のとおり。M1 の実測は基本列 137 以上ではなく **全列で 165**。
-   - M1: `"        arrange(\n            &self.ui,\n            &state,\n            16.0,\n"`（`arrange(` 単独は `:1445` 等にもあるので `&self.ui` 前置で一意化）→ `diffs = 165`
-   - M2: `"                dialogs::Event::Draft => {\n                    self.revision += 1;\n"`（`self.revision += 1;` 単独は `:983` にもある）→ `diffs = 2`
-   - M3: `'"Unknown itemId: {target}"'` → `diffs = 1`
-   - **T2 への申し送り**: M1 / M2 の `from` は `self.ui` / `self.revision` を含むので、`self.root.ui` への差し替えで M1 は必ず動く（M2 の `revision` は Runtime に残るので動かない見込み）。動いたら `from` だけ直してここに訂正行を追記する
-   - **訂正（turn 4 / T2 後。申し送りのとおり M1 だけ動いた）**: M1 の `from` / `to` の 2 行目を `&self.ui,` → `&self.root.ui,` に直した（`from` = `"        arrange(\n            &self.root.ui,\n            &state,\n            16.0,\n"`）。M2（`self.revision` は Runtime 残留）・M3 は無変更。リファクタ後のソースで再ビルドした実測差分数は M1 `165` / M2 `2` / M3 `1` で turn 3 と同一、3 本すべて exit 1
-
-10. **`docs/components-plan.md` の節構成**: 1. 状態（定型文）/ 2. 目的と前提（ExtJS のカスタムコンポーネント相当、エンジン内合成 = DECISIONS B 案と却下案 3 つの要約）/ 3. 使い方（`components` 宣言 名前 → `url`、`xtype` に宣言名、`config`（固定値または親 state への `bind`）、`listeners`（子の `emit` 名 → 親 handler）、子 Rhai の `emit(name, payload)` と任意の `config(state, config)`、`state.config` 注入。YAML 例 1 つ）/ 4. Instance 木の構造（`Runtime { root, components: HashMap<itemId, Instance> }`、Scene 1 つ、target / key の `"<itemId>/<子itemId>"` 接頭辞）/ 5. 設計決定（8 論点の表 + 注記 2 件）/ 6. 段階計画（1・2 完了、3〜6）/ 7. 本マイルストーンで確定した構造（Instance 12 フィールド表、Runtime 4 フィールド表、Instance のメソッド 3 本、root 共通物を Runtime に残す理由）/ 8. 残課題（`safe_key` 区切り文字、`http` effect の `kind`、`SEQUENCE` などの thread_local の扱い = RESEARCH §1.2）
-11. **スクリプトの置き場と名前**: `scripts/compare-engine-behavior.mjs` / `scripts/build-engine-variant.mjs` / `scripts/verify-instance-refactor.mjs`。`package.json` の scripts には**足さない**（`verify:transfer` は入っているが、本件は PR 用の一時的な照合で、定常運用の入口にしない。`docs/testing.md` に入口を書く）。スクラッチと証跡は `target/engine-compare/`（gitignore 済み）
-12. **テストファイルを足さない**: 受け入れ基準 1 の「既存テストファイルの変更 0」に加え、新規の `tests/*.test.js` も作らない（照合は Node スクリプトと変異表で歯を確かめる。Vitest に載せると各実行で base ビルドが要る）
-
-## 落とし穴の対応（RESEARCH §5 → 担当タスク）
-
-| #   | 担当         | 完了基準での検証                                                                                  |
-| --- | ------------ | ------------------------------------------------------------------------------------------------- |
-| P1  | T1 / T2      | `reload` シーケンス（決めた事項 8）が diffs 0                                                     |
-| P2  | T1 / T2      | `dialog-prompt-input` の `data.revision` 一致。M2 で非 0                                          |
-| P3  | T2           | エラー文字列集合の一致（T2-6）、`navigate` + `alert` のエラー応答一致。M3 で非 0                  |
-| P4  | T2           | `lib.rs` テスト 2 本無改修 green、`rollback` シーケンス diffs 0、`commit_state` を Runtime に残す |
-| P5  | T1           | 判定にハッシュを使わない（T1-1）                                                                  |
-| P6  | T1           | 固定 clock、同一 WASM 同士 diffs 0（T1-4）                                                        |
-| P7  | T1 / T2 / T4 | 変異 M1〜M3 が exit 1（T1-4、T2-5、T4-1）                                                         |
-| P8  | T1           | `--base` / `--candidate` 両方必須（T1-1）                                                         |
-| P9  | T1           | descriptor 投入、`okResponses` / `errorResponses` の記録と T2 での一致                            |
-| P10 | T3           | struct 行数と表の行数一致（T3-3）                                                                 |
-| P11 | T2           | `abi.rs` 無改修（T2-2、T2-8）                                                                     |
-| P12 | T1 / T4      | `git worktree list` 1 行（T1-5、T4-5）                                                            |
-| P13 | 恒常         | PROGRESS 冒頭の恒常注意に記載済み。各ターンの「次への注意」には写さない                           |
-| P14 | T1           | 変異コピーに `public/themes/` を含める（T1-3）                                                    |
-
-並行性: 単一スレッド WASM・同期 Rhai で並行性は無い（RESEARCH §5 末尾）。境界値: `layout 100`（幅エラー）、`file_result` の `ok:false` + buffer、消費済み id の再完了、`host_progress` 不正 3 種、runaway handler（operations 上限）を `abi-errors` / `file-result` / `http-result` / `host-progress` / `rollback` が担う（決めた事項 8）。異常系: エラー応答も文字列一致で照合する（RESEARCH §2）。
+1. ABI `load` の同梱形は `request.components = { "<絶対 URL>": { "package": <Package JSON>, "script": "<Rhai>" } }`（`descriptors` と同じ別キー。`abi.rs:30-38` の隣）。JS が `screen.components[name].url` を絶対 `href` に書き換えてから送り、Rust は `url` を不透明なキーとして引く。同じ子を 2 か所に置いても本体は 1 つ、Instance は 2 つ（RESEARCH §2 / §7）
+2. `Package.components` は `BTreeMap<String, composition::Declaration>` + `#[serde(default, skip_serializing_if = "BTreeMap::is_empty")]`（`lib.rs:41-52` の `requests` 等と同形）。REQUIREMENTS R1 の `Option<BTreeMap>` と意味は同じ（RESEARCH §7）
+3. `Runtime.components` は `BTreeMap<String, Instance>`（REQUIREMENTS R2 は `HashMap`）。理由: 子の apply 順・エラーの発生順を決定的にし、照合と証跡の再現性を保つ。キーは接頭辞付き itemId パス（`"a"` / `"a/b"`）
+4. component ノードの判別は `port_kind = "component"`（`lib.rs:271-272`。`#[serde(skip)]` の内部フィールド。既存の `messagebox` / `accordion` と同じ使い方）。layout の分岐は `measure` と `arrange_sized` の先頭 2 か所のみ（方式 (H)、RESEARCH §1.3）
+5. component ノードの許可属性検査は「許可属性だけを写した既定 `Node` と `serde_json::to_value` で一致するか」で行い、`fields::normalize` より前に template を走査する（normalize が親の `layout: accordion` や `radiogroup` で子のフィールドを書き換える `extras.rs:187-212` の影響を受けないため）。親 xtype の規則（`container / panel / fieldset / window`）と `itemId` 必須は normalize 後の `validate` で見る
+6. 宣言名は `^[A-Za-z][A-Za-z0-9]{0,39}$`（`__text` / `invalid-*` / `port-*` 等の内部名と `-` `:` `/` を構造的に排除）。衝突は固定リスト 48 件 ∪ ダミー `Node` の normalize 結果（P1）
+7. 子で拒否する宣言は `requests / operations / storage / files / rpc / pages / webmcp` の 7 種（REQUIREMENTS R1 の 6 種 + `operations`。`host_call` を拒否する以上 `operations` は使えないため。メッセージは 1 文言）
+8. 照合列の到達条件（本ターンに base `ef582d5` へ流して確認。証跡はプローブの標準出力。値は PROGRESS に label 単位で記す）: `rpc_result` にデコード可能な `EchoResponse`（15 バイト）を返すと handler に届き revision が進む / `saveAs` / `saveDraft` は直接では `ok` だが revision 不変、`saveSplit-menu` `{action:"toggle"}` の後は届く（`saveAs` は window を開き `modal` が出る）/ `sendMessage` / `clearChat` は直接では revision 不変、`galleryViews` `{action:"tab", value: 4}` の後は届く（`sendMessage` は `chatInput` に入力しないと handler が throw して error 応答）/ `handlerNodes` を `items / menu / tbar / bbar / buttons` に広げると増えるのは `uivolve-gallery` の 4 件のみ。「会話」タブの index は pkg から算出する（固定値 4 を書かない）
+9. `emit` の event map は `#{ target, action, value }` の 3 キーのみ（DECISIONS 細目）。`listeners` に無い emit は無視。上限 8 / handler。init 中・config 中はエラー。root では未定義（登録しない）
+10. config の bind 差分判定は「親の候補 state と現在の確定 state で `evaluate_config` の結果（`serde_json::Value`）が `!=`」。load 時は差分に関係なく全子へ注入し `config` handler は呼ばない（DECISIONS 細目）
+11. 深さ 3 の emit は上方向にだけ連鎖する（`a/c` → `a` の listener → `a` の emit → root の listener）。config は下方向にだけ連鎖する。両方向が交わらないのでピンポンは構造的に起きない（DECISIONS Round 1 の読み替え）
+12. エラー文言: 子 Instance で起きた失敗は `"Component {path}: "` を前置する（root は無変更）。英語の文言は既存の `lib.rs` / `instance.rs` の体裁、JS の文言は既存の日本語の体裁（`engine.js:53` / `application-loader.js:104`）。既存の文字列は 1 つも変えない（P2。M3 の `"Unknown itemId: {target}"` と M1 / M2 の `from` 文字列が `lib.rs` に 1 回ずつ残ること）
+13. `Instance::run_event` / `blocked` / `prepare_commit` / `apply` は `lib.rs` 内の `impl instance::Instance` ブロックに置く（文字列と本文の移動先を `lib.rs` に留め、照合の変異 M1〜M3 を壊さない）
+14. 「変更を適用」（エディタ。`main.js:187-189`）は直前の `load` で取得した子（`UiRuntime.components`）を再利用し、url が一致しない子は本体なしエラー。`components.md` の制限に書く
+15. `tests/abi.test.js` の追加は `components` 付き `load` の `ok` と 9 件超過の 2 ケースのみ。既存ケースの期待値は不変
+16. Rust の新テストは `engine/src/composition_tests.rs` 1 本（節: 宣言 / Instance 環境 / 木とロード / layout / dispatch / トランザクション）。`lib.rs` の既存テスト 4 本（`lib.rs:1494-1585`）は触らない
+17. Vitest の新ファイルは `tests/components-loader.test.js`（T8）と `tests/components-demo.test.js`（T9）の 2 本。Vitest は Node 環境（`vite.config.js:16`。DOM 環境なし）なので、両レンダラーの描画は `tests/runtime.test.js:68-144` のモックで「両 surface に同じ Scene が渡る」ことを確かめる
+18. 変異は M1〜M3（既存。照合で検出）+ M4 / M5（T10。候補のみ probe で検出）。`verify-instance-refactor.mjs` は `probe` 付きの変異を probe で検査する
 
 ## メモ
 
-- **ゴール逆算**: 受け入れ基準 1 = T2-3 / T2-8 / T3-6 / T4-3、2 = T1 / T2-4 / T4-1、3 = T2-2 / T2-3、4 = T2-2 / T2-3、5 = T3-3 / T4-4、6 = T2-7。RESEARCH §6 の提案 4 件は、再 load・dialog 完了・部品種別 payload を決めた事項 7〜8 に、`safe_key` と `http` の `kind` の注記を T3-2 に採用した（REQUIREMENTS.md は書き換えない）
-- **タスク数 4**: REQUIREMENTS が「文書 1 本 + 純リファクタ + 照合」で小さく、各タスクが 1 ターンで実装 + テスト + コミットまで収まる。8 タスクへ増やさない（テンプレートの方針）
-- **T2 の進め方**: 先に `instance.rs` に struct と `load` を切り出して `cargo test` を通し、次に `dispatch` 以降の `self.x` → `self.root.x` を機械的に置換する。借用エラーは `let root = &mut self.root;` の導入ではなく直接のフィールド参照で解く（`self.root.http.commit(names, &self.root.package.requests)` は disjoint fields で通る）。`self.state_json()?` を呼ぶ箇所（`dispatch:621`、`commit_state:940`、`layout:995`）は `self.root.state_json()?` に置き換え、呼び出し回数・位置を変えない（P4）
-- **RESEARCH「盗める点」の採否**:
-  | 盗める点                                                                     | 採否                                               | 理由                                                                                       |
-  | ---------------------------------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-  | `tests/abi.test.js:14-28` の `raw()` と `:82` の 2 インスタンス起動          | 採用                                               | 照合スクリプトの WASM 呼び出しの形                                                         |
-  | `scratch/turn-001-compare.mjs`（固定 clock・descriptor 投入・ok/error 集計） | 採用（差分表示を JSON 経路に変更、シーケンス追加） | 実測済みで 230 応答 0 差分を再現できる                                                     |
-  | `scripts/verify-transfer.mjs` の手順配列と exit code                         | 採用（所要の出力を追加）                           | 最終判定の形。振り返り提案「所要を出す」                                                   |
-  | `dynamic_ui.rs` の「テンプレート（`package.ui`）/ 確定ツリー（`ui`）」の対   | 採用                                               | Instance が同じ対を持つ。段階 3 で子も同じ関数を使える                                     |
-  | `clear()` 7 連の切り出し                                                     | 採用（`Instance::clear_queues` = 5 キューのみ）    | 重複削減。順序は観測不能と確認済み                                                         |
-  | `commit_state` を Instance 側へ移し root 共通物を引数で渡す                  | 却下                                               | `prepare` の順序と借用を変えないため Runtime に残す（RESEARCH §1.3 推奨）。段階 3 で再検討 |
-  | `functions` を `ast.iter_functions()` から再計算                             | 却下                                               | 差分最小。フィールド維持                                                                   |
-  | Rhai `call_fn_with_options` / `Engine::new_raw` + 共有パッケージ             | 却下                                               | 挙動不変（最上位文の評価・上限の扱いが変わり得る）                                         |
-  | `dialogs::SEQUENCE` などの thread_local の移動                               | 却下                                               | P1。文書の残課題に記す                                                                     |
-  | WASM のバイト比較                                                            | 却下                                               | 同一ソースでも sha256 が違う（RESEARCH §3）                                                |
-- **直近 2 件の振り返りの「次回への提案」の採否**:
-  - 採用: 変異表を検査タスクの完了基準に入れる（T1 / T2 / T4 の M1〜M3）。並列サブ作業を最終タスクに置かず gate は前景（T4）。台帳規約（生の値は証跡 JSON を指す。T3-6、T4-3）。runner が手順別所要と合計を出す（T4-1）。恒常の注意と次のタスク固有の注意の分離（PROGRESS 冒頭に既存）。「既存画面で条件が揃わない」対策としてインライン fixture を最初から計画に入れる（決めた事項 8）。検査ファイルを役割で分ける（compare / build-variant / runner の 3 本）。`gsd-lite-loop.sh --where` を入口にする（本ターンで実施）
-  - 対象外（理由）: 実ブラウザの起動プローブ（本マイルストーンはブラウザ不要）、Codex sandbox（全フェーズ Claude）、lean-ctx フックの root 修正（ループ・環境の改修はスコープ外。恒常注意で回避）、verify の「要確認」付与（verify 側の運用）、`origin` の扱い（discuss で解決済み、DECISIONS）
-- **impl への注意**: `bun run build:wasm` は `public/engine.wasm` を上書きする。base は必ず `target/engine-compare/base-35120e0.wasm`（別名）に置く。`.gsd-lite/` `scripts/` `tests/` 配下の `cat` / `grep` はフックに拒否されるので Read ツールと `git grep` を使う（恒常注意）。変異ビルドは作業ツリーを触らない設計（コピー先で置換）なので `git status` が汚れたら設計違反
+### 振り返り（直近 2 件）の提案の採否
+
+| 提案（出典）                                                 | 採否   | 反映先 / 理由                                                                               |
+| ------------------------------------------------------------ | ------ | ------------------------------------------------------------------------------------------- |
+| 照合列を base に流してから固定（instance-refactor #1）       | 採用   | 本ターンで `turn-002-sequences-probe.mjs` を base に流した（決めた事項 8）                  |
+| research / plan の成果物を `bunx vp fmt`（#2）               | 採用   | 本ターンの終了手順。REQUIREMENTS 進め方の制約                                               |
+| サブエージェント依頼文の禁止事項（#3）                       | 採用   | 下の「サブエージェントへの依頼文」                                                          |
+| PROGRESS の前ターンのエントリを編集しない（#4）              | 採用   | 下の「impl への注意」                                                                       |
+| lean-ctx の project root（#5、font-parity #6）               | 対象外 | ループ運用側の作業。今ターンも未接続で Read / Bash で進めた（PROGRESS には書かない方針）    |
+| verify のサブエージェントを観点別に分ける（#6）              | 採用   | 下の「verify への申し送り」に観点を列挙                                                     |
+| サブエージェント起動後は `git show HEAD:<path>` で読む（#7） | 採用   | 下の「impl への注意」                                                                       |
+| turns.jsonl の usage 内訳（#8）                              | 対象外 | ループ側                                                                                    |
+| 表の桁揃え差分は `git diff -w --stat` を併記（#9）           | 採用   | T11 完了基準                                                                                |
+| PR に `.gsd-lite/` を含めるか discuss で聞く（#10）          | 済     | DECISIONS 終了シーケンス（含める）                                                          |
+| 段階 3 の research は残留リスク 1・2 を入力に（#11）         | 済     | R9 (a)(b)、T1                                                                               |
+| Chromium 起動プローブ（font-parity #1）                      | 不採用 | 実ブラウザを必須にしていない（受け入れ基準 3）                                              |
+| 並列サブ作業を最終タスクに置かない・600 秒（#2）             | 採用   | T12 は並列なし。T8 / T9 / T11 のサブ作業は「結果をファイルに書いて終わる」形                |
+| 検査を足すタスクに変異表（#3）                               | 採用   | T10 の M4 / M5（役割の無効化 2 件）。T2〜T7 の Rust テストは拒否ケースを 1 件ずつ持つ       |
+| 台帳に生の値を写さない（#4）                                 | 採用   | `components.md` / `testing.md` は証跡ファイル名を指す（T11）                                |
+| runner が所要を出す（#5）                                    | 済     | `verify-instance-refactor.mjs:120-136` の表                                                 |
+| 画面 × 部品 × 状態の一覧と補助 fixture を最初から（#7）      | 採用   | T9 のデモと T10 の拒否 fixture を計画に含めた。Rust の fixture は `composition_tests.rs` 内 |
+| PROGRESS の恒常注意を 1 か所に（#8）                         | 済     | PROGRESS 冒頭                                                                               |
+| 1 本で多 suite の検査ファイルを分割（#9）                    | 採用   | Vitest を loader / demo の 2 本に分け、Rust は 1 本だが節で分ける                           |
+| verify は未確認に「要確認」を付ける（#10）                   | 申送   | verify への申し送り                                                                         |
+| `origin` の判定（#11）                                       | 不要   | 今回は `origin` あり（DECISIONS）                                                           |
+
+### RESEARCH の「盗める点」の採否
+
+| 点                                                 | 採否 | 理由 / 反映先                                                                                           |
+| -------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------------------- |
+| ダミー Node に normalize を通す衝突判定（§1.1）    | 採用 | T2、決めた事項 6                                                                                        |
+| `pages::Requests` 形の emit キュー（§1.5）         | 採用 | T3 `composition::Emits`                                                                                 |
+| `Dynamic` 引数で名前 × arity の stub（§1.5）       | 採用 | T3。`register` を呼ばない方式（上書きではなく）                                                         |
+| `Instance::load` に効果登録フラグ（§1.5）          | 採用 | T3 `effects: bool`                                                                                      |
+| layout (H) thread_local スナップショット（§1.3）   | 採用 | T5。(B) は 35 か所の差分で照合に守られない、(F) は bind 14 本の書き換え漏れが静かに別キーを読むため却下 |
+| `commit_state` の prepare / apply 分割（§1.4）     | 採用 | T6 `commit_all`                                                                                         |
+| `ExtensionContext` の共有（§1.5 / P6）             | 採用 | T3                                                                                                      |
+| `request.components[絶対URL]`（§2）                | 採用 | 決めた事項 1                                                                                            |
+| `internals` の `AST::walk` で load 時検出（§3）    | 採用 | T3。`Fn("name")` は拾えないので実行時 stub を根拠にする（契約に明記）                                   |
+| ExtJS の listeners / fireEvent の意味論（§4）      | 採用 | 未登録 emit の無視のみ。bubbling / `false` 戻り値 / `scope` は「対応しない」と契約に明記                |
+| Elm の translator パターン（§4）                   | 語彙 | 契約文書の説明にだけ使う                                                                                |
+| 「変更を適用」は直前 load の子を再利用（§7）       | 採用 | 決めた事項 14                                                                                           |
+| R10 の効果関数列を load 時 / 実行時の 2 列に（§7） | 採用 | T3 / T10                                                                                                |
+| R9 (b) の 2 段列（§7）                             | 採用 | T1、決めた事項 8                                                                                        |
+| 原子的な確定（失敗したら親子とも不変）             | 採用 | T6 / T7（最短実装を理由に落とさない）                                                                   |
+
+### 落とし穴（RESEARCH §6）の担当タスク
+
+P1 → T2 / P2 → T2〜T7 の照合 差分 0 と T6 の文字列集合確認 / P3 → T2 / P4 → T5 / P5 → T5 / P6 → T3 / P7 → T3 / P8 → T3・T10 / P9 → T8 / P10 → T1・T10 / P11 → T1 / P12 → T8 / P13 → T3 / P14 → T5（`validate` は接頭辞なしの ui に対してのみ走る）/ P15 → T3 / P16 → 恒常注意（PROGRESS 冒頭）
+
+### R10 の担当タスク
+
+循環参照 → T4（Rust）・T8（JS）/ 深さ 3 超 → T4・T8 / Instance 数 8 超 → T4・T8 / 未知の宣言名 → T2（既存 `Unknown xtype`）/ 宣言名と組み込み xtype の衝突 → T2 / component ノードの不正属性 → T2 / `config` の bind 先が無い → T2（規則）・T4（load）・T7（commit）/ `listeners` の handler が無い → T2 / 子の効果関数呼び出し → T3（直書き = load 時、`Fn` = 実行時。各関数 1 回以上）・T10 / 子 ui の `window` → T3 / 子の宣言 → T3 / 親 listener の失敗 → T7 / 子 `config` handler の失敗 → T7 / `config` 内の `emit` → T7 / `init` 中の `emit` → T3 / 2MB 超過 → T8（JS 事前検査）+ T4 の Rust 側は既存 `abi.rs:139` のまま / 子 script 100KB 超 → T4・T8 / 子 node 200 超 → T4
+
+### 並行性・境界値・異常系
+
+- 並行性: 単一スレッド WASM・同期 Rhai なので無い。`thread_local` の LayoutScope はガードで必ず解除する（T5 のテストで layout 失敗後も次の layout が通ることを確かめる）
+- 境界値: Instance 8 / 深さ 3 / 2MB / 100KB / node 200 / emit 8 は「ちょうど」と「+1」の両方を固定する（T3 / T4 / T8）
+- 異常系: すべての拒否は「エラー応答 + 親子の state / 前画面が不変」を同じテスト内で確かめる（state を取り直して `==`）。panic / trap は `cargo test` で `should_panic` を使わず、ABI の `raw` 呼び出しが `ok: false` の JSON を返すことで確かめる（T4 / T10）
+
+### impl への注意
+
+- 1 ターン 1 タスク。タスクの完了基準をすべて満たしてからコミット（`gsd-lite(impl): T<n> <要約>`）。Rust を触ったら `bun run build:wasm` → `bunx vp test run` → `bun run test:rust` → 照合 → `bun run check` の順
+- PROGRESS の前ターンのエントリは編集しない。固定項目名（やったこと / 想定外 / やり直し / 次への注意）に接尾辞や補足を付けない
+- サブエージェント起動後に親が同じファイルを読むときは `git show HEAD:<path>`（未追跡なら `bun -e` で読む）
+- `.gsd-lite/` 配下は Read ツールと `git grep -n -A<N> -E '<pattern>' -- <paths>`（フラグは pattern の前）。`cat` はフックが拒否する
+- `go` / `goto` を Rhai の関数名にしない（予約語。RESEARCH §3）
+- `Instance::load` の既存の検査順序（`instance.rs:39-195`）を変えない。子向けの分岐は既存行の間に足す
+- 2 段階のサイズ検査: JS（同梱後、どの子かを名指し）と Rust（`abi.rs:139` の 2MB。文言不変）の両方を残す
+
+### サブエージェントへの依頼文（T8 / T9 / T11 で使う。必ず入れる）
+
+- `git checkout` / `git restore` / `git stash` / `git reset` を使わない
+- 整形は対象ファイルだけ `bunx vp fmt <path>`
+- 結果はファイルに書いて終わる（親がテスト・コミットする）
+- 本 PLAN の該当タスクの完了基準と「決めた事項」を再議論しない
+
+### verify への申し送り
+
+- 観点を分けて確かめる: (1) 移動したコード（`run_event` / `blocked` / `prepare_commit`）の本文一致と順序 (2) 既存文字列の不変（`git diff main -- engine/src` の `"..."` 集合が追加のみ、M1〜M3 の `from` が 1 回ずつ）(3) `components.md` の記述と `composition.rs` / `composition_tests.rs` の一致（制限値・順序・文言）(4) スクリプトの exit code と引数検証（`probe-composition.mjs` / `verify-instance-refactor.mjs`）(5) R10 の 18 ケースとテストの対応表
+- 自分で再確認していない報告には「要確認」を付ける
+- 証跡: `target/engine-compare/compare.json` / `mutant-*.json` / `composition.json`（gitignore。値は PROGRESS に写さない）
+
+### タスク数
+
+12 タスク（目安 8〜15 の範囲内）。T2〜T7 は `lib.rs` を順に書き換えるため並列化せず、JS（T8）・デモ（T9）・文書（T11）だけサブ作業を持つ。

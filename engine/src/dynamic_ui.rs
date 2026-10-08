@@ -1,6 +1,6 @@
 use super::{fields, initialize_ui, Node};
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 pub fn validate(node: &Node) -> Result<(), String> {
     if !node.items_bind.is_empty()
@@ -15,14 +15,24 @@ pub fn validate(node: &Node) -> Result<(), String> {
     Ok(())
 }
 
-pub fn resolve(template: &Node, state: &Value) -> Result<Node, String> {
+pub fn resolve(
+    template: &Node,
+    state: &Value,
+    declared: &BTreeSet<String>,
+) -> Result<Node, String> {
     let mut ui = template.clone();
-    expand(&mut ui, state, 0, &mut 0)?;
-    super::validate(&ui, &mut HashSet::new(), &mut 0, 0)?;
+    expand(&mut ui, state, 0, &mut 0, declared)?;
+    super::validate(&ui, &mut HashSet::new(), &mut 0, 0, declared, "")?;
     Ok(ui)
 }
 
-fn expand(node: &mut Node, state: &Value, depth: usize, count: &mut usize) -> Result<(), String> {
+fn expand(
+    node: &mut Node,
+    state: &Value,
+    depth: usize,
+    count: &mut usize,
+    declared: &BTreeSet<String>,
+) -> Result<(), String> {
     *count += 1;
     if depth > 20 || *count > 200 {
         return Err("UI exceeds 200 nodes or 20 nesting levels".into());
@@ -47,13 +57,20 @@ fn expand(node: &mut Node, state: &Value, depth: usize, count: &mut usize) -> Re
             if child.item_id.is_empty() {
                 return Err("Dynamic tabs require an explicit, stable itemId".into());
             }
+            // Components are placed by the template, so the parent cannot grow one from state.
+            if declared.contains(&child.xtype)
+                || !child.config.is_null()
+                || !child.listeners.is_empty()
+            {
+                return Err("Dynamic tabs cannot carry components, config or listeners".into());
+            }
             let path = format!("dynamic-{}", child.item_id);
             fields::normalize(&mut child, &path);
             node.items.push(child);
         }
     }
     for child in &mut node.items {
-        expand(child, state, depth + 1, count)?;
+        expand(child, state, depth + 1, count, declared)?;
     }
     Ok(())
 }

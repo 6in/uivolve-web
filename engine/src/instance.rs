@@ -1,17 +1,19 @@
 use super::{
-    buffers, check_state, dialogs, dynamic_ui, extensions, fields, files, host, http,
+    buffers, check_state, composition, dialogs, dynamic_ui, extensions, fields, files, host, http,
     initialize_ui, pages, rpc, storage, validate, validate_handlers, validate_ui_state, Node,
     Package,
 };
 use rhai::{Dynamic, Engine, Scope, AST};
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// One loaded screen package: its own script engine, resolved component tree, state and
 /// request queues. The queues shared across a whole screen (dialogs, pages) stay on `Runtime`.
 pub(crate) struct Instance {
     pub(crate) package: Package,
     pub(crate) ui: Node,
+    /// Component names this package declares, i.e. the extra xtypes its template may use.
+    pub(crate) declared: BTreeSet<String>,
     pub(crate) functions: HashSet<String>,
     pub(crate) engine: Engine,
     pub(crate) extension_context: extensions::ExtensionContext,
@@ -22,28 +24,43 @@ pub(crate) struct Instance {
     pub(crate) storage: storage::Requests,
     pub(crate) files: files::Requests,
     pub(crate) rpc: rpc::Requests,
+    /// What a child handler announced to its parent. Never registered on a root engine.
+    pub(crate) emits: composition::Emits,
 }
 
 impl Instance {
+    /// `effects == false` loads the package as a component: host effects are refused instead of
+    /// queued, and `emit` takes their place. `context` is shared by every instance of a screen,
+    /// so `Runtime::with_clock` reaches the children too.
     pub(crate) fn load(
         mut package: Package,
         script: &str,
         descriptors: HashMap<String, Vec<u8>>,
+        context: &extensions::ExtensionContext,
         clock: Option<extensions::Clock>,
+        effects: bool,
         register: impl FnOnce(&mut Engine),
         dialogs: &mut dialogs::Requests,
         pages: &pages::Requests,
     ) -> Result<Self, String> {
-        let extension_context = extensions::ExtensionContext::default();
-        let _clock_guard = extension_context.enter(clock)?;
+        let extension_context = context.clone();
+        // Without a clock of its own an instance keeps the one the caller is already holding.
+        let _clock_guard = match clock {
+            Some(_) => Some(extension_context.enter(clock)?),
+            None => None,
+        };
         if package.version != 1 {
             return Err("Unsupported package version (expected 1)".into());
         }
         if !package.state.is_object() {
             return Err("Initial state must be an object".into());
         }
+        if !effects {
+            composition::reject_effect_declarations(&package)?;
+        }
         package.webmcp.validate()?;
         pages::Requests::validate(&package.pages)?;
+        let declared = composition::validate_declarations(&package)?;
         if let Some(schema) = &package.state_schema {
             schema.definition()?;
             schema.validate(&package.state)?;
@@ -51,9 +68,13 @@ impl Instance {
         if script.len() > 100_000 {
             return Err("Script exceeds 100 KB".into());
         }
+        composition::prepare_template(&mut package.ui, &declared)?;
         fields::normalize(&mut package.ui, "root");
-        validate(&package.ui, &mut HashSet::new(), &mut 0, 0)?;
-        let initial_ui = dynamic_ui::resolve(&package.ui, &package.state)?;
+        validate(&package.ui, &mut HashSet::new(), &mut 0, 0, &declared, "")?;
+        let initial_ui = dynamic_ui::resolve(&package.ui, &package.state, &declared)?;
+        if !effects {
+            composition::reject_windows(&initial_ui)?;
+        }
         initialize_ui(&initial_ui, &mut package.state);
         if let Some(schema) = &package.state_schema {
             schema.bindings(&initial_ui)?;
@@ -65,18 +86,24 @@ impl Instance {
         let mut engine = Engine::new();
         extensions::register_with_context(&mut engine, &extension_context);
         let mut http = http::Requests::default();
-        http.register(&mut engine);
         let mut host = host::Requests::default();
-        host.register(&mut engine);
         let mut storage = storage::Requests::default();
-        storage.register(&mut engine);
         let mut files = files::Requests::default();
-        files.register(&mut engine);
         let mut rpc = rpc::Requests::default();
-        rpc.initialize(&package.rpc, descriptors)?;
-        rpc.register(&mut engine);
-        dialogs.register(&mut engine);
-        pages.register(&mut engine);
+        let emits = composition::Emits::default();
+        if effects {
+            http.register(&mut engine);
+            host.register(&mut engine);
+            storage.register(&mut engine);
+            files.register(&mut engine);
+            rpc.initialize(&package.rpc, descriptors)?;
+            rpc.register(&mut engine);
+            dialogs.register(&mut engine);
+            pages.register(&mut engine);
+        } else {
+            composition::register_stubs(&mut engine);
+            emits.register(&mut engine);
+        }
         register(&mut engine);
         engine.set_max_operations(50_000);
         engine.set_max_call_levels(32);
@@ -87,6 +114,9 @@ impl Instance {
         let ast = engine
             .compile(script)
             .map_err(|e| format!("{}: {e}", package.script))?;
+        if !effects {
+            composition::reject_effect_calls(&ast)?;
+        }
         let functions: HashSet<String> = ast.iter_functions().map(|f| f.name.to_owned()).collect();
         if !functions.contains("init") {
             return Err("Script must define init(state)".into());
@@ -163,11 +193,14 @@ impl Instance {
             .map_err(|e| format!("{} / init: {e}", package.script))?;
         check_state(&state)?;
         let mut initial: Value = rhai::serde::from_dynamic(&state).map_err(|e| e.to_string())?;
-        let ui = dynamic_ui::resolve(&package.ui, &initial)?;
+        let ui = dynamic_ui::resolve(&package.ui, &initial, &declared)?;
         validate_handlers(&ui, &functions)?;
         dynamic_ui::initialize_added(&initial_ui, &ui, &mut initial);
-        let ui = dynamic_ui::resolve(&package.ui, &initial)?;
+        let ui = dynamic_ui::resolve(&package.ui, &initial, &declared)?;
         validate_handlers(&ui, &functions)?;
+        if !effects {
+            composition::reject_windows(&ui)?;
+        }
         validate_ui_state(&ui, &initial)?;
         if let Some(schema) = &package.state_schema {
             schema.bindings(&ui)?;
@@ -184,6 +217,9 @@ impl Instance {
         if !pages.prepare(&package.pages)?.is_empty() {
             return Err("navigate is only available in event handlers, not init".into());
         }
+        if !emits.take().is_empty() {
+            return Err("emit is only available in event handlers, not init".into());
+        }
         let (file_bytes, file_count) = files::Requests::size(&file_intents);
         let (rpc_bytes, rpc_count) = rpc::Requests::size(&rpc_intents);
         buffers::capacity(file_bytes + rpc_bytes, file_count + rpc_count)?;
@@ -196,6 +232,7 @@ impl Instance {
         Ok(Self {
             package,
             ui,
+            declared,
             functions,
             engine,
             extension_context,
@@ -206,6 +243,7 @@ impl Instance {
             storage,
             files,
             rpc,
+            emits,
         })
     }
 
@@ -216,6 +254,7 @@ impl Instance {
         self.storage.clear();
         self.files.clear();
         self.rpc.clear();
+        self.emits.clear();
     }
 
     pub(crate) fn state_json(&self) -> Result<Value, String> {

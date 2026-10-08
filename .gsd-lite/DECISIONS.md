@@ -1,67 +1,69 @@
-# 画面パッケージの部品化に向けた Instance 分離 — 決定と根拠
+# 決定記録 — component-composition
 
-## 方式の選択（discuss 前の検討で確定）
+## 前提
 
-- 要望の原点は「ExtJS のカスタムコンポーネントのように、既存の画面 + スクリプトを 1 部品として任意のページへ組み込む」。複数画面の並列表示（ワークスペース）ではない。
-- **B 案: エンジン内合成**（Rust に Instance を導入し、1 つの Scene・1 トランザクションで親子を扱う）を採用。
-- 却下 A 案: ホスト合成（子ごとに別 WASM、親の矩形に子 `UiRuntime` を重ねる）。子の高さが親レイアウトに反映されない、親 window / モーダルと子ポップアップの z 順が破綻、Canvas で子が DOM 浮きになる、WebMCP が子を別画面と見る。B へ発展できない使い捨て。
-- 却下 B-lite: ロード時に子パッケージを親へ平坦化（id / bind を接頭辞付きに書き換え、スクリプトを結合）。`bind` が state 最上位キーなので子 Rhai が読むキー名が変わり、結局 handler に部分 state を渡して書き戻す必要がある = B と同じ。Rhai 関数名の書き換えも脆い。
-- 却下 ワークスペース案（複数 `UiRuntime` + 共有ストア + 通知）: 共有データの読みが非同期往復になる、pane 間通知のピンポン、busy 中の dispatch 例外、同一パッケージ多重起動で OPFS 非待機ロック衝突、幅下限 240px、WebMCP の 1 ページ 1 登録、の罠を確認。親 state を正とする B 案ならこれらが消える。
+- 方式は `docs/components-plan.md` の B 案（エンジン内合成）。本マイルストーンは段階 3（同期のみの合成）に、段階 5 のローダー再帰取得（キャッシュ・manifest を除く）と段階 6 の契約文書・デモ（WebMCP を除く）を前倒しして含める。ユーザーの要望どおり。
+- 前回振り返りからの採否（ユーザー指定）: 照合列を PLAN に固定する前に base WASM へ 1 度流す / サブエージェント依頼文に `git checkout` 系禁止 / research・plan も `bunx vp fmt <path>` / `rpc_result` の成功経路を照合列に足す。
 
-## 進め方（discuss 前の検討で確定）
+## Round 1
 
-- 段階 1（設計文書の固定）と段階 2（挙動不変リファクタ）だけを本マイルストーンとし、段階 3 以降は段階 2 の結果を見てから確定扱いにする。「気軽に始めるとハマる」への答えとして、lib.rs の構造が component に耐えるかを純リファクタで先に確かめる。
-- 文書名は `components-plan.md`。`docs/README.md` の「計画書・検討書は使用APIの根拠にしない」慣習に合わせ、契約文書 `components.md` は合成実装時に別途起こす。
+### config handler の呼び出し時機
 
-## 設計決定（文書に載せる表。段階 3 以降の前提）
+- **採用: 親 handler 直後・同一トランザクション内**。親 handler が返した state を検証した後、bind 値が変わった子だけに `config` を呼び、子 state も検証してから親子を 1 回の commit で確定。失敗したら親子とも変更なし。
+- 却下: 次の layout 前（layout が state を書き換える経路になり「layout は読み取りのみ」が崩れる。WebMCP の state 取得との不整合）。却下: 初回ロード時のみ注入（フィルタ連動のデモが成立しない）。
 
-| 論点                            | 決定                                                                                                   | 根拠 / 却下案                                                                                                    |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| 親↔子の可視性                   | 子は自分の state と `state.config` のみ。親は子 state を見ない。やり取りは `config` と `emit` のみ     | 子パッケージを無改修で部品化できる。親 state を正とすることで共有データが同期で読める                            |
-| 子→親（`emit`）の連鎖           | 同一トランザクション。1 イベントで 1 回 commit、連鎖深さ上限 4。親 listener が失敗したら子も確定しない | 既存の「失敗したら何も変わらない」不変条件を維持。却下: 別トランザクション（子だけ確定した中途半端な状態が残る） |
-| 子の `navigate`                 | 許可。ページ全体を置換。URL は子パッケージ基準で解決                                                   | ExtJS でも部品がページ遷移を起こすのは普通。却下: 禁止（既存画面の流用範囲が狭まる）                             |
-| 子の `alert / confirm / prompt` | ページ全体モーダル。キューは root 1 本、完了 handler を子 Instance へルーティング                      | 既存の「ダイアログは modal 層の部品」と整合。却下: 子内モーダル（親 window との z 順が破綻）                     |
-| 子の storage / files scope      | `親画面id/itemId`。種別で共有したい場合は宣言で選択                                                    | 同じ部品を 2 つ置いたときの OPFS 非待機ロック衝突を避ける。却下: 子 package id 固定（多重起動で衝突）            |
-| 非同期効果の完了先              | effect と `*_result` op に `instance` を追加（段階 4）                                                 | ホストが完了を正しい Instance へ返すため                                                                         |
-| 制限                            | node 200 / script 100KB / state 上限は Instance ごと。Instance 数 8、ネスト深さ 3                      | 既存画面を無改修で部品にできる。却下: 全体で共有（1 部品が上限を食い潰す）                                       |
-| ロード                          | 子パッケージを同梱して 1 回の `load`。入力 2MB 上限の扱いは段階 5 で決める                             | 候補が失敗したら前画面を保つ既存契約を保てる                                                                     |
+### 連鎖の順序
 
-## リファクタの構造（第 1 ラウンドで確定）
+- **採用: 深さ優先・一括 commit、`config` からの `emit` は禁止**。子 handler → 集めた emit を親 listener へ順に → 親 state の bind 差分で子の config を順に → すべて検証後に親 → 子の順で代入。`config` 内の `emit` はエラーにしてピンポン連鎖を構造的に封じる（emit 1 段 + config 1 段で深さ上限は不要になるが、設計文書の「連鎖深さ上限 4」は「本構造では 2 段で打ち切り」と読み替えて契約文書に書く）。
+- 却下: config からの emit も許可（深さ 4）。表現力はあるがピンポン検出と順序の説明が要る。却下: emit を次トランザクションへ遅延（「失敗したら何も変わらない」が崩れる）。
 
-- **root 共通物は Runtime に残す**: `revision`、`dialogs`、`pages` は Runtime、`package / ui / functions / engine / extension_context / ast / state / http / host / storage / files / rpc` は Instance へ。段階 3 の「ダイアログは root 1 本」「1 イベント 1 commit（revision は 1 つ）」と整合する。却下: すべて Instance へ（段階 3 で root へ戻す再設計が要る）。
-- `components` の HashMap は本マイルストーンでは追加しない。Instance 木は root のみ。
+### デモの子パッケージ
 
-## 範囲・受け入れ（第 1 ラウンドで確定）
+- **採用: 部品用に別ファイル**（`public/screens/parts/order-list.{json,rhai}`）。既存 22 画面を無改修に保ち、挙動照合の差分 0 を維持する。`public/screens/packages/` は生成物で gitignore のため使わない。
+- 却下: `orders.json` / `orders.rhai` に `config` / `emit` を追加（照合列の orders の応答が変わり、差分 0 の例外定義が要る）。却下: `orders.json` をそのまま子にする（連動・選択通知のデモが成立しない）。
 
-- 文書 + リファクタを 1 マイルストーンにする。文書の決定表・フィールド一覧とコード構造の一致を verify で照合できる。却下: 文書のみ（根拠はできるが構造が検証されない）、リファクタのみ（決定の根拠が残らず段階 3 で再議論）。
-- 堅牢性の受け入れ基準を入れる: main のビルドとリファクタ後の WASM を 2 つ起こし、同一リクエスト列の応答 JSON を突き合わせる。既存テスト green だけでは Scene の座標や effects の順序の差を拾えないため。
-- リモート運用: `gsd-lite/<slug>` を github へ push して PR を作る。main が github/main より 42 コミット先行していたが、ユーザーが discuss 中に `git push github main` を実行し、`main` = `github/main` = `35120e0` を確認した。verify はブランチ push と PR 作成だけを行う。リモート名は `github`（`origin` は無い）。
+### 子の非同期効果の拒否時点
 
-## 第 2 ラウンドで確定
+- **採用: 実行時拒否を必須、load 時検出は可能なら追加**。子 Instance の Rhai engine に効果関数を「子では使えない」エラーを返す形で登録。rhai は `internals` なしでビルドされており `AST::walk` が使えないため、load 時検出は research で feature 追加のコスト（ビルド・WASM サイズ）を確かめて判断する。
+- 却下: load 時の静的検出のみ（動的呼び出しの取りこぼし・feature 追加の不確実性）。却下: 実行時のみ（早期検出がない。ただし採用案の下限として同じ）。
 
-- 設計決定の表は 8 論点すべて推奨値で確定。段階 3 以降で変える場合はそのマイルストーンの discuss で再決定する。
-- research の対象は local_projects（検索先 `.`）と official_docs（Rhai の Engine / AST / call_fn / Module）。similar_oss は純リファクタへの寄与が小さいため含めない。
+## Round 2
 
-## 実行設定（最終ラウンドで確定）
+### 堅牢性の受け入れ基準
 
-- slug は `component-instance-refactor`。ブランチ `gsd-lite/component-instance-refactor`、base は `main`。
-- 全フェーズ Claude（engine=claude、phase_engines は空）。model は research / plan / verify / reflect = claude-fable-5-1、impl = claude-opus-5。subagents=auto、reflect=true。
-- verify スキルは `git remote get-url origin` でリモート運用を判定するため、既存の `github` リモートと同じ URL で `origin` を追加した（`git remote add origin https://github.com/6in/uivolve-web.git`）。スキル本体は変更しない。`gh` は `/usr/bin/gh`、github.com に認証済み。
-- `.claude/skills/` の 6 スキルはテンプレートと内容同一（差分は整形のみ）。上書きしない。
-- 要件・決定・前回成果物の退避・state を一括コミット後にデタッチ起動し、このセッションではログをポーリングしない。
+- **採用: 入れる**。R10 として列挙し、plan は初回タスクに含める。verify は違反を差し戻す。
 
-## 調査した事実
+### 2MB 上限
 
-- 開始時は main、前回 renderer-font-size-parity は done、未コミット変更なし。前回成果物は `.gsd-lite/archive/renderer-font-size-parity/` に退避済み。
-- リモートは `github`（`origin` は無い）。前回振り返りの「リモート名が何であれ追跡先があればリモート運用」の提案に従い、push の要否を discuss で確認した。
-- `tests/abi.test.js:84` は同じ Module から 2 つ目の WASM インスタンスを起こしている。挙動照合スクリプトはこの形を流用できる。
-- `tests/` の結合テストは `createRuntime`（`tests/browser/`）以外はすべて Runtime 1 つ前提。本マイルストーンは JS を変えないので影響しない。
+- **採用: 据え置き、超えたら load エラー**。JS 側で同梱後のサイズを先に検査し、どの子で超えたかを含むエラーで前画面を保つ。デモは数 KB × 3 で余裕。照合列 `abi-errors` の期待値も不変。
+- 却下: 8,000,000 バイトへ引き上げ（`abi.rs` / `engine.js` / 文書 / テスト期待値の変更と WASM メモリの再確認が要る）。却下: 子 1 つあたりの上限を別に設ける（無改修で部品にできる範囲が狭まる）。
 
-## 過去の振り返りの採否
+### 子 ui の window
 
-- 採用: `gsd-lite-loop.sh --where` を入口に使う。`.gsd-lite/` 配下の読み取りは lean-ctx フックが root 外として拒否することがあるため、Read ツールと `git grep` を使う。
-- 採用: 台帳（照合結果）は gate のログ・証跡 JSON の生の値を写さず、ファイル名とキーを指す。台帳が持つのは判定・限界・対象外の理由だけ。
-- 採用: 検査を足すタスクは変異表（最低 1 件: 意図的に応答を変えて照合が非 0 になること）を完了基準に含める。
-- 採用: 並列サブ作業を最終タスクに置かない。gate は前景で回す。
-- 採用: push の要否を discuss で聞く（本マイルストーンで初めて PR 運用）。
-- 対象外: 実ブラウザは本マイルストーンでは不要（JS 無変更、WASM の応答照合は Node）。Chromium 起動プローブは行わない。
+- **採用: 本マイルストーンでは load エラー**。最前面判定と z 順は root の window だけを見ればよく dispatch の変更が小さい。解放は段階 4 以降の課題として `components.md` に記す。既存で該当するのは `components.json` のみ。
+- 却下: 許可してページ全体の z 順に入れる（親子を通した最前面判定と座標変換の実装が要る）。
+
+### 照合列の拡張
+
+- **採用: 3 つすべて**。`rpc_result` 成功経路（残留リスク 1）、`handlerNodes` の走査を `menu` / `bbar` / `tbar` / `buttons` へ（残留リスク 2）、新デモ画面を「候補のみ」の列として証跡に残す（次回の base）。拡張列は PLAN 固定前に base WASM へ 1 度流す（前回振り返りの採用）。
+
+## 終了シーケンス
+
+- 確定内容サマリー（REQUIREMENTS.md / DECISIONS.md）にユーザーが合意。
+- research の対象: local_projects（検索先 `.`）、official_docs（Rhai の AST 走査と `internals` feature / Engine ごとの関数登録 / `call_fn`、serde の `deny_unknown_fields` と値の形）、similar_oss（ExtJS の xtype / listeners / config の意味論、他の宣言的 UI エンジンの子コンポーネント合成。契約文書の語彙合わせ）。
+- 実行パターン: 現在の設定を維持。全フェーズ Claude（engine=claude、phase_engines={}）。model は research / plan / verify / reflect = claude-fable-5-1、impl = claude-opus-5。subagents=auto、reflect=true。`gsd-lite-loop.sh --check` は discuss 中に通過（trust 受理済み、allowlist 有効）。
+- リモート運用: 前回と同じ。verify 合格後に `gsd-lite/component-composition` を origin（github と同 URL）へ push して PR を作る。`.gsd-lite/` の管理文書（archive 退避を含む）も PR に含める。却下: archive 退避を別コミットに分ける / ローカルマージのみ。
+- ブランチ: base は `main`（`ef582d5`、github/main と一致、PR #1 マージ済み）。
+
+## discuss 側で確定した細目（ユーザーの明示判断なし。最終サマリーで提示）
+
+- component ノードの許可属性は `xtype / itemId（必須）/ config / listeners / flex / width / visibleBind`。`bind` / `handler` / `items` 等はエラー（子の中身は子 ui が決める）。
+- `config` の値で `{ "bind": "<key>" }`（キーが `bind` 1 つのオブジェクト）だけを親 state 参照とし、それ以外は固定値。`bind` は node の bind と同じ規則（最上位キー、ドットなし）。
+- emit の event map は既存の形を流用: `#{ target: "<component itemId>", action: "<emit 名>", value: <payload> }`。`listeners` に無い emit は無視（ExtJS と同じ）。`init` 中と `config` 中の emit はエラー。
+- `config` handler の引数は `(state, event)`、`event = #{ config: <map> }`。load 時は `state.config` を注入してから `init`（`config` handler は呼ばない。init が `state.config` を読む）。
+- `/` を itemId の予約文字に加える（既存画面・tests に使用例なし）。
+- Instance 数 8 は root を含む総数、深さ 3 は root を 1 と数える。
+- `components` を持つ親の `network-first` は拒否（段階 5 まで）。
+- 子パッケージの `requests` / `storage` / `files` / `rpc` / `pages` / `webmcp` 宣言は load エラー。
+- 用語: 契約文書では「コンポーネント」= components 宣言の画面パッケージ、「ウィジェット（組み込み部品）」= 組み込み xtype。既存文書の「部品」は書き換えない。
+- 新デモ画面は base WASM が load できないので照合列から除外し、Rust 単体テスト / Vitest で検証する。

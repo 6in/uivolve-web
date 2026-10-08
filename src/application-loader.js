@@ -56,6 +56,30 @@ async function verify(bytes, entry) {
     throw new Error("配信ファイルのサイズ・ハッシュが一致しません");
   return bytes;
 }
+// The delivery cache keeps one manifest per package, so a screen that pulls in children cannot be
+// restored as a whole yet. Both cache paths refuse such screens and report no children.
+function withoutComponents(candidate) {
+  if (Object.keys(candidate.screen.components ?? {}).length)
+    throw new Error("componentsを持つ画面は配信キャッシュ（network-first）に対応していません");
+  candidate.components = Object.create(null);
+  return candidate;
+}
+// Counts the Instances the engine will build: every node whose xtype names a declaration of the
+// screen it belongs to adds that declaration's own Instance count. The root counts as one.
+function countInstances(screen, packages, counter) {
+  const declarations = screen.components ?? {};
+  const walk = (node) => {
+    if (!node || typeof node !== "object") return;
+    if (typeof node.xtype === "string" && Object.hasOwn(declarations, node.xtype)) {
+      const href = declarations[node.xtype].url;
+      if (++counter.total > 8)
+        throw new Error(`コンポーネントの数が8を超えています（rootを含む）: ${href}`);
+      countInstances(packages[href].screen, packages, counter);
+    }
+    if (Array.isArray(node.items)) for (const item of node.items) walk(item);
+  };
+  walk(screen.ui);
+}
 export class ApplicationLoader {
   constructor({ resources, storage, locks } = {}) {
     this.resources = resources;
@@ -90,24 +114,62 @@ export class ApplicationLoader {
       scriptBytes: script,
     };
   }
+  // One package without its children: body, script and RPC descriptors, all relative to url.
+  async #download(url, signal) {
+    const source = encoder.encode(await this.resources.text(url, { signal }));
+    const screen = parsePackage(decoder.decode(source), packageFormat(url));
+    if (typeof screen.script !== "string") throw new Error("script URLがありません");
+    const script = encoder.encode(
+      await this.resources.text(httpUrl(screen.script, url), { signal }),
+    );
+    if (script.length > 100_000) throw new Error("Rhaiは100 KB以内にしてください");
+    const descriptors = Object.create(null);
+    for (const key of new Set(Object.values(screen.rpc ?? {}).map((r) => r.descriptor))) {
+      if (typeof key !== "string") throw new Error("RPCのdescriptor URLが必要です");
+      descriptors[key] = await this.resources.bytes(httpUrl(key, url), { signal });
+    }
+    return { source, screen, script, descriptors };
+  }
+  // Walks the components declarations depth first, rewriting every declared url to the absolute
+  // href it resolves to against the package that declares it. Each href is downloaded once even
+  // when it is placed twice, so the returned map is keyed by href and holds one body per package.
+  async #components(screen, url, signal) {
+    const packages = Object.create(null);
+    if (!Object.keys(screen.components ?? {}).length) return packages;
+    const visit = async (parent, base, depth, stack) => {
+      for (const [name, declaration] of Object.entries(parent.components ?? {})) {
+        if (typeof declaration?.url !== "string")
+          throw new Error(
+            `コンポーネント ${name} の宣言が不正です（url を文字列で指定してください）`,
+          );
+        const child = httpUrl(declaration.url, base);
+        declaration.url = child.href;
+        if (stack.includes(child.href))
+          throw new Error(`コンポーネント ${name} の循環参照: ${child.href}`);
+        if (depth + 1 > 3)
+          throw new Error(`コンポーネントの入れ子が3段を超えています: ${child.href}`);
+        if (packages[child.href]) continue;
+        const downloaded = await this.#download(child, signal);
+        packages[child.href] = {
+          screen: downloaded.screen,
+          script: decoder.decode(downloaded.script),
+        };
+        await visit(downloaded.screen, child, depth + 1, [...stack, child.href]);
+      }
+    };
+    await visit(screen, url, 1, [url.href]);
+    countInstances(screen, packages, { total: 1 });
+    return packages;
+  }
   async fetch(value, { mode = "network-only", signal } = {}) {
     const url = httpUrl(value);
     if (!["network-only", "network-first"].includes(mode))
       throw new Error("未対応のキャッシュ方式です");
     if (mode === "network-only") {
-      const source = encoder.encode(await this.resources.text(url, { signal }));
-      const screen = parsePackage(decoder.decode(source), packageFormat(url));
-      if (typeof screen.script !== "string") throw new Error("script URLがありません");
-      const script = encoder.encode(
-        await this.resources.text(httpUrl(screen.script, url), { signal }),
-      );
-      if (script.length > 100_000) throw new Error("Rhaiは100 KB以内にしてください");
-      const descriptors = Object.create(null);
-      for (const key of new Set(Object.values(screen.rpc ?? {}).map((r) => r.descriptor))) {
-        if (typeof key !== "string") throw new Error("RPCのdescriptor URLが必要です");
-        descriptors[key] = await this.resources.bytes(httpUrl(key, url), { signal });
-      }
-      return this.#candidate(url, source, script, descriptors);
+      const { source, script, descriptors } = await this.#download(url, signal);
+      const candidate = await this.#candidate(url, source, script, descriptors);
+      candidate.components = await this.#components(candidate.screen, url, signal);
+      return candidate;
     }
     if (this.resources.getAuthentication().mode !== "none")
       throw new Error("配信キャッシュは認証なしの場合に利用できます");
@@ -135,7 +197,9 @@ export class ApplicationLoader {
       signal?.throwIfAborted();
       if (this.resources.getAuthentication().mode !== "none")
         throw new Error("認証設定が変更されたためキャッシュを中止しました");
-      return this.#candidate(url, source, script, descriptors, "network", metadata);
+      return withoutComponents(
+        await this.#candidate(url, source, script, descriptors, "network", metadata),
+      );
     } catch (e) {
       signal?.throwIfAborted();
       if (e.code !== "NETWORK" || this.resources.getAuthentication().mode !== "none") throw e;
@@ -210,6 +274,7 @@ export class ApplicationLoader {
       `uivolve-web:cache:${url.href}`,
       async () => {
         for (const pointer of ["current.json", "previous.json"]) {
+          let candidate;
           try {
             const stored = JSON.parse(decoder.decode(await directory.read(pointer, { signal })));
             if (stored.url !== url.href) throw new Error("キャッシュのURLが一致しません");
@@ -231,10 +296,13 @@ export class ApplicationLoader {
                 metadata.descriptors[key],
               );
             signal?.throwIfAborted();
-            return await this.#candidate(url, source, script, descriptors, "cache", metadata);
+            candidate = await this.#candidate(url, source, script, descriptors, "cache", metadata);
           } catch {
             signal?.throwIfAborted();
           }
+          // Refusing a restored screen that declares components is a decision, not a damaged
+          // generation, so it must not fall through to the previous pointer.
+          if (candidate) return withoutComponents(candidate);
         }
         throw new Error("通信に失敗し、利用できる保存版もありません");
       },

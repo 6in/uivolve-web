@@ -1,12 +1,15 @@
 use rhai::{Dynamic, Engine, Scope};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 mod abi;
 pub use abi::{input_alloc, input_free, request, response_len};
 mod theme;
 use theme::Theme;
 mod buffers;
+mod composition;
+#[cfg(test)]
+mod composition_tests;
 mod dialogs;
 mod dynamic_ui;
 pub mod extensions;
@@ -50,6 +53,8 @@ pub struct Package {
     pub files: HashMap<String, files::Definition>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub rpc: HashMap<String, rpc::Definition>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub components: BTreeMap<String, composition::Declaration>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state_schema: Option<state_schema::Schema>,
     #[serde(default, skip_serializing_if = "metadata::Metadata::is_empty")]
@@ -65,6 +70,12 @@ pub struct Node {
     pub xtype: String,
     #[serde(default)]
     pub item_id: String,
+    /// Configuration a component node hands to its child package (`composition`).
+    #[serde(default)]
+    pub config: Value,
+    /// Emit name -> parent handler, for component nodes (`composition`).
+    #[serde(default)]
+    pub listeners: BTreeMap<String, String>,
     #[serde(default)]
     pub text: String,
     #[serde(default)]
@@ -362,9 +373,99 @@ pub struct Modal {
 
 pub struct Runtime {
     root: instance::Instance,
+    /// The component instances of the screen, keyed by prefixed itemId path (`"a"`, `"a/b"`).
+    /// Ordered so that children commit and report failures in the same order every run.
+    components: BTreeMap<String, instance::Instance>,
     dialogs: dialogs::Requests,
     pages: pages::Requests,
     pub revision: u32,
+}
+
+/// The state a component load carries across the levels of the instance tree.
+struct Composing<'a> {
+    /// Child packages by declaration URL. The same package placed twice is bundled once.
+    bundled: &'a HashMap<String, (Package, String)>,
+    context: &'a extensions::ExtensionContext,
+    dialogs: &'a mut dialogs::Requests,
+    pages: &'a pages::Requests,
+    /// URLs of the instances between the root and the one being loaded.
+    loading: Vec<String>,
+    loaded: BTreeMap<String, instance::Instance>,
+    /// Instances loaded so far, the root included.
+    count: usize,
+}
+
+impl Composing<'_> {
+    /// Load the component nodes of `parent` in document order, each with its own config, and
+    /// recurse into the components they declare in turn.
+    fn load(
+        &mut self,
+        parent: &instance::Instance,
+        prefix: &str,
+        depth: usize,
+    ) -> Result<(), String> {
+        let mut nodes = Vec::new();
+        composition::component_nodes(&parent.package.ui, &mut nodes);
+        if nodes.is_empty() {
+            return Ok(());
+        }
+        let state = parent.state_json()?;
+        for node in nodes {
+            let path = match prefix.is_empty() {
+                true => node.item_id.clone(),
+                false => format!("{prefix}/{}", node.item_id),
+            };
+            if depth + 1 > 3 {
+                return Err(format!("Component {path}: nesting depth exceeds 3"));
+            }
+            self.count += 1;
+            if self.count > 8 {
+                return Err(format!(
+                    "At most 8 instances per screen (root included); exceeded at component {path}"
+                ));
+            }
+            let url = &parent
+                .package
+                .components
+                .get(&node.xtype)
+                .ok_or_else(|| format!("Component {path}: {} is not declared", node.xtype))?
+                .url;
+            if self.loading.contains(url) {
+                return Err(format!("Component {path}: circular reference to {url}"));
+            }
+            let config = composition::evaluate_config(node, &state)
+                .map_err(|error| format!("Component {path}: {error}"))?;
+            let (package, script) = self
+                .bundled
+                .get(url)
+                .ok_or_else(|| format!("Component {path}: package {url} was not bundled"))?;
+            let url = url.clone();
+            let mut package = package.clone();
+            // `init` reads the parent's configuration from `state.config`; the `config` handler
+            // only runs for the changes that follow.
+            let Some(state) = package.state.as_object_mut() else {
+                return Err(format!("Component {path}: Initial state must be an object"));
+            };
+            state.insert("config".into(), config);
+            let child = instance::Instance::load(
+                package,
+                script,
+                HashMap::new(),
+                self.context,
+                None,
+                false,
+                |_| {},
+                self.dialogs,
+                self.pages,
+            )
+            .map_err(|error| format!("Component {path}: {error}"))?;
+            self.loading.push(url);
+            self.load(&child, &path, depth + 1)?;
+            self.loading.pop();
+            self.loaded.insert(path, child);
+        }
+        Ok(())
+    }
 }
 
 impl Runtime {
@@ -396,19 +497,56 @@ impl Runtime {
         clock: Option<extensions::Clock>,
         register: impl FnOnce(&mut Engine),
     ) -> Result<Self, String> {
-        let mut dialogs = dialogs::Requests::default();
-        let pages = pages::Requests::default();
-        let root = instance::Instance::load(
+        Self::load_with_components(
             package,
             script,
             descriptors,
             clock,
+            HashMap::new(),
+            register,
+        )
+    }
+
+    /// Load a screen together with the packages its `components` declare, keyed by the URL of
+    /// the declaration. Each placement of a package becomes an instance of its own, loaded
+    /// after the instance holding it so that its `config` sees a parent that finished `init`.
+    pub fn load_with_components(
+        package: Package,
+        script: &str,
+        descriptors: HashMap<String, Vec<u8>>,
+        clock: Option<extensions::Clock>,
+        components: HashMap<String, (Package, String)>,
+        register: impl FnOnce(&mut Engine),
+    ) -> Result<Self, String> {
+        let mut dialogs = dialogs::Requests::default();
+        let pages = pages::Requests::default();
+        // One context per screen: every instance of the tree shares this clock.
+        let context = extensions::ExtensionContext::default();
+        let root = instance::Instance::load(
+            package,
+            script,
+            descriptors,
+            &context,
+            clock,
+            true,
             register,
             &mut dialogs,
             &pages,
         )?;
+        let mut composing = Composing {
+            bundled: &components,
+            context: &context,
+            dialogs: &mut dialogs,
+            pages: &pages,
+            loading: Vec::new(),
+            loaded: BTreeMap::new(),
+            count: 1,
+        };
+        composing.load(&root, "", 1)?;
+        let components = composing.loaded;
         Ok(Self {
             root,
+            components,
             dialogs,
             pages,
             revision: 0,
@@ -424,9 +562,19 @@ impl Runtime {
         execute(self)
     }
 
-    pub fn dispatch(&mut self, target: &str, mut payload: Value) -> Result<(), String> {
-        self.pages.clear();
+    /// Drop whatever the instances of the screen queued for a previous event. Every entry point
+    /// that runs a handler starts from here, so an `emit` a failed child left behind never
+    /// reaches the next event or completion.
+    fn clear_queues(&self) {
         self.root.clear_queues();
+        for instance in self.components.values() {
+            instance.clear_queues();
+        }
+    }
+
+    pub fn dispatch(&mut self, target: &str, payload: Value) -> Result<(), String> {
+        self.pages.clear();
+        self.clear_queues();
         self.dialogs.clear();
         if self.dialogs.active().is_some() {
             return match self.dialogs.event(target, &payload)? {
@@ -443,110 +591,216 @@ impl Runtime {
         if target.starts_with(":dialog:") {
             return Ok(());
         }
-        let mut state = self.root.state_json()?;
-        let mut path = Vec::new();
-        if !find_path(&self.root.ui, target, &mut path) {
-            return Err(format!("Unknown itemId: {target}"));
-        }
-        let node = *path.last().unwrap();
-        let mut windows = Vec::new();
-        collect_windows(&self.root.ui, &state, &mut windows);
-        let scope = path.iter().rev().find(|n| n.xtype == "window");
-        if windows
-            .last()
-            .is_some_and(|w| scope.map(|n| n.item_id.as_str()) != Some(w.item_id.as_str()))
-            || path.iter().any(|n| {
-                (!n.disabled_bind.is_empty() && flag(&state, &n.disabled_bind))
-                    || n.disabled
-                    || (n.xtype == "window" && !flag(&state, &n.visible_bind))
-                    || (n.item_id != target && is_panel(n) && flag(&state, &n.collapsed_bind))
-            })
-            || navigation::hidden(&path, &state)
-            || extras::hidden(&path, &state)
-            || layouts::hidden(&path, &state)
-        {
+        let Some((key, target)) = self.route(target)? else {
             return Ok(());
-        }
-        let action = payload
-            .get("action")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_owned();
-        if fields::input(node) && node.read_only {
-            return Ok(());
-        }
-        navigation::close_other_menus(&self.root.ui, &mut state, &path);
-        if node.xtype == "kanban" {
-            kanban::event(node, &mut state, &mut payload)?;
-        } else if extras::event_component(node) {
-            extras::event(node, &path, &mut state, &mut payload)?;
-        } else if grid::advanced(node) {
-            grid::event(node, &mut state, &mut payload)?;
-        } else if navigation::component(node) {
-            navigation::event(node, &mut state, &payload)?;
-        } else if node.layout == "card" && action == "card" {
-            layouts::event(node, &mut state, &payload)?;
-        } else if is_panel(node) {
-            if action != "toggle" || node.collapsed_bind.is_empty() {
-                return Err("Panel event requires action: toggle and collapsedBind".into());
-            }
-            let collapsed = !flag(&state, &node.collapsed_bind);
-            state
-                .as_object_mut()
-                .unwrap()
-                .insert(node.collapsed_bind.clone(), json!(collapsed));
-            extras::accordion(&path, &mut state);
-        } else if node.xtype == "window" {
-            if !node.closable {
-                return Err("Window cannot be closed".into());
-            }
-            if action != "close" {
-                return Err("Window event requires action: close".into());
-            }
-            state
-                .as_object_mut()
-                .unwrap()
-                .insert(node.visible_bind.clone(), json!(false));
-        } else if node.layout == "card" {
-            return Err("Card event requires action: card".into());
-        } else if !fields::input(node) && !["button", "grid"].contains(&node.xtype.as_str()) {
-            return Err("This component does not accept events".into());
-        }
-        let event_value = if fields::input(node) {
-            Some(fields::event_value(
-                node,
-                payload.get("value").unwrap_or(&Value::Null),
-            )?)
-        } else {
-            None
         };
-        if let Some(value) = &event_value {
-            state
-                .as_object_mut()
-                .ok_or("State must be an object")?
-                .insert(node.bind.clone(), value.clone());
+        let next = match key.is_empty() {
+            true => self.root.run_event(&target, payload)?,
+            false => self
+                .instance(&key)?
+                .run_event(&target, payload)
+                .map_err(|e| format!("Component {key}: {e}"))?,
+        };
+        match next {
+            Some(next) => self.commit_event(key, next),
+            None => Ok(()),
         }
-        let mut next = rhai::serde::to_dynamic(state).map_err(|e| e.to_string())?;
-        if !node.handler.is_empty() {
-            let event = rhai::serde::to_dynamic(json!({ "target": target, "action": action, "value": event_value.unwrap_or_else(|| payload.get("value").cloned().unwrap_or(Value::Null)), "id": payload.get("id").cloned().unwrap_or(Value::Null), "column": payload.get("column").cloned().unwrap_or(Value::Null), "oldValue": payload.get("oldValue").cloned().unwrap_or(Value::Null), "beforeId": payload.get("beforeId").cloned().unwrap_or(Value::Null) }))
-                .map_err(|e| e.to_string())?;
-            next = self
-                .root
-                .engine
-                .call_fn(
-                    &mut Scope::new(),
-                    &self.root.ast,
-                    &node.handler,
-                    (next, event),
+    }
+
+    /// Carry one handler result across the instances it touches and commit them together: the
+    /// emits of the instance travel up to the listeners of its parents, the configurations the
+    /// moved states resolve to travel back down, and `commit_all` moves the screen at the end.
+    /// A failure anywhere leaves every instance — and the revision — where it was.
+    fn commit_event(&mut self, key: String, next: Dynamic) -> Result<(), String> {
+        let mut candidates = BTreeMap::new();
+        candidates.insert(key.clone(), next);
+        self.propagate_emits(&mut candidates, key)?;
+        let mut visited = BTreeSet::new();
+        for path in candidates.keys().cloned().collect::<Vec<_>>() {
+            self.propagate_config(&mut candidates, &path, &mut visited)?;
+        }
+        let root_next = candidates
+            .remove("")
+            .unwrap_or_else(|| self.root.state.clone());
+        self.commit_all(root_next, candidates.into_iter().collect())
+    }
+
+    /// Hand the emits of an instance to the listeners its parent declared on the node holding
+    /// it, then do the same with whatever the parent emitted in turn. Emits only ever travel
+    /// up, so the walk ends at the root, which has no `emit` of its own.
+    fn propagate_emits(
+        &self,
+        candidates: &mut BTreeMap<String, Dynamic>,
+        mut path: String,
+    ) -> Result<(), String> {
+        while !path.is_empty() {
+            let emits = self.instance(&path)?.emits.take();
+            if emits.is_empty() {
+                return Ok(());
+            }
+            let (parent_path, item_id) = match path.rsplit_once('/') {
+                Some((parent, item_id)) => (parent.to_owned(), item_id.to_owned()),
+                None => (String::new(), path.clone()),
+            };
+            let parent = self.instance(&parent_path)?;
+            let node = component_node(parent, &item_id)
+                .ok_or_else(|| format!("Component {path}: no component node to emit to"))?;
+            let mut next = self.candidate(candidates, &parent_path)?;
+            let mut announced = false;
+            for (name, payload) in emits {
+                // An emit nobody listens for is not an error: the child announces, the parent
+                // decides which announcements concern it.
+                let Some(handler) = node.listeners.get(&name) else {
+                    continue;
+                };
+                let event = rhai::serde::to_dynamic(
+                    json!({"target": item_id, "action": name, "value": payload}),
                 )
-                .map_err(|e| {
-                    format!(
-                        "{} / {} / {}: {e}",
-                        self.root.package.script, target, node.handler
-                    )
-                })?;
+                .map_err(|e| e.to_string())?;
+                next = parent
+                    .engine
+                    .call_fn(&mut Scope::new(), &parent.ast, handler, (next, event))
+                    .map_err(|e| {
+                        let error =
+                            format!("{} / {item_id} / {handler}: {e}", parent.package.script);
+                        match parent_path.is_empty() {
+                            true => error,
+                            false => format!("Component {parent_path}: {error}"),
+                        }
+                    })?;
+                announced = true;
+            }
+            if announced {
+                candidates.insert(parent_path.clone(), next);
+            }
+            path = parent_path;
         }
-        self.commit_state(next)
+        Ok(())
+    }
+
+    /// Re-resolve the `config` of every component an instance holds against its candidate state
+    /// and hand down the ones that changed. A child whose configuration moved runs its `config`
+    /// handler, which may move its own children's configurations in turn.
+    fn propagate_config(
+        &self,
+        candidates: &mut BTreeMap<String, Dynamic>,
+        path: &str,
+        visited: &mut BTreeSet<String>,
+    ) -> Result<(), String> {
+        if !visited.insert(path.to_owned()) {
+            return Ok(());
+        }
+        let parent = self.instance(path)?;
+        let candidate: Value = rhai::serde::from_dynamic(&self.candidate(candidates, path)?)
+            .map_err(|e| e.to_string())?;
+        let committed = parent.state_json()?;
+        let mut nodes = Vec::new();
+        composition::component_nodes(&parent.ui, &mut nodes);
+        for node in nodes {
+            let child_path = match path.is_empty() {
+                true => node.item_id.clone(),
+                false => format!("{path}/{}", node.item_id),
+            };
+            let resolve = |state: &Value| {
+                composition::evaluate_config(node, state)
+                    .map_err(|e| format!("Component {child_path}: {e}"))
+            };
+            let config = resolve(&candidate)?;
+            if config == resolve(&committed)? {
+                continue;
+            }
+            self.reconfigure(candidates, &child_path, config)?;
+            self.propagate_config(candidates, &child_path, visited)?;
+        }
+        Ok(())
+    }
+
+    /// Put a changed configuration into the state of the instance it belongs to and let its
+    /// `config` handler react. The handler is the child's chance to recompute what it derives
+    /// from the configuration; announcing anything from there has no event to answer to.
+    fn reconfigure(
+        &self,
+        candidates: &mut BTreeMap<String, Dynamic>,
+        path: &str,
+        config: Value,
+    ) -> Result<(), String> {
+        let child = self.instance(path)?;
+        let mut state: Value = rhai::serde::from_dynamic(&self.candidate(candidates, path)?)
+            .map_err(|e| e.to_string())?;
+        state
+            .as_object_mut()
+            .ok_or_else(|| format!("Component {path}: State must be an object"))?
+            .insert("config".into(), config.clone());
+        let mut next = rhai::serde::to_dynamic(state).map_err(|e| e.to_string())?;
+        if child.functions.contains("config") {
+            let event =
+                rhai::serde::to_dynamic(json!({"config": config})).map_err(|e| e.to_string())?;
+            // Only what this `config` call queues may count as an emit from a configuration.
+            child.emits.clear();
+            next = child
+                .engine
+                .call_fn(&mut Scope::new(), &child.ast, "config", (next, event))
+                .map_err(|e| format!("Component {path}: {} / config: {e}", child.package.script))?;
+            if !child.emits.take().is_empty() {
+                return Err(format!("Component {path}: emit is not available in config"));
+            }
+        }
+        candidates.insert(path.to_owned(), next);
+        Ok(())
+    }
+
+    /// The state an instance would commit: what the event moved it to, or where it still is.
+    fn candidate(
+        &self,
+        candidates: &BTreeMap<String, Dynamic>,
+        path: &str,
+    ) -> Result<Dynamic, String> {
+        match candidates.get(path) {
+            Some(next) => Ok(next.clone()),
+            None => Ok(self.instance(path)?.state.clone()),
+        }
+    }
+
+    /// The instance a prefixed itemId path names, the empty path being the root.
+    fn instance(&self, path: &str) -> Result<&instance::Instance, String> {
+        match path.is_empty() {
+            true => Ok(&self.root),
+            false => self.components.get(path).ok_or_else(|| unknown_item(path)),
+        }
+    }
+
+    /// The instance an event belongs to and the itemId inside it. Each `/` of a target names a
+    /// component node of the instance resolved so far. `None` means the event is dropped,
+    /// because a component on the way is hidden or sits under a disabled part of its parent.
+    fn route(&self, target: &str) -> Result<Option<(String, String)>, String> {
+        let mut instance = &self.root;
+        let mut key = String::new();
+        let mut rest = target;
+        while let Some((head, tail)) = rest.split_once('/') {
+            let state = instance.state_json()?;
+            let mut path = Vec::new();
+            if !find_path(&instance.ui, head, &mut path) {
+                return Err(unknown_item(target));
+            }
+            let node = *path.last().unwrap();
+            if node.port_kind != "component" {
+                return Err(unknown_item(target));
+            }
+            if instance.blocked(&path, &state, head) || hidden_component(node, &state) {
+                return Ok(None);
+            }
+            key = if key.is_empty() {
+                head.to_owned()
+            } else {
+                format!("{key}/{head}")
+            };
+            instance = self
+                .components
+                .get(&key)
+                .ok_or_else(|| unknown_item(target))?;
+            rest = tail;
+        }
+        Ok(Some((key, rest.to_owned())))
     }
 
     pub fn progress_host(&mut self, id: u64, response: Value) -> Result<(), String> {
@@ -556,7 +810,7 @@ impl Runtime {
             .ok_or("Host operation has no progress handler")?
             .to_string();
         self.pages.clear();
-        self.root.clear_queues();
+        self.clear_queues();
         self.dialogs.clear();
         let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
         let next = self
@@ -581,7 +835,7 @@ impl Runtime {
         host::validate_result(&response)?;
         let name = self.root.host.consume(id)?;
         self.pages.clear();
-        self.root.clear_queues();
+        self.clear_queues();
         self.dialogs.clear();
         let handler = &self.root.package.operations[&name].handler;
         let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
@@ -606,7 +860,7 @@ impl Runtime {
     pub fn complete_http(&mut self, id: u64, response: Value) -> Result<(), String> {
         self.pages.clear();
         let name = self.root.http.consume(id)?;
-        self.root.clear_queues();
+        self.clear_queues();
         self.dialogs.clear();
         let handler = &self.root.package.requests[&name].handler;
         let response = rhai::serde::to_dynamic(response).map_err(|e| e.to_string())?;
@@ -632,7 +886,7 @@ impl Runtime {
     pub fn complete_storage(&mut self, id: u64, mut response: Value) -> Result<(), String> {
         self.pages.clear();
         let (name, operation) = self.root.storage.consume(id)?;
-        self.root.clear_queues();
+        self.clear_queues();
         self.dialogs.clear();
         response["operation"] = serde_json::to_value(operation).map_err(|e| e.to_string())?;
         response["request"] = json!(name);
@@ -663,7 +917,7 @@ impl Runtime {
         buffer: Option<u32>,
     ) -> Result<(), String> {
         self.pages.clear();
-        self.root.clear_queues();
+        self.clear_queues();
         self.dialogs.clear();
         let mut response: rhai::Map = rhai::serde::to_dynamic(response)
             .map_err(|e| e.to_string())?
@@ -695,7 +949,7 @@ impl Runtime {
         buffer: Option<u32>,
     ) -> Result<(), String> {
         self.pages.clear();
-        self.root.clear_queues();
+        self.clear_queues();
         self.dialogs.clear();
         let name = self.root.rpc.consume(id, &mut response, buffer)?;
         let handler = &self.root.package.rpc[&name].handler;
@@ -719,7 +973,7 @@ impl Runtime {
     }
     pub fn complete_dialog(&mut self, id: u64, mut response: Value) -> Result<(), String> {
         self.pages.clear();
-        self.root.clear_queues();
+        self.clear_queues();
         self.dialogs.clear();
         let handler = self.dialogs.consume(id, &mut response)?;
         let next = if handler.is_empty() {
@@ -759,28 +1013,33 @@ impl Runtime {
             .collect()
     }
 
-    fn commit_state(&mut self, mut next: Dynamic) -> Result<(), String> {
-        // Commit only after successful execution and serialization. Failed handlers preserve the old state.
-        let mut candidate: Value = rhai::serde::from_dynamic(&next).map_err(|e| e.to_string())?;
-        if !candidate.is_object() {
-            return Err("Handler must return a state object".into());
+    /// Commit a root state the root itself produced: an event of its own, or the response of an
+    /// effect it queued. The configurations of its components follow the new state either way.
+    fn commit_state(&mut self, next: Dynamic) -> Result<(), String> {
+        self.commit_event(String::new(), next)
+    }
+
+    /// Commit one event across the instances it moved: everything is checked before anything is
+    /// moved, so a failure anywhere leaves the whole screen — root and children — untouched.
+    fn commit_all(
+        &mut self,
+        root_next: Dynamic,
+        children: Vec<(String, Dynamic)>,
+    ) -> Result<(), String> {
+        let (next, ui) = self.root.prepare_commit(root_next)?;
+        let mut children: Vec<(String, Dynamic)> = children;
+        children.sort_by(|(a, _), (b, _)| a.cmp(b));
+        let mut prepared = Vec::new();
+        for (key, child_next) in children {
+            let instance = self
+                .components
+                .get(&key)
+                .ok_or_else(|| unknown_item(&key))?;
+            let (state, child_ui) = instance
+                .prepare_commit(child_next)
+                .map_err(|e| format!("Component {key}: {e}"))?;
+            prepared.push((key, state, child_ui));
         }
-        check_state(&next)?;
-        let ui = dynamic_ui::resolve(&self.root.package.ui, &candidate)?;
-        validate_handlers(&ui, &self.root.functions)?;
-        dynamic_ui::initialize_added(&self.root.ui, &ui, &mut candidate);
-        grid::reconcile(&ui, &self.root.state_json()?, &mut candidate);
-        // Built-in defaults/reconciliation can also touch bindings. Resolve the final state,
-        // so the committed component tree always describes exactly the committed data.
-        let ui = dynamic_ui::resolve(&self.root.package.ui, &candidate)?;
-        validate_handlers(&ui, &self.root.functions)?;
-        validate_ui_state(&ui, &candidate)?;
-        if let Some(schema) = &self.root.package.state_schema {
-            schema.bindings(&ui)?;
-            schema.validate(&candidate)?;
-        }
-        next = rhai::serde::to_dynamic(candidate).map_err(|e| e.to_string())?;
-        check_state(&next)?;
         let names = self.root.http.prepare(&self.root.package.requests)?;
         let host_intents = self.root.host.prepare(&self.root.package.operations)?;
         let intents = self.root.storage.prepare(&self.root.package.storage)?;
@@ -803,8 +1062,7 @@ impl Runtime {
         let (file_bytes, file_count) = files::Requests::size(&file_intents);
         let (rpc_bytes, rpc_count) = rpc::Requests::size(&rpc_intents);
         buffers::capacity(file_bytes + rpc_bytes, file_count + rpc_count)?;
-        self.root.state = next;
-        self.root.ui = ui;
+        self.root.apply(next, ui);
         self.root.http.commit(names, &self.root.package.requests);
         self.root.host.commit(host_intents);
         self.root
@@ -814,6 +1072,12 @@ impl Runtime {
         self.root.rpc.commit(rpc_intents, &self.root.package.rpc);
         self.dialogs.commit(dialog_intents);
         self.pages.commit(page_intents);
+        for (key, state, ui) in prepared {
+            self.components
+                .get_mut(&key)
+                .expect("a component prepared above")
+                .apply(state, ui);
+        }
         self.revision += 1;
         Ok(())
     }
@@ -822,11 +1086,25 @@ impl Runtime {
         self.root.state_json()
     }
 
+    /// Snapshot the component instances for one layout pass. `measure` and `arrange_sized`
+    /// reach the children through it instead of carrying a context down every call.
+    fn layout_scope(&self) -> Result<Option<composition::LayoutScope>, String> {
+        if self.components.is_empty() {
+            return Ok(None);
+        }
+        let mut instances = BTreeMap::new();
+        for (path, instance) in &self.components {
+            instances.insert(path.clone(), (instance.ui.clone(), instance.state_json()?));
+        }
+        Ok(Some(composition::enter_layout(instances)))
+    }
+
     pub fn layout(&self, width: f64) -> Result<Scene, String> {
         if !width.is_finite() || !(240.0..=4096.0).contains(&width) {
             return Err("Viewport width must be between 240 and 4096".into());
         }
         let state = self.root.state_json()?;
+        let _components = self.layout_scope()?;
         let mut widgets = Vec::new();
         let mut windows = Vec::new();
         collect_windows(&self.root.ui, &state, &mut windows);
@@ -978,6 +1256,165 @@ impl Runtime {
     }
 }
 
+/// What one instance does with an event of its own: resolve the target in its component tree,
+/// drop the event when the tree hides it, apply the built-in behaviour and call the handler.
+/// It stays next to the layout because every helper it needs describes a component tree.
+impl instance::Instance {
+    /// `Ok(None)` when the event is dropped, `Ok(Some(next))` when a handler (or a built-in
+    /// binding) produced a candidate state. Nothing is committed here.
+    fn run_event(&self, target: &str, mut payload: Value) -> Result<Option<Dynamic>, String> {
+        let mut state = self.state_json()?;
+        let mut path = Vec::new();
+        if !find_path(&self.ui, target, &mut path) {
+            return Err(unknown_item(target));
+        }
+        let node = *path.last().unwrap();
+        if self.blocked(&path, &state, target) {
+            return Ok(None);
+        }
+        let action = payload
+            .get("action")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned();
+        if fields::input(node) && node.read_only {
+            return Ok(None);
+        }
+        navigation::close_other_menus(&self.ui, &mut state, &path);
+        if node.xtype == "kanban" {
+            kanban::event(node, &mut state, &mut payload)?;
+        } else if extras::event_component(node) {
+            extras::event(node, &path, &mut state, &mut payload)?;
+        } else if grid::advanced(node) {
+            grid::event(node, &mut state, &mut payload)?;
+        } else if navigation::component(node) {
+            navigation::event(node, &mut state, &payload)?;
+        } else if node.layout == "card" && action == "card" {
+            layouts::event(node, &mut state, &payload)?;
+        } else if is_panel(node) {
+            if action != "toggle" || node.collapsed_bind.is_empty() {
+                return Err("Panel event requires action: toggle and collapsedBind".into());
+            }
+            let collapsed = !flag(&state, &node.collapsed_bind);
+            state
+                .as_object_mut()
+                .unwrap()
+                .insert(node.collapsed_bind.clone(), json!(collapsed));
+            extras::accordion(&path, &mut state);
+        } else if node.xtype == "window" {
+            if !node.closable {
+                return Err("Window cannot be closed".into());
+            }
+            if action != "close" {
+                return Err("Window event requires action: close".into());
+            }
+            state
+                .as_object_mut()
+                .unwrap()
+                .insert(node.visible_bind.clone(), json!(false));
+        } else if node.layout == "card" {
+            return Err("Card event requires action: card".into());
+        } else if !fields::input(node) && !["button", "grid"].contains(&node.xtype.as_str()) {
+            return Err("This component does not accept events".into());
+        }
+        let event_value = if fields::input(node) {
+            Some(fields::event_value(
+                node,
+                payload.get("value").unwrap_or(&Value::Null),
+            )?)
+        } else {
+            None
+        };
+        if let Some(value) = &event_value {
+            state
+                .as_object_mut()
+                .ok_or("State must be an object")?
+                .insert(node.bind.clone(), value.clone());
+        }
+        let mut next = rhai::serde::to_dynamic(state).map_err(|e| e.to_string())?;
+        if !node.handler.is_empty() {
+            let event = rhai::serde::to_dynamic(json!({ "target": target, "action": action, "value": event_value.unwrap_or_else(|| payload.get("value").cloned().unwrap_or(Value::Null)), "id": payload.get("id").cloned().unwrap_or(Value::Null), "column": payload.get("column").cloned().unwrap_or(Value::Null), "oldValue": payload.get("oldValue").cloned().unwrap_or(Value::Null), "beforeId": payload.get("beforeId").cloned().unwrap_or(Value::Null) }))
+                .map_err(|e| e.to_string())?;
+            next = self
+                .engine
+                .call_fn(&mut Scope::new(), &self.ast, &node.handler, (next, event))
+                .map_err(|e| {
+                    format!(
+                        "{} / {} / {}: {e}",
+                        self.package.script, target, node.handler
+                    )
+                })?;
+        }
+        Ok(Some(next))
+    }
+
+    /// Whether the tree between the root of this instance and `target` swallows the event: a
+    /// window above it, something disabled or collapsed, or a hidden tab, card or menu.
+    fn blocked(&self, path: &[&Node], state: &Value, target: &str) -> bool {
+        let mut windows = Vec::new();
+        collect_windows(&self.ui, state, &mut windows);
+        let scope = path.iter().rev().find(|n| n.xtype == "window");
+        windows
+            .last()
+            .is_some_and(|w| scope.map(|n| n.item_id.as_str()) != Some(w.item_id.as_str()))
+            || path.iter().any(|n| {
+                (!n.disabled_bind.is_empty() && flag(state, &n.disabled_bind))
+                    || n.disabled
+                    || (n.xtype == "window" && !flag(state, &n.visible_bind))
+                    || (n.item_id != target && is_panel(n) && flag(state, &n.collapsed_bind))
+            })
+            || navigation::hidden(path, state)
+            || extras::hidden(path, state)
+            || layouts::hidden(path, state)
+    }
+
+    /// Everything `commit_all` checks before any instance of a screen is moved: the candidate
+    /// state and the component tree it resolves to. Returns them for `apply`.
+    fn prepare_commit(&self, next: Dynamic) -> Result<(Dynamic, Node), String> {
+        // Commit only after successful execution and serialization. Failed handlers preserve the old state.
+        let mut candidate: Value = rhai::serde::from_dynamic(&next).map_err(|e| e.to_string())?;
+        if !candidate.is_object() {
+            return Err("Handler must return a state object".into());
+        }
+        check_state(&next)?;
+        let ui = dynamic_ui::resolve(&self.package.ui, &candidate, &self.declared)?;
+        validate_handlers(&ui, &self.functions)?;
+        dynamic_ui::initialize_added(&self.ui, &ui, &mut candidate);
+        grid::reconcile(&ui, &self.state_json()?, &mut candidate);
+        // Built-in defaults/reconciliation can also touch bindings. Resolve the final state,
+        // so the committed component tree always describes exactly the committed data.
+        let ui = dynamic_ui::resolve(&self.package.ui, &candidate, &self.declared)?;
+        validate_handlers(&ui, &self.functions)?;
+        validate_ui_state(&ui, &candidate)?;
+        if let Some(schema) = &self.package.state_schema {
+            schema.bindings(&ui)?;
+            schema.validate(&candidate)?;
+        }
+        let next = rhai::serde::to_dynamic(candidate).map_err(|e| e.to_string())?;
+        check_state(&next)?;
+        Ok((next, ui))
+    }
+
+    /// Move this instance onto what `prepare_commit` checked. Infallible on purpose: once any
+    /// instance of a screen is moved, none of them may fail any more.
+    fn apply(&mut self, state: Dynamic, ui: Node) {
+        self.state = state;
+        self.ui = ui;
+    }
+}
+
+fn unknown_item(target: &str) -> String {
+    format!("Unknown itemId: {target}")
+}
+
+/// The component node of an instance that holds the child placed under `item_id`, i.e. the node
+/// carrying the `listeners` and the `config` of that placement.
+fn component_node<'a>(instance: &'a instance::Instance, item_id: &str) -> Option<&'a Node> {
+    let mut nodes = Vec::new();
+    composition::component_nodes(&instance.ui, &mut nodes);
+    nodes.into_iter().find(|node| node.item_id == item_id)
+}
+
 fn initialize_ui(ui: &Node, state: &mut Value) {
     fields::initialize(ui, state);
     grid::initialize(ui, state);
@@ -1006,69 +1443,73 @@ fn check_state(state: &Dynamic) -> Result<(), String> {
     Ok(())
 }
 
+/// Every xtype `validate` accepts. A declared component name must not shadow one of these.
+const XTYPES: [&str; 48] = [
+    "container",
+    "panel",
+    "window",
+    "label",
+    "metric",
+    "textfield",
+    "textarea",
+    "numberfield",
+    "datefield",
+    "checkbox",
+    "radio",
+    "combobox",
+    "listbox",
+    "displayfield",
+    "slider",
+    "progressbar",
+    "fieldset",
+    "button",
+    "grid",
+    "kanban",
+    "tabpanel",
+    "treepanel",
+    "menu",
+    "menuseparator",
+    "toolbar",
+    "tbfill",
+    "tbseparator",
+    "tbspacer",
+    "tbtext",
+    "radiogroup",
+    "checkboxgroup",
+    "datepicker",
+    "pagingtoolbar",
+    "dialogbutton",
+    "toast",
+    "component",
+    "markdown",
+    "diffeditor",
+    "chatpanel",
+    "terminal",
+    "image",
+    "video",
+    "iframe",
+    "chart",
+    "draw",
+    "gitgraph",
+    "networkgraph",
+    "mermaid",
+];
+
 fn validate(
     node: &Node,
     ids: &mut HashSet<String>,
     count: &mut usize,
     depth: usize,
+    declared: &BTreeSet<String>,
+    parent: &str,
 ) -> Result<(), String> {
     node.webmcp.validate()?;
     *count += 1;
     if *count > 200 || depth > 20 {
         return Err("UI exceeds 200 nodes or 20 nesting levels".into());
     }
-    if ![
-        "container",
-        "panel",
-        "window",
-        "label",
-        "metric",
-        "textfield",
-        "textarea",
-        "numberfield",
-        "datefield",
-        "checkbox",
-        "radio",
-        "combobox",
-        "listbox",
-        "displayfield",
-        "slider",
-        "progressbar",
-        "fieldset",
-        "button",
-        "grid",
-        "kanban",
-        "tabpanel",
-        "treepanel",
-        "menu",
-        "menuseparator",
-        "toolbar",
-        "tbfill",
-        "tbseparator",
-        "tbspacer",
-        "tbtext",
-        "radiogroup",
-        "checkboxgroup",
-        "datepicker",
-        "pagingtoolbar",
-        "dialogbutton",
-        "toast",
-        "component",
-        "markdown",
-        "diffeditor",
-        "chatpanel",
-        "terminal",
-        "image",
-        "video",
-        "iframe",
-        "chart",
-        "draw",
-        "gitgraph",
-        "networkgraph",
-        "mermaid",
-    ]
-    .contains(&node.xtype.as_str())
-    {
+    let component = declared.contains(&node.xtype);
+    if !component && !XTYPES.contains(&node.xtype.as_str()) {
         return Err(format!("Unknown xtype: {}", node.xtype));
     }
     if !node.flex.is_finite() || node.flex <= 0.0 {
@@ -1079,6 +1520,13 @@ fn validate(
     }
     if node.item_id.contains(':') {
         return Err("itemId must not contain ':' (reserved for internal widget keys)".into());
+    }
+    if node.item_id.contains('/') {
+        return Err("itemId must not contain '/' (reserved for component paths)".into());
+    }
+    // A component node carries no widget attributes, so none of the checks below apply to it.
+    if component {
+        return composition::validate_node(node, parent);
     }
     dynamic_ui::validate(node)?;
     if ["textfield", "button", "grid"].contains(&node.xtype.as_str()) && node.item_id.is_empty() {
@@ -1122,7 +1570,7 @@ fn validate(
         return Err("grid requires columns with positive flex".into());
     }
     for child in &node.items {
-        validate(child, ids, count, depth + 1)?;
+        validate(child, ids, count, depth + 1, declared, &node.xtype)?;
     }
     Ok(())
 }
@@ -1133,6 +1581,14 @@ fn validate_handlers(node: &Node, functions: &HashSet<String>) -> Result<(), Str
             "{} references undefined handler: {}",
             node.item_id, node.handler
         ));
+    }
+    for (event, handler) in &node.listeners {
+        if !functions.contains(handler) {
+            return Err(format!(
+                "{}: listener {event} references undefined handler: {handler}",
+                node.item_id
+            ));
+        }
     }
     for child in &node.items {
         validate_handlers(child, functions)?;
@@ -1156,6 +1612,12 @@ fn find_path<'a>(node: &'a Node, id: &str, path: &mut Vec<&'a Node>) -> bool {
 
 fn flag(state: &Value, path: &str) -> bool {
     !path.is_empty() && lookup(state, path).as_bool() == Some(true)
+}
+
+/// A component node the parent currently hides. `visibleBind` is the one binding a parent
+/// keeps over a child; without it the component is always laid out.
+fn hidden_component(node: &Node, state: &Value) -> bool {
+    !node.visible_bind.is_empty() && !flag(state, &node.visible_bind)
 }
 
 fn is_panel(node: &Node) -> bool {
@@ -1207,6 +1669,13 @@ fn content_height(node: &Node, state: &Value, width: f64) -> f64 {
 }
 
 fn measure(node: &Node, state: &Value, width: f64) -> f64 {
+    if node.port_kind == "component" {
+        if hidden_component(node, state) {
+            return 0.0;
+        }
+        return composition::with_component(&node.item_id, |ui, child| measure(ui, child, width))
+            .unwrap_or(0.0);
+    }
     if node.xtype == "kanban" {
         return kanban::height(node, state, width);
     }
@@ -1300,6 +1769,18 @@ fn arrange_sized(
     allocated_height: Option<f64>,
     widgets: &mut Vec<Widget>,
 ) {
+    if node.port_kind == "component" {
+        if !hidden_component(node, state) {
+            let start = widgets.len();
+            let arranged = composition::with_component(&node.item_id, |ui, child| {
+                arrange_sized(ui, child, x, y, width, "root", allocated_height, widgets)
+            });
+            if arranged.is_some() {
+                composition::prefix_widgets(&node.item_id, &mut widgets[start..]);
+            }
+        }
+        return;
+    }
     if node.xtype == "kanban" {
         kanban::arrange(node, state, x, y, width, key, widgets);
         return;

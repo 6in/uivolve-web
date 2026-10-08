@@ -75,13 +75,34 @@ export class WasmEngine {
           throw new Error(`Descriptorがありません: ${key}`);
         ids[key] = this.storeBuffer(descriptors[key]);
       }
-      return this.call({
+      const entries = Object.entries(options.components ?? {}).map(([href, child]) => [
+        href,
+        { package: child.screen, script: child.script },
+      ]);
+      const request = {
         op: "load",
         package: screen,
         script,
         descriptors: ids,
+        ...(entries.length ? { components: Object.fromEntries(entries) } : {}),
         ...(Object.hasOwn(options, "clock") ? { clock: options.clock } : {}),
-      });
+      };
+      // The bundled children share the one request `call` sends, so the limit is reported here
+      // with the size they added and the largest of them: `call` only knows the total.
+      if (entries.length) {
+        const total = this.encoder.encode(JSON.stringify(request)).length;
+        if (total > 2_000_000) {
+          const sizes = entries.map(([href, entry]) => [
+            href,
+            this.encoder.encode(JSON.stringify(entry)).length,
+          ]);
+          const [href, size] = sizes.reduce((a, b) => (b[1] > a[1] ? b : a));
+          throw new Error(
+            `リクエストが2 MBを超えています（同梱後 ${total} バイト。最大の子: ${href} ${size} バイト）`,
+          );
+        }
+      }
+      return this.call(request);
     } finally {
       for (const id of Object.values(ids)) this.releaseBuffer(id);
     }

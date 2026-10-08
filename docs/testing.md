@@ -22,23 +22,26 @@ AI向けスキルは[スキル案内](skills.md)に従う。`tests/skills.test.j
 
 ## 自動テストの役割
 
-| ファイル                                      | 主な対象                                                                                |
-| --------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `tests/abi.test.js`                           | 公開関数とimport、UTF-8応答、壊れた入力、Runtime/テーマの独立性と巻き戻し               |
-| `tests/engine.test.js` / Rustのlib.rs内テスト | 画面load、Rhai、イベント、上限、パネル/window、テーマ                                   |
-| `tests/fields.test.js`                        | 入力型、選択肢、既定値、readOnly/disabled、値検証                                       |
-| `tests/grid-navigation.test.js`               | 安定ID、ソート・検索・ページ、編集下書き、タブ・ツリー・メニュー                        |
-| `tests/gallery.test.js`                       | 追加部品、図表・文書・メディア契約、ダイアログなど                                      |
-| `tests/layouts.test.js`                       | Grid span、幅に応じた配置、Border/Fit、Card状態・可視性・WebMCP                         |
-| `tests/kanban.test.js`                        | 列移動・順序・空列、Rhai拒否と状態保持、幅・無効・modal、WebMCP、ポインター中止         |
-| `tests/widget-contract.test.js`               | 物理/意味的操作、readOnly・modalガード、カタログとパッケージの整合                      |
-| `tests/webmcp.test.js`                        | ツール経由の実WASM操作、stale/token、可視性、登録・中断処理                             |
-| `tests/resource-client.test.js`               | HTTP/CORS設定、JWT切替・送信先、トークン更新、中断・失敗・認証付きWASM起動              |
-| `tests/http-grid.test.js`                     | RhaiのHTTP依頼と完了、JSON検証、一覧保持、重複・失敗の巻き戻し、中止・タイムアウト      |
-| `tests/page-navigation.test.js`               | 別のYAML/Rhaiへの遷移・往復、失敗時の画面保持、state検証・上限・URL拒否・古い失敗の無視 |
-| `tests/native-extensions.test.js`             | 実WASMでのRust関数呼び出し、Unicode・キャプチャ・置換、集計、容量と型エラー時の巻き戻し |
-| `tests/platform-features.test.js`             | YAML/JSON互換、URL解決、型・bind・動的部品の検証、保存依頼・完了・中止とOPFS確定        |
-| `tests/font-parity-runner.test.js`            | 最終判定gateの順序と失敗伝播、未知suiteの拒否、xtypeとkindの照合、状態一覧の担当suite   |
+| ファイル                                      | 主な対象                                                                                    |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `tests/abi.test.js`                           | 公開関数とimport、UTF-8応答、壊れた入力、Runtime/テーマの独立性と巻き戻し                   |
+| `tests/engine.test.js` / Rustのlib.rs内テスト | 画面load、Rhai、イベント、上限、パネル/window、テーマ                                       |
+| `tests/fields.test.js`                        | 入力型、選択肢、既定値、readOnly/disabled、値検証                                           |
+| `tests/grid-navigation.test.js`               | 安定ID、ソート・検索・ページ、編集下書き、タブ・ツリー・メニュー                            |
+| `tests/gallery.test.js`                       | 追加部品、図表・文書・メディア契約、ダイアログなど                                          |
+| `tests/layouts.test.js`                       | Grid span、幅に応じた配置、Border/Fit、Card状態・可視性・WebMCP                             |
+| `tests/kanban.test.js`                        | 列移動・順序・空列、Rhai拒否と状態保持、幅・無効・modal、WebMCP、ポインター中止             |
+| `tests/widget-contract.test.js`               | 物理/意味的操作、readOnly・modalガード、カタログとパッケージの整合                          |
+| `tests/webmcp.test.js`                        | ツール経由の実WASM操作、stale/token、可視性、登録・中断処理                                 |
+| `tests/resource-client.test.js`               | HTTP/CORS設定、JWT切替・送信先、トークン更新、中断・失敗・認証付きWASM起動                  |
+| `tests/http-grid.test.js`                     | RhaiのHTTP依頼と完了、JSON検証、一覧保持、重複・失敗の巻き戻し、中止・タイムアウト          |
+| `tests/page-navigation.test.js`               | 別のYAML/Rhaiへの遷移・往復、失敗時の画面保持、state検証・上限・URL拒否・古い失敗の無視     |
+| `tests/native-extensions.test.js`             | 実WASMでのRust関数呼び出し、Unicode・キャプチャ・置換、集計、容量と型エラー時の巻き戻し     |
+| `tests/platform-features.test.js`             | YAML/JSON互換、URL解決、型・bind・動的部品の検証、保存依頼・完了・中止とOPFS確定            |
+| `tests/components-loader.test.js`             | 子パッケージの再帰取得とURL書き換え、重複排除・循環・深さと台数の拒否、同梱と2MB報告        |
+| `tests/components-demo.test.js`               | 受注ダッシュボードの実WASM load、2か所の部品のkey独立、config伝播とemitの親反映             |
+| `engine/src/composition_tests.rs`             | 宣言とノード属性の検証、子Instanceの実行環境、Instance木、配置、ルーティング、emit / config |
+| `tests/font-parity-runner.test.js`            | 最終判定gateの順序と失敗伝播、未知suiteの拒否、xtypeとkindの照合、状態一覧の担当suite       |
 
 ## 部品変更の確認
 
@@ -82,7 +85,7 @@ DOM版とCanvas版で同じ役割の文字が同じ実効サイズで出てい�
 
 恒久的なPlaywright実行スクリプトは3本ある。うち検査の系統は2つで、もう1本は記録用の撮影スクリプト（`scripts/capture-retrospective.mjs`。比較デモのHello Worldをブログ記事の画像として撮る。`package.json`のscriptsには入れていない）。OPFS転送は`bun run test:transfer:browser`（`scripts/test-transfer-browser.mjs`）と最終判定の`bun run verify:transfer`。レンダラー間のフォントサイズは`bun scripts/test-font-parity-browser.mjs --suite <名前>`（`--list`で登録済みsuiteと実装状態、`--browser-path`/`--browser-endpoint`でブラウザ経路、`--viewport`で幅、`--evidence`で証跡の出力先を選ぶ）と最終判定の`bun scripts/verify-font-parity.mjs`。対象範囲は先に固定してあり、どちらもLinuxのシステムChromium（headless）を使い、`bunx vp dev`を127.0.0.1のOS自動割当ポートで自分で起動して終了させる。既存のサーバーへは接続しない。新しい依存は追加しておらず、既存の`playwright` devDependencyだけを使う。CI用ブラウザ環境は引き続きリポジトリへ同梱していないので、これらは手元で実行する。
 
-エンジン内部のリファクタが応答を変えていないかは、ブラウザを使わない照合スクリプト3本で見る。`bun scripts/compare-engine-behavior.mjs --base <wasm> --candidate <wasm>`は固定clockで全画面のload・イベント・完了・layoutを2つのWASMへ流し、応答JSONの文字列一致を数える（差分0でexit 0、差分ありでexit 1。証跡は`--evidence`の既定`target/engine-compare/compare.json`。約1秒）。比較対象のWASMは`bun scripts/build-engine-variant.mjs --commit <rev> --out <wasm>`が別コミットから、`--mutation <名前> --out <wasm>`が意図的に壊した変種から作る（どちらも作業ツリーの`engine/`は触らない。初回約30秒、cargoのtarget-dirを共有する2回目以降は約10秒）。最終判定は`bun scripts/verify-instance-refactor.mjs`で、既存の全検査（`build:wasm`→`vp test run`→`test:rust`→`check`→`docs:check`→`build`）のあとにbaseとの照合が差分0であること、さらに変異3本の照合がいずれも差分を見つけること（exit 1。exit 0なら照合に歯が無いとして失敗）を確認し、手順ごとの所要と合計を表で出す。`--base-commit <rev>`で比較元を選び、`--skip-mutations`は開発中の短縮用で最終判定では付けない。これらは一時的な照合用で`package.json`のscriptsには入れていない。
+エンジン内部のリファクタが応答を変えていないかは、ブラウザを使わないスクリプト4本で見る。`bun scripts/compare-engine-behavior.mjs --base <wasm> --candidate <wasm>`は固定clockで全画面のload・イベント・完了・layoutを2つのWASMへ流し、応答JSONの文字列一致を数える（差分0でexit 0、差分ありでexit 1。証跡は`--evidence`の既定`target/engine-compare/compare.json`。約1秒）。イベントを起こすノードの走査は`items`だけでなく`columns`・`menu`・`tbar`・`bbar`・`buttons`・`lanes`も辿るので、分割ボタンのメニューやタブ下部のツールバーにしかないhandlerも対象になる。ただし閉じたメニューや非アクティブなタブの下にあるhandlerはstateを動かさないため、開く操作を先に置いた列（`gallery-menu`・`gallery-bbar`）と、デコードできるProtobuf応答を完了に渡す列（`rpc-result-decodable`）を全画面の列に加えてある。`components`を宣言する画面は子を同梱しないとloadできないので、この照合の対象からは外す。外した分は候補のみのprobe `bun scripts/probe-composition.mjs --candidate <wasm>`が受け持つ。合成が無いbaseとは照合できないため、同じ固定clockで受注ダッシュボードのデモ（接頭辞付きkeyの一意性、configで配った絞り込みが届いた行数、emitとlistenerで動く親のstate、revisionの増分）と子の効果関数の拒否2本（`Fn`経由は実行時、直書きはload時）を1つのWASMへ流し、期待に外れたexit 1で知らせる（証跡は`--evidence`の既定`target/engine-compare/composition.json`。約0.1秒）。比較対象のWASMは`bun scripts/build-engine-variant.mjs --commit <rev> --out <wasm>`が別コミットから、`--mutation <名前> --out <wasm>`が意図的に壊した変種から作る（どちらも作業ツリーの`engine/`は触らない。初回約30秒、cargoのtarget-dirを共有する2回目以降は約10秒）。最終判定は`bun scripts/verify-instance-refactor.mjs`で、既存の全検査（`build:wasm`→`vp test run`→`test:rust`→`check`→`docs:check`→`build`）のあとにbaseとの照合が差分0であること、候補のみのprobeが通ること、さらに変異5本がいずれも検出されること（exit 1。exit 0なら検査に歯が無いとして失敗。`probe`を持つ変異は合成の役割を無効にするもので、照合では見えないのでそのprobeで検査する）を確認し、手順ごとの所要と合計を表で出す。`--base-commit <rev>`で比較元を選び、`--skip-mutations`は開発中の短縮用で最終判定では付けない。これらは一時的な照合用で`package.json`のscriptsには入れていない。
 
 ## レビューに残す情報
 

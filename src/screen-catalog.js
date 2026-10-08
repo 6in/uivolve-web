@@ -143,6 +143,12 @@ export const SCREEN_CATALOG = Object.freeze(
       description: "受注検索・行選択・顧客情報の編集",
     },
     {
+      id: "order-dashboard",
+      title: "受注ダッシュボード",
+      category: "apps",
+      description: "受注一覧の部品を2つ並べ、絞り込みと選択を親子でやり取り",
+    },
+    {
       id: "worker-orders",
       title: "受注管理・Worker API",
       category: "apps",

@@ -28,6 +28,24 @@ export const MUTATIONS = [
     to: '"Unknown item: {target}"',
     diff: "abi-errors の event:unknown-target の error",
   },
+  // Composition only shows up on screens the parity harness skips, so these two are checked by
+  // scripts/probe-composition.mjs instead of the base comparison.
+  {
+    name: "emit-skips-listener",
+    probe: "composition",
+    file: "engine/src/lib.rs",
+    from: "node.listeners.get(&name)",
+    to: 'node.listeners.get("\\0 no listener")',
+    diff: "order-dashboard の event:open/orders の state.notice",
+  },
+  {
+    name: "config-diff-ignored",
+    probe: "composition",
+    file: "engine/src/lib.rs",
+    from: "            if config == resolve(&committed)? {",
+    to: "            if true || config == resolve(&committed)? {",
+    diff: "order-dashboard の layout:800:filtered の行数",
+  },
 ];
 
 function parseArgs(argv) {

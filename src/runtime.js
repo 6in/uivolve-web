@@ -37,6 +37,33 @@ function prepareScreen(definition, source, clock) {
   return screen;
 }
 
+// Every `components` declaration is rewritten to the absolute URL of the package it names,
+// resolved against the URL of the screen that declares it, and matched against what the loader
+// brought along. A child is prepared like the screen it belongs to and then read for the
+// grandchildren it declares in turn, each relative to the child's own URL.
+function resolveComponents(screen, source, bundled, clock) {
+  const resolved = {};
+  const visit = (definition, base) => {
+    for (const [name, declaration] of Object.entries(definition.components ?? {})) {
+      if (typeof declaration?.url !== "string")
+        throw new Error(
+          `コンポーネント ${name} の宣言が不正です（url を文字列で指定してください）`,
+        );
+      const href = new URL(declaration.url, base).href;
+      declaration.url = href;
+      if (resolved[href]) continue;
+      const child = bundled[href];
+      if (!child)
+        throw new Error(`コンポーネント ${name} の本体がありません（URLから読み込んでください）`);
+      const prepared = prepareScreen(child.screen, href, clock);
+      resolved[href] = { screen: prepared, script: child.script };
+      visit(prepared, href);
+    }
+  };
+  visit(screen, source);
+  return resolved;
+}
+
 // Host orchestration shared by the comparison demo and standalone applications.
 // No sample catalog, editor, Vite environment or document-wide theme is required.
 export class UiRuntime {
@@ -313,6 +340,7 @@ export class UiRuntime {
       format = packageFormat(source),
       rawSource,
       descriptors = this.descriptors ?? {},
+      components = this.components ?? {},
       engine = this.engine,
     } = {},
   ) {
@@ -322,17 +350,19 @@ export class UiRuntime {
       throw new Error("HTTP / HTTPSのURLを指定してください");
     const clock = engine.readClock();
     screen = prepareScreen(screen, source, clock);
+    const bundled = resolveComponents(screen, source, components, clock);
     const start = performance.now();
     const hostOperations = this.hostEffects.prepare(screen.operations, source, {
       scope: screen.id,
       files: screen.files ?? {},
     });
-    const result = engine.load(screen, script, descriptors, { clock });
+    const result = engine.load(screen, script, descriptors, { clock, components: bundled });
     const duration = performance.now() - start;
     this.engine = engine;
     for (const surface of this.surfaces) surface.adapter.reset();
     this.screen = screen;
     this.descriptors = descriptors;
+    this.components = bundled;
     this.screenToken = crypto.randomUUID();
     this.packageUrl = source;
     this.hostEffects.reset(hostOperations);
@@ -387,6 +417,7 @@ export class UiRuntime {
         format: candidate.format,
         rawSource: candidate.source,
         descriptors: candidate.descriptors,
+        components: candidate.components ?? {},
         engine,
       });
       this.options.onCache?.({

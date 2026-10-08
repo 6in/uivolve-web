@@ -13,6 +13,9 @@ rhai = { version = "1.26", default-features = false, features = [
   "no_module",
   "no_custom_syntax",
   "no_time",
+  # `AST::walk` and the `Expr` / `Stmt` nodes it yields: components reject effect calls at load
+  # time. The internals API carries no stability promise, so the version above stays pinned.
+  "internals",
 ] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

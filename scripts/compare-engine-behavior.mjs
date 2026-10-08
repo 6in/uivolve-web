@@ -5,8 +5,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { create, toBinary } from "@bufbuild/protobuf";
 import { packageFormat, parsePackage } from "../src/package-format.js";
 import { SCREEN_CATALOG, screenFile } from "../src/screen-catalog.js";
+import { registry } from "./rpc-schema.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CLOCK = { nowMs: 1_759_800_000_000, tzOffsetMinutes: 540 };
@@ -110,6 +112,13 @@ const eventStep = (label, target, payload = {}) => ({
 
 const DESCRIPTOR_BYTES = new Uint8Array(readFileSync(`${root}/public/screens/rpc-demo.pb`));
 const FOUR_BYTES = new Uint8Array([0, 127, 128, 255]);
+// FOUR_BYTES is not a valid EchoResponse, so the existing rpc sequence only reaches the decode
+// failure. This one is decodable and carries every field, so the completion handler runs.
+const ECHO_RESPONSE = registry.getMessage("uivolve.demo.EchoResponse");
+const ECHO_BYTES = toBinary(
+  ECHO_RESPONSE,
+  create(ECHO_RESPONSE, { name: "太郎", sequenceId: 7n, payload: new Uint8Array([1, 2, 3]) }),
+);
 
 function readScreen(id) {
   const file = screenFile(id);
@@ -149,9 +158,19 @@ function inline(pkg, script) {
 }
 
 // Nodes carrying both `handler` and `itemId` in the raw (pre-normalization) package tree.
+// The walk follows every key that can hold child nodes -- the same set as `NODE_CHILD_KEYS` in
+// tests/browser/font-parity.mjs -- so handlers that only exist on a split button's menu or on a
+// toolbar are driven too. Reaching them can need an opening step first, which is what the
+// `gallery-menu` / `gallery-bbar` sequences below are for.
+const NODE_CHILD_KEYS = ["items", "columns", "menu", "tbar", "bbar", "buttons", "lanes"];
 function handlerNodes(node, found = []) {
-  if (node?.handler && node?.itemId) found.push(node);
-  for (const child of node?.items ?? []) handlerNodes(child, found);
+  if (node === null || typeof node !== "object") return found;
+  if (Array.isArray(node)) {
+    for (const child of node) handlerNodes(child, found);
+    return found;
+  }
+  if (node.handler && node.itemId) found.push(node);
+  for (const key of NODE_CHILD_KEYS) if (node[key] !== undefined) handlerNodes(node[key], found);
   return found;
 }
 function payloadFor(node) {
@@ -260,8 +279,13 @@ const ROLLBACK_THROW = `${ROLLBACK_BASE} fn fail(s,e){s.query="bad"; throw "bad"
 
 function buildPlan() {
   const plan = [];
-  for (const entry of SCREEN_CATALOG)
-    plan.push({ id: entry.id, steps: baseSteps(readScreen(entry.id)) });
+  for (const entry of SCREEN_CATALOG) {
+    const screen = readScreen(entry.id);
+    // A screen that declares components cannot load without its children bundled into the
+    // request, which this harness does not assemble. scripts/probe-composition.mjs covers them.
+    if (Object.keys(screen.pkg.components ?? {}).length) continue;
+    plan.push({ id: entry.id, steps: baseSteps(screen) });
+  }
   for (const name of ["edit", "states", "surface", "text"]) {
     const id = `font-parity-${name}`;
     plan.push({ id, steps: baseSteps(readFixture(id)) });
@@ -470,6 +494,54 @@ function buildPlan() {
           error: "x",
         }),
       },
+    ],
+  });
+  plan.push({
+    id: "rpc-result-decodable",
+    steps: [
+      loadStep("load", rpcLab),
+      eventStep("event:connect", "connect"),
+      {
+        label: "rpc_result:decodable",
+        build: (ctx) => ({
+          op: "rpc_result",
+          id: ctx.latest("rpc").id,
+          ok: true,
+          buffer: ctx.store(ECHO_BYTES),
+        }),
+      },
+    ],
+  });
+
+  const gallery = readScreen("uivolve-gallery");
+  const galleryTabs = gallery.pkg.ui.items.find((node) => node.xtype === "tabpanel").items;
+  const chatTab = galleryTabs.findIndex((tab) => tab.title === "会話");
+  if (chatTab < 0) fail("uivolve-gallery に会話タブが見つかりません");
+  // A closed split-button menu swallows its own items' events, so the toggle has to come first.
+  plan.push({
+    id: "gallery-menu",
+    steps: [
+      loadStep("load", gallery),
+      eventStep("event:saveSplit-menu", "saveSplit-menu", { action: "toggle" }),
+      eventStep("event:saveDraft", "saveDraft"),
+      layoutStep("layout:800", 800),
+      eventStep("event:saveSplit-menu:2", "saveSplit-menu", { action: "toggle" }),
+      eventStep("event:saveAs", "saveAs"),
+      layoutStep("layout:800:2", 800),
+    ],
+  });
+  // Same for the chat tab's bbar: its handlers only run while that tab is the active one. The
+  // second send runs on the emptied input, so the handler throws and the error response is part
+  // of the compared sequence.
+  plan.push({
+    id: "gallery-bbar",
+    steps: [
+      loadStep("load", gallery),
+      eventStep("event:galleryViews", "galleryViews", { action: "tab", value: chatTab }),
+      eventStep("event:clearChat", "clearChat"),
+      eventStep("event:chatInput", "chatInput", { value: "x" }),
+      eventStep("event:sendMessage", "sendMessage"),
+      eventStep("event:sendMessage:2", "sendMessage"),
     ],
   });
 
