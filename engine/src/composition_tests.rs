@@ -32,17 +32,18 @@ fn load(package: Package, script: &str) -> Result<instance::Instance, String> {
     load_in(
         package,
         script,
-        true,
+        "",
         &extensions::ExtensionContext::default(),
     )
 }
 
-/// Load a package the way a parent loads a component: no host effects, `emit` instead.
+/// Load a package the way a parent loads a component: `emit` on top of the host effects, and
+/// the screen-wide queues tagged with the path the parent placed it at.
 fn load_child(package: Package, script: &str) -> Result<instance::Instance, String> {
     load_in(
         package,
         script,
-        false,
+        "a",
         &extensions::ExtensionContext::default(),
     )
 }
@@ -56,18 +57,29 @@ fn child_error(package: Package, script: &str) -> String {
 fn load_in(
     package: Package,
     script: &str,
-    effects: bool,
+    path: &str,
     context: &extensions::ExtensionContext,
+) -> Result<instance::Instance, String> {
+    load_with(package, script, path, context, HashMap::new())
+}
+
+/// `load_in` for a package whose `rpc` definitions need descriptors of their own.
+fn load_with(
+    package: Package,
+    script: &str,
+    path: &str,
+    context: &extensions::ExtensionContext,
+    descriptors: HashMap<String, Vec<u8>>,
 ) -> Result<instance::Instance, String> {
     let mut dialogs = dialogs::Requests::default();
     let pages = pages::Requests::default();
     instance::Instance::load(
         package,
         script,
-        HashMap::new(),
+        descriptors,
         context,
         None,
-        effects,
+        path,
         |_| {},
         &mut dialogs,
         &pages,
@@ -75,15 +87,18 @@ fn load_in(
 }
 
 /// The smallest child package: one button whose `run` handler each effect test fills in.
-fn child() -> Package {
-    serde_json::from_value(json!({
+fn child_json() -> Value {
+    json!({
         "version": 1, "id": "child", "title": "Child", "script": "child.rhai",
         "state": {"value": 0},
         "ui": {"xtype": "container", "items": [
             {"xtype": "button", "itemId": "run", "handler": "run"},
         ]},
-    }))
-    .expect("test child package")
+    })
+}
+
+fn child() -> Package {
+    serde_json::from_value(child_json()).expect("test child package")
 }
 
 /// Run a child handler the way `dispatch` will once the instance tree exists (T4), and return
@@ -343,135 +358,256 @@ fn a_declared_component_node_loads_and_waits_for_its_package() {
 
 // --- the instance environment of a child ---
 
-/// `"a", "b", ...`: a stub takes `Dynamic` arguments, so only the count has to match.
-fn arguments(arity: usize) -> String {
-    (0..arity)
-        .map(|i| format!("\"{}\"", (b'a' + i as u8) as char))
-        .collect::<Vec<_>>()
-        .join(", ")
+/// Descriptors for a child that declares `rpc`, the same set `rpc-lab` ships with.
+const DESCRIPTOR: &[u8] = include_bytes!("../../public/screens/rpc-demo.pb");
+
+fn descriptor_set() -> HashMap<String, Vec<u8>> {
+    HashMap::from([("rpc-demo.pb".to_owned(), DESCRIPTOR.to_vec())])
 }
 
-#[test]
-fn effect_functions_written_out_in_a_child_script_are_rejected_at_load() {
-    for (name, arities) in composition::STUBS {
-        for arity in arities {
-            let script = format!(
-                "fn init(s) {{ s }} fn run(s, e) {{ {name}({}); s }}",
-                arguments(*arity)
-            );
-            let error = child_error(child(), &script);
-            assert!(
-                error.contains(name) && error.contains("is not available in components"),
-                "{name}/{arity}: {error}"
-            );
-            assert!(
-                error.contains("line 1, position "),
-                "{name}/{arity}: {error}"
-            );
-        }
-    }
+/// The `rpc` declaration of the child fixtures: one unary Connect call.
+fn rpc_declaration() -> Value {
+    json!({"echo": {
+        "url": "http://127.0.0.1:4180/uivolve.demo.EchoService/Echo",
+        "descriptor": "rpc-demo.pb", "service": "uivolve.demo.EchoService",
+        "method": "Echo", "protocol": "connect", "handler": "done",
+    }})
 }
 
-#[test]
-fn effect_functions_reached_through_a_function_pointer_are_rejected_when_the_handler_runs() {
-    for (name, arities) in composition::STUBS {
-        for arity in arities {
-            // `Fn("navigate")` hides the name from the load-time walk; the stub answers instead.
-            let script = format!(
-                "fn init(s) {{ s }} fn run(s, e) {{ let f = Fn(\"{name}\"); f.call({}); s.value = 1; s }}",
-                arguments(*arity)
-            );
-            let instance = load_child(child(), &script)
-                .unwrap_or_else(|e| panic!("{name}/{arity} should load: {e}"));
-            let before = instance.state_json().expect("child state");
-            let error = run_child(&instance, "run").expect_err("the stub must refuse");
-            assert!(
-                error.contains(name) && error.contains("is not available in components"),
-                "{name}/{arity}: {error}"
-            );
-            assert_eq!(instance.state_json().expect("child state"), before);
-        }
-    }
-}
-
-#[test]
-fn every_effect_function_the_host_registers_has_a_stub() {
-    // Each call below resolves against a root engine, so no table entry is a dead name. The
-    // argument types are the real signatures, unlike the `Dynamic` stubs.
-    let calls: [(&str, &str); 24] = [
-        ("alert", "\"m\""),
-        ("alert", "\"m\", #{}"),
-        ("alert", "\"m\", \"onDone\", #{}"),
-        ("confirm", "\"m\", \"onDone\""),
-        ("confirm", "\"m\", \"onDone\", #{}"),
-        ("file_list", "\"vol\", \"f\""),
-        ("file_mkdir", "\"vol\", \"f\""),
-        ("file_read_bytes", "\"vol\", \"f\""),
-        ("file_read_text", "\"vol\", \"f\""),
-        ("file_remove", "\"vol\", \"f\""),
-        ("file_stat", "\"vol\", \"f\""),
-        ("file_write_bytes", "\"vol\", \"f\", file_bytes(\"x\")"),
-        ("file_write_text", "\"vol\", \"f\", \"text\""),
-        ("host_call", "\"op\", #{}"),
-        ("host_cancel", "\"op\""),
-        ("http_get", "\"req\""),
-        ("navigate", "\"page\""),
-        ("prompt", "\"m\", \"onDone\""),
-        ("prompt", "\"m\", \"default\", \"onDone\""),
-        ("prompt", "\"m\", \"default\", \"onDone\", #{}"),
-        ("rpc_call", "\"call\", #{}"),
-        ("storage_read", "\"key\""),
-        ("storage_remove", "\"key\""),
-        ("storage_write", "\"key\", #{}"),
-    ];
-    let mut table: BTreeSet<(&str, usize)> = BTreeSet::new();
-    for (name, arities) in composition::STUBS {
-        for arity in arities {
-            table.insert((name, *arity));
-        }
-    }
-    let mut resolved: BTreeSet<(&str, usize)> = BTreeSet::new();
-    let root = load(child(), "fn init(s) { s } fn run(s, e) { s }").expect("root instance");
-    for (name, args) in calls {
-        let script = format!("fn probe(s, e) {{ {name}({args}); s }}");
-        let ast = root.engine.compile(&script).expect(&script);
-        let error = root
-            .engine
-            .call_fn::<Dynamic>(
-                &mut Scope::new(),
-                &ast,
-                "probe",
-                (root.state.clone(), Dynamic::from(rhai::Map::new())),
-            )
-            .err()
-            .map(|e| e.to_string())
-            .unwrap_or_default();
-        assert!(
-            !error.contains("Function not found"),
-            "{script} does not resolve on a root engine: {error}"
-        );
-        resolved.insert((name, args.split(',').count()));
-    }
-    assert_eq!(resolved, table);
-
-    // A new effect function must be added to `STUBS`, so the registration count is pinned.
-    // Four of these register values rather than effects: `len` and three `file_bytes`.
-    let sites: usize = [
-        include_str!("dialogs.rs"),
-        include_str!("files.rs"),
-        include_str!("host.rs"),
-        include_str!("http.rs"),
-        include_str!("pages.rs"),
-        include_str!("rpc.rs"),
-        include_str!("storage.rs"),
+/// One effect kind a child may queue: the declaration it needs, the call that queues it, and
+/// how many effects each channel of that instance makes ready — `(http, storage, files, rpc,
+/// host)`. A child registers the same effect functions a root does, so each call is the real one.
+fn effect_cases() -> Vec<(&'static str, Value, &'static str, [usize; 5])> {
+    let files = json!({"vol": {"backend": "opfs", "access": "readwrite", "handler": "done"}});
+    vec![
+        (
+            "http_get",
+            json!({"requests": {"load": {"url": "d.json", "handler": "done"}}}),
+            "http_get(\"load\")",
+            [1, 0, 0, 0, 0],
+        ),
+        (
+            "storage_write",
+            json!({"storage": {"draft": {"backend": "opfs", "key": "draft", "handler": "done"}}}),
+            "storage_write(\"draft\", #{\"a\": 1})",
+            [0, 1, 0, 0, 0],
+        ),
+        (
+            "file_write_text",
+            json!({"files": files.clone()}),
+            "file_write_text(\"vol\", \"f.txt\", \"text\")",
+            [0, 0, 1, 0, 0],
+        ),
+        // `file_bytes` builds the binary value a write takes, so both halves of R1 are a child's.
+        (
+            "file_write_bytes",
+            json!({"files": files}),
+            "file_write_bytes(\"vol\", \"f.bin\", file_bytes(\"x\"))",
+            [0, 0, 1, 0, 0],
+        ),
+        (
+            "rpc_call",
+            json!({"rpc": rpc_declaration()}),
+            "rpc_call(\"echo\", #{\"name\": \"太郎\"})",
+            [0, 0, 0, 1, 0],
+        ),
+        (
+            "host_call",
+            json!({"operations": {"op": {"connection": "c", "action": "a", "handler": "done"}}}),
+            "host_call(\"op\", #{})",
+            [0, 0, 0, 0, 1],
+        ),
     ]
-    .iter()
-    .map(|source| source.matches("register_fn(").count())
-    .sum();
-    assert_eq!(
-        sites, 21,
-        "an effect module gained or lost a register_fn: check composition::STUBS"
+}
+
+/// Prepare and commit what a handler of this instance queued, the way `commit_all` will once
+/// completions route (T3), and report how many effects each channel made ready.
+fn commit_effects(instance: &mut instance::Instance) -> Result<[usize; 5], String> {
+    let names = instance.http.prepare(&instance.package.requests)?;
+    let host_intents = instance.host.prepare(&instance.package.operations)?;
+    let intents = instance.storage.prepare(&instance.package.storage)?;
+    let file_intents = instance.files.prepare(&instance.package.files)?;
+    let rpc_intents = instance.rpc.prepare()?;
+    instance.http.commit(names, &instance.package.requests);
+    instance.host.commit(host_intents);
+    instance.storage.commit(intents, &instance.package.storage);
+    instance.files.commit(file_intents);
+    instance.rpc.commit(rpc_intents, &instance.package.rpc);
+    Ok([
+        instance.http.take().len(),
+        instance.storage.take().len(),
+        instance.files.take().len(),
+        instance.rpc.take().len(),
+        instance.host.take().len(),
+    ])
+}
+
+#[test]
+fn a_child_queues_the_host_effects_it_declares_into_its_own_channels() {
+    for (label, declaration, call, expected) in effect_cases() {
+        let mut package = child_json();
+        let mut descriptors = HashMap::new();
+        for (key, value) in declaration.as_object().expect("a declaration object") {
+            if key == "rpc" {
+                descriptors = descriptor_set();
+            }
+            package[key] = value.clone();
+        }
+        let package: Package =
+            serde_json::from_value(package).unwrap_or_else(|e| panic!("{label}: {e}"));
+        let script =
+            format!("fn init(s) {{ s }} fn done(s, r) {{ s }} fn run(s, e) {{ {call}; s }}");
+        let mut instance = load_with(
+            package,
+            &script,
+            "a",
+            &extensions::ExtensionContext::default(),
+            descriptors,
+        )
+        .unwrap_or_else(|e| panic!("{label} should load as a child: {e}"));
+        let _ = run_child(&instance, "run").unwrap_or_else(|e| panic!("{label}: {e}"));
+        assert_eq!(
+            commit_effects(&mut instance).unwrap_or_else(|e| panic!("{label}: {e}")),
+            expected,
+            "{label}"
+        );
+    }
+}
+
+/// A child declaring `rpc` without the descriptors its definitions name, and the same child
+/// once `load_with_bundle` carries them.
+#[test]
+fn a_child_declaring_rpc_needs_its_own_descriptors_bundled() {
+    let root = part(
+        "parent",
+        json!({}),
+        json!({"part": {"url": "part.json"}}),
+        json!([component("part", "a", json!({}))]),
     );
+    let mut package = child_json();
+    package["rpc"] = rpc_declaration();
+    let package: Package = serde_json::from_value(package).expect("an rpc child package");
+    let script = "fn init(s) { s } fn done(s, r) { s } fn run(s, e) { rpc_call(\"echo\", #{}); s }";
+    assert_eq!(
+        compose_error(
+            root.clone(),
+            bundle(vec![("part.json", package.clone(), script)])
+        ),
+        "Component a: RPC descriptors do not match definitions"
+    );
+    let bundled = HashMap::from([(
+        "part.json".to_owned(),
+        Bundle {
+            package,
+            script: script.to_owned(),
+            descriptors: descriptor_set(),
+        },
+    )]);
+    Runtime::load_with_bundle(root, SCRIPT, HashMap::new(), None, bundled, |_| {})
+        .expect("a child whose descriptors are bundled with it");
+}
+
+/// A root placing one child, for the screen-wide queues the two of them share. The child
+/// declares a page of its own, so `navigate` resolves there rather than on the root.
+fn sharing(child_script: &str) -> Result<Runtime, String> {
+    let mut child = child_json();
+    child["pages"] = json!({"next": {"url": "next.json"}});
+    child["ui"] = json!({"xtype": "container", "items": [
+        {"xtype": "button", "itemId": "fire", "handler": "fire"},
+    ]});
+    let child: Package = serde_json::from_value(child).expect("the shared child package");
+    compose_script(
+        part(
+            "parent",
+            json!({"query": ""}),
+            json!({"part": {"url": "part.json"}}),
+            json!([component("part", "a", json!({}))]),
+        ),
+        SCRIPT,
+        bundle(vec![("part.json", child, child_script)]),
+    )
+}
+
+#[test]
+fn a_dialog_a_child_asked_for_carries_the_path_of_that_child() {
+    // The `init` of the child, which is where P4 says the tag has to be there already.
+    let mut runtime = sharing("fn init(s) { alert(\"hi\"); s } fn fire(s, e) { s }")
+        .expect("a child that alerts from init");
+    let effects = runtime.dialogs.take();
+    assert_eq!(effects.len(), 1);
+    assert_eq!(effects[0]["kind"], json!("dialog"));
+    assert_eq!(effects[0]["instance"], json!("a"));
+
+    // An event of the child, and a root dialog next to it: only the child's effect is tagged.
+    let mut runtime = sharing(
+        "fn init(s) { s } fn fire(s, e) { confirm(\"m\", \"done\"); s } fn done(s, r) { s }",
+    )
+    .expect("a child that confirms from a handler");
+    runtime
+        .dispatch("a/fire", json!({}))
+        .expect("the child button");
+    let effects = runtime.dialogs.take();
+    assert_eq!(effects.len(), 1);
+    assert_eq!(effects[0]["instance"], json!("a"));
+    assert_eq!(effects[0]["operation"], json!("confirm"));
+}
+
+#[test]
+fn a_navigation_a_child_asked_for_resolves_and_is_tagged_in_that_child() {
+    // The page name is looked up in the `pages` of the child, which the root does not declare.
+    let mut runtime = sharing("fn init(s) { s } fn fire(s, e) { navigate(\"next\"); s }")
+        .expect("a child that navigates from a handler");
+    runtime
+        .dispatch("a/fire", json!({}))
+        .expect("the child button");
+    let effects = runtime.pages.take();
+    assert_eq!(effects.len(), 1);
+    assert_eq!(effects[0]["kind"], json!("navigate"));
+    assert_eq!(effects[0]["page"], json!("next"));
+    assert_eq!(effects[0]["instance"], json!("a"));
+
+    // A page neither the child nor the root declares names the child that asked for it.
+    let mut runtime = sharing("fn init(s) { s } fn fire(s, e) { navigate(\"nope\"); s }")
+        .expect("a child that navigates to nothing");
+    assert_eq!(
+        dispatch_error(&mut runtime, "a/fire", json!({})),
+        "Component a: Unknown page: nope"
+    );
+    assert_eq!(runtime.revision, 0);
+}
+
+#[test]
+fn a_child_cannot_navigate_from_init_and_names_itself_when_it_does() {
+    let error = sharing("fn init(s) { navigate(\"next\"); s } fn fire(s, e) { s }")
+        .err()
+        .expect("a child that navigates from init");
+    assert_eq!(
+        error,
+        "Component a: navigate is only available in event handlers, not init"
+    );
+}
+
+#[test]
+fn a_dialog_handler_of_a_child_is_looked_up_in_the_script_of_that_child() {
+    // The root script knows no `done`; the child does, so the dialog is accepted.
+    let mut runtime = sharing(
+        "fn init(s) { s } fn fire(s, e) { confirm(\"m\", \"done\"); s } fn done(s, r) { s }",
+    )
+    .expect("a child whose script defines the handler");
+    assert!(!SCRIPT.contains("done"), "the root must not define it");
+    runtime
+        .dispatch("a/fire", json!({}))
+        .expect("the child button");
+    assert_eq!(runtime.dialogs.take().len(), 1);
+
+    // Without it the child is named, rather than the root being searched instead.
+    let mut runtime = sharing("fn init(s) { s } fn fire(s, e) { confirm(\"m\", \"done\"); s }")
+        .expect("a child without the handler");
+    assert_eq!(
+        dispatch_error(&mut runtime, "a/fire", json!({})),
+        "Component a: Dialog: undefined handler done(state, response)"
+    );
+    assert_eq!(runtime.revision, 0);
 }
 
 #[test]
@@ -550,7 +686,7 @@ fn a_child_cannot_own_a_window_at_any_depth() {
 }
 
 #[test]
-fn a_child_cannot_declare_host_effects_or_metadata() {
+fn a_child_may_declare_host_effects_but_not_the_tool_surface() {
     let declarations = [
         (
             "requests",
@@ -569,30 +705,25 @@ fn a_child_cannot_declare_host_effects_or_metadata() {
             "files",
             json!({"vol": {"backend": "opfs", "access": "read", "handler": "run"}}),
         ),
-        (
-            "rpc",
-            json!({"echo": {
-                "url": "https://x/y", "descriptor": "d", "service": "s", "method": "m",
-                "protocol": "connect", "handler": "run",
-            }}),
-        ),
-        ("webmcp", json!({"description": "child"})),
     ];
+    // `rpc` needs descriptors of its own, which
+    // `a_child_declaring_rpc_needs_its_own_descriptors_bundled` covers.
     for (key, value) in declarations {
-        let mut package = json!({
-            "version": 1, "id": "child", "title": "Child", "script": "child.rhai",
-            "state": {}, "ui": {"xtype": "container", "items": []},
-        });
+        let mut package = child_json();
         package[key] = value;
         let package: Package =
             serde_json::from_value(package).unwrap_or_else(|e| panic!("{key}: {e}"));
-        let error = child_error(package, SCRIPT);
-        assert_eq!(
-            error,
-            "requests, operations, storage, files, rpc, pages and webmcp are not available in components (reserved for a later stage)",
-            "{key}"
-        );
+        load_child(package, "fn init(s) { s } fn run(s, e) { s }")
+            .unwrap_or_else(|e| panic!("{key} should load on a child: {e}"));
     }
+    // The tool surface stays screen-wide: a child publishing one would speak for the root.
+    let mut package = child_json();
+    package["webmcp"] = json!({"description": "child"});
+    let package: Package = serde_json::from_value(package).expect("a child with webmcp");
+    assert_eq!(
+        child_error(package, "fn init(s) { s } fn run(s, e) { s }"),
+        "webmcp is not available in components (reserved for a later stage)"
+    );
 }
 
 #[test]
@@ -608,7 +739,7 @@ fn a_child_reads_the_clock_its_parent_is_holding() {
     let instance = load_in(
         child(),
         "fn init(s) { s.today = date_today(); s } fn run(s, e) { s }",
-        false,
+        "a",
         &context,
     )
     .expect("child with a clock");
@@ -1630,8 +1761,8 @@ fn a_child_that_refuses_a_configuration_leaves_the_whole_screen_where_it_was() {
     assert_eq!(runtime.revision, 0);
 }
 
-/// The same child, announcing something and then failing: one variant throws, the other is
-/// refused by the stub of an effect function. Either way the announcement has no event left.
+/// The same child, announcing something and then failing: one variant throws, the other walks
+/// into an undefined variable. Either way the announcement has no event left.
 const STALE_SCRIPTS: [(&str, &str); 2] = [
     (
         "throw",
@@ -1641,11 +1772,11 @@ fn select(s, e) { s }
 fn whisper(s, e) { emit(\"unheard\", #{\"id\": 0}); throw \"the child refused\"; }",
     ),
     (
-        "stub",
+        "error",
         "fn init(s) { s }
 fn config(s, e) { s.configs += 1; s.seen = e.config.query; s }
 fn select(s, e) { s }
-fn whisper(s, e) { emit(\"unheard\", #{\"id\": 0}); Fn(\"http_get\").call(\"x\"); s }",
+fn whisper(s, e) { emit(\"unheard\", #{\"id\": 0}); nope.x; s }",
     ),
 ];
 

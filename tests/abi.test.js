@@ -94,6 +94,65 @@ it("loads a screen with its component packages bundled and caps how many may be 
   expect(raw(JSON.stringify({ op: "event", target: "add", payload: {} })).data.state.count).toBe(2);
 });
 
+it("loads a component package with RPC descriptors of its own", async () => {
+  const descriptorBytes = new Uint8Array(
+    await readFile(new URL("../public/screens/rpc-demo.pb", import.meta.url)),
+  );
+  const child = {
+    version: 1,
+    id: "part",
+    title: "部品",
+    script: "part.rhai",
+    state: { value: 0 },
+    rpc: {
+      echo: {
+        url: "http://127.0.0.1:4180/uivolve.demo.EchoService/Echo",
+        descriptor: "rpc-demo.pb",
+        service: "uivolve.demo.EchoService",
+        method: "Echo",
+        protocol: "connect",
+        handler: "done",
+      },
+    },
+    ui: { xtype: "container", items: [{ xtype: "metric", text: "件数", bind: "value" }] },
+  };
+  const parent = {
+    ...screen,
+    components: { part: { url: "https://example.com/part.json" } },
+    ui: {
+      xtype: "container",
+      items: [...screen.ui.items, { xtype: "part", itemId: "open", config: {} }],
+    },
+  };
+  const childScript = 'fn init(s){s} fn done(s,r){s} fn run(s,e){rpc_call("echo", #{});s}';
+  const entry = { package: child, script: childScript };
+  // Without descriptors of its own the child cannot resolve the method it declares.
+  const refused = raw(
+    JSON.stringify({
+      op: "load",
+      package: parent,
+      script,
+      components: { "https://example.com/part.json": entry },
+    }),
+  );
+  expect(refused).toMatchObject({
+    ok: false,
+    error: "Component open: RPC descriptors do not match definitions",
+  });
+  const id = engine.storeBuffer(descriptorBytes);
+  const loaded = raw(
+    JSON.stringify({
+      op: "load",
+      package: parent,
+      script,
+      components: {
+        "https://example.com/part.json": { ...entry, descriptors: { "rpc-demo.pb": id } },
+      },
+    }),
+  );
+  expect(loaded).toMatchObject({ ok: true, data: { state: { count: 0 }, revision: 0 } });
+});
+
 it("exports the existing raw ABI without requiring browser imports", () => {
   expect(WebAssembly.Module.imports(module_)).toEqual([]);
   for (const name of ["input_alloc", "input_free", "request", "response_len"])

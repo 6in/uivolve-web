@@ -104,6 +104,9 @@ impl Icon {
 }
 #[derive(Clone)]
 pub struct Intent {
+    /// The instance that asked for the dialog: the empty path for the root, the prefixed
+    /// itemId path of the component otherwise. The handler runs there, and there alone.
+    origin: String,
     operation: Operation,
     message: String,
     default_value: String,
@@ -124,11 +127,15 @@ pub struct Requests {
     ready: Vec<Value>,
 }
 impl Requests {
-    pub fn register(&self, engine: &mut Engine) {
+    /// `origin` is the instance these functions enqueue for; every closure carries its own copy
+    /// so the queue the whole screen shares still says who asked.
+    pub fn register(&self, engine: &mut Engine, origin: &str) {
         let queue = self.queue.clone();
+        let from = origin.to_owned();
         engine.register_fn("alert", move |message: ImmutableString| {
             enqueue(
                 &queue,
+                &from,
                 Operation::Alert,
                 message,
                 "".into(),
@@ -137,9 +144,11 @@ impl Requests {
             )
         });
         let queue = self.queue.clone();
+        let from = origin.to_owned();
         engine.register_fn("alert", move |message: ImmutableString, options: Map| {
             enqueue(
                 &queue,
+                &from,
                 Operation::Alert,
                 message,
                 "".into(),
@@ -153,12 +162,14 @@ impl Requests {
             ("prompt", Operation::Prompt),
         ] {
             let queue = self.queue.clone();
+            let from = origin.to_owned();
             let plain_operation = operation.clone();
             engine.register_fn(
                 function,
                 move |message: ImmutableString, handler: ImmutableString| {
                     enqueue(
                         &queue,
+                        &from,
                         plain_operation.clone(),
                         message,
                         "".into(),
@@ -168,11 +179,13 @@ impl Requests {
                 },
             );
             let queue = self.queue.clone();
+            let from = origin.to_owned();
             engine.register_fn(
                 function,
                 move |message: ImmutableString, handler: ImmutableString, options: Map| {
                     enqueue(
                         &queue,
+                        &from,
                         operation.clone(),
                         message,
                         "".into(),
@@ -183,6 +196,7 @@ impl Requests {
             );
         }
         let queue = self.queue.clone();
+        let from = origin.to_owned();
         engine.register_fn(
             "prompt",
             move |message: ImmutableString,
@@ -190,6 +204,7 @@ impl Requests {
                   handler: ImmutableString| {
                 enqueue(
                     &queue,
+                    &from,
                     Operation::Prompt,
                     message,
                     default_value,
@@ -199,6 +214,7 @@ impl Requests {
             },
         );
         let queue = self.queue.clone();
+        let from = origin.to_owned();
         engine.register_fn(
             "prompt",
             move |message: ImmutableString,
@@ -207,6 +223,7 @@ impl Requests {
                   options: Map| {
                 enqueue(
                     &queue,
+                    &from,
                     Operation::Prompt,
                     message,
                     default_value,
@@ -219,20 +236,32 @@ impl Requests {
     pub fn clear(&self) {
         self.queue.borrow_mut().clear();
     }
-    pub fn prepare(&self, ast: &AST) -> Result<Vec<Intent>, String> {
+    /// `ast_of` resolves the script of an origin: a completion handler is validated against the
+    /// instance that asked for the dialog, never against the root that happens to own the queue.
+    pub fn prepare<'a>(
+        &self,
+        ast_of: &dyn Fn(&str) -> Option<&'a AST>,
+    ) -> Result<Vec<Intent>, crate::composition::Blame> {
         let intents = std::mem::take(&mut *self.queue.borrow_mut());
         if self.pending.len() + intents.len() > 8 {
-            return Err("At most 8 pending dialogs".into());
+            // Screen-wide: the stack belongs to the root whoever filled it.
+            return Err((String::new(), "At most 8 pending dialogs".into()));
         }
         for intent in &intents {
-            if !intent.handler.is_empty()
-                && !ast
-                    .iter_functions()
+            if intent.handler.is_empty() {
+                continue;
+            }
+            let defined = ast_of(&intent.origin).is_some_and(|ast| {
+                ast.iter_functions()
                     .any(|f| f.name == intent.handler && f.params.len() == 2)
-            {
-                return Err(format!(
-                    "Dialog: undefined handler {}(state, response)",
-                    intent.handler
+            });
+            if !defined {
+                return Err((
+                    intent.origin.clone(),
+                    format!(
+                        "Dialog: undefined handler {}(state, response)",
+                        intent.handler
+                    ),
                 ));
             }
         }
@@ -245,7 +274,11 @@ impl Requests {
                 sequence.set(id);
                 id
             });
-            self.ready.push(json!({"kind":"dialog", "id":id, "operation":intent.operation, "message":intent.message, "defaultValue":intent.default_value, "icon":intent.icon}));
+            let mut effect = json!({"kind":"dialog", "id":id, "operation":intent.operation, "message":intent.message, "defaultValue":intent.default_value, "icon":intent.icon});
+            if !intent.origin.is_empty() {
+                effect["instance"] = json!(intent.origin);
+            }
+            self.ready.push(effect);
             self.pending.insert(id, intent);
             self.order.push_back(id);
         }
@@ -310,11 +343,22 @@ impl Requests {
         // Background, queued and stale dialog controls do not mutate the active screen.
         Ok(Event::Ignore)
     }
-    pub fn consume(&mut self, id: u64, response: &mut Value) -> Result<String, String> {
-        let intent = self
-            .pending
-            .remove(&id)
-            .ok_or("Unknown or completed dialog request")?;
+    /// `expected` is the instance the caller claims the dialog belongs to. A mismatch leaves the
+    /// request pending, so naming the wrong instance cannot swallow somebody else's dialog.
+    pub fn consume(
+        &mut self,
+        id: u64,
+        response: &mut Value,
+        expected: Option<&str>,
+    ) -> Result<(String, String), String> {
+        const UNKNOWN: &str = "Unknown or completed dialog request";
+        if let Some(expected) = expected {
+            match self.pending.get(&id) {
+                Some(intent) if intent.origin == expected => {}
+                _ => return Err(UNKNOWN.into()),
+            }
+        }
+        let intent = self.pending.remove(&id).ok_or(UNKNOWN)?;
         self.order.retain(|queued| *queued != id);
         let ok = response["ok"].as_bool().ok_or("Missing dialog result ok")?;
         let data = &response["data"];
@@ -341,7 +385,7 @@ impl Requests {
         );
         response["operation"] =
             serde_json::to_value(intent.operation).map_err(|e| e.to_string())?;
-        Ok(intent.handler)
+        Ok((intent.handler, intent.origin))
     }
     pub fn take(&mut self) -> Vec<Value> {
         std::mem::take(&mut self.ready)
@@ -538,6 +582,7 @@ fn wrap_message(message: &str, columns: usize) -> Vec<String> {
 }
 fn enqueue(
     queue: &RefCell<Vec<Intent>>,
+    origin: &str,
     operation: Operation,
     message: ImmutableString,
     default_value: ImmutableString,
@@ -566,6 +611,7 @@ fn enqueue(
         return Err("At most 8 dialogs per handler".into());
     }
     queue.push(Intent {
+        origin: origin.to_owned(),
         operation,
         message: message.to_string(),
         default_value: default_value.to_string(),

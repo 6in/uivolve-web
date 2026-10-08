@@ -1,4 +1,4 @@
-use rhai::{Dynamic, Engine, Scope};
+use rhai::{Dynamic, Engine, Scope, AST};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -381,10 +381,19 @@ pub struct Runtime {
     pub revision: u32,
 }
 
+/// Everything a component package needs to become an instance: what `load_with_bundle` is
+/// handed for each declaration URL of the screen.
+pub struct Bundle {
+    pub package: Package,
+    pub script: String,
+    /// RPC descriptors by the name the `rpc` definitions of this package reference.
+    pub descriptors: HashMap<String, Vec<u8>>,
+}
+
 /// The state a component load carries across the levels of the instance tree.
 struct Composing<'a> {
     /// Child packages by declaration URL. The same package placed twice is bundled once.
-    bundled: &'a HashMap<String, (Package, String)>,
+    bundled: &'a HashMap<String, Bundle>,
     context: &'a extensions::ExtensionContext,
     dialogs: &'a mut dialogs::Requests,
     pages: &'a pages::Requests,
@@ -435,25 +444,26 @@ impl Composing<'_> {
             }
             let config = composition::evaluate_config(node, &state)
                 .map_err(|error| format!("Component {path}: {error}"))?;
-            let (package, script) = self
+            let bundle = self
                 .bundled
                 .get(url)
                 .ok_or_else(|| format!("Component {path}: package {url} was not bundled"))?;
             let url = url.clone();
-            let mut package = package.clone();
+            let mut package = bundle.package.clone();
             // `init` reads the parent's configuration from `state.config`; the `config` handler
             // only runs for the changes that follow.
             let Some(state) = package.state.as_object_mut() else {
                 return Err(format!("Component {path}: Initial state must be an object"));
             };
             state.insert("config".into(), config);
+            // The same package placed twice gets its own copy: `rpc.initialize` consumes them.
             let child = instance::Instance::load(
                 package,
-                script,
-                HashMap::new(),
+                &bundle.script,
+                bundle.descriptors.clone(),
                 self.context,
                 None,
-                false,
+                &path,
                 |_| {},
                 self.dialogs,
                 self.pages,
@@ -508,14 +518,40 @@ impl Runtime {
     }
 
     /// Load a screen together with the packages its `components` declare, keyed by the URL of
-    /// the declaration. Each placement of a package becomes an instance of its own, loaded
-    /// after the instance holding it so that its `config` sees a parent that finished `init`.
+    /// the declaration. Children carrying `rpc` definitions need descriptors of their own, which
+    /// `load_with_bundle` takes; this entry point bundles them without any.
     pub fn load_with_components(
         package: Package,
         script: &str,
         descriptors: HashMap<String, Vec<u8>>,
         clock: Option<extensions::Clock>,
         components: HashMap<String, (Package, String)>,
+        register: impl FnOnce(&mut Engine),
+    ) -> Result<Self, String> {
+        let components = components
+            .into_iter()
+            .map(|(url, (package, script))| {
+                (
+                    url,
+                    Bundle {
+                        package,
+                        script,
+                        descriptors: HashMap::new(),
+                    },
+                )
+            })
+            .collect();
+        Self::load_with_bundle(package, script, descriptors, clock, components, register)
+    }
+
+    /// Each placement of a bundled package becomes an instance of its own, loaded after the
+    /// instance holding it so that its `config` sees a parent that finished `init`.
+    pub fn load_with_bundle(
+        package: Package,
+        script: &str,
+        descriptors: HashMap<String, Vec<u8>>,
+        clock: Option<extensions::Clock>,
+        components: HashMap<String, Bundle>,
         register: impl FnOnce(&mut Engine),
     ) -> Result<Self, String> {
         let mut dialogs = dialogs::Requests::default();
@@ -528,7 +564,7 @@ impl Runtime {
             descriptors,
             &context,
             clock,
-            true,
+            "",
             register,
             &mut dialogs,
             &pages,
@@ -769,6 +805,19 @@ impl Runtime {
         }
     }
 
+    /// The script of an instance, for the queues the whole screen shares: a dialog handler is
+    /// validated against the instance that asked for the dialog.
+    fn ast_of(&self, origin: &str) -> Option<&AST> {
+        self.instance(origin).ok().map(|instance| &instance.ast)
+    }
+
+    /// The `pages` an instance declared, for the same reason.
+    fn pages_of(&self, origin: &str) -> Option<&HashMap<String, pages::Definition>> {
+        self.instance(origin)
+            .ok()
+            .map(|instance| &instance.package.pages)
+    }
+
     /// The instance an event belongs to and the itemId inside it. Each `/` of a target names a
     /// component node of the instance resolved so far. `None` means the event is dropped,
     /// because a component on the way is hidden or sits under a disabled part of its parent.
@@ -975,7 +1024,7 @@ impl Runtime {
         self.pages.clear();
         self.clear_queues();
         self.dialogs.clear();
-        let handler = self.dialogs.consume(id, &mut response)?;
+        let (handler, _origin) = self.dialogs.consume(id, &mut response, None)?;
         let next = if handler.is_empty() {
             self.root.state.clone()
         } else {
@@ -1045,8 +1094,14 @@ impl Runtime {
         let intents = self.root.storage.prepare(&self.root.package.storage)?;
         let file_intents = self.root.files.prepare(&self.root.package.files)?;
         let rpc_intents = self.root.rpc.prepare()?;
-        let dialog_intents = self.dialogs.prepare(&self.root.ast)?;
-        let page_intents = self.pages.prepare(&self.root.package.pages)?;
+        let dialog_intents = self
+            .dialogs
+            .prepare(&|origin| self.ast_of(origin))
+            .map_err(|(origin, error)| composition::blame(&origin, error))?;
+        let page_intents = self
+            .pages
+            .prepare(&|origin| self.pages_of(origin))
+            .map_err(|(origin, error)| composition::blame(&origin, error))?;
         if !page_intents.is_empty()
             && (!names.is_empty()
                 || !intents.is_empty()

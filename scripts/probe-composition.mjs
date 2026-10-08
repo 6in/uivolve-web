@@ -2,8 +2,8 @@
 // (scripts/compare-engine-behavior.mjs) skips every screen that declares `components`, because a
 // base build from before composition cannot load one at all -- there is nothing to compare against.
 // This script covers that gap by asserting the composed behavior of a single WASM directly: the
-// shipped order-dashboard demo for the happy path, and two inline fixtures for the rejection of
-// effect functions inside a child.
+// shipped order-dashboard demo for the happy path, and inline fixtures for the effect functions
+// a child may now call and the tool surface it still may not publish.
 // usage: bun scripts/probe-composition.mjs --candidate <wasm> [--evidence <json>]
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -183,28 +183,29 @@ function demoSequence() {
   return { id: "order-dashboard", steps };
 }
 
-// ---------------------------------------------------------------- rejection fixtures
+// ---------------------------------------------------------------- effect fixtures
 
-const REJECT_URL = "reject-part.json";
-const REJECT_PARENT = {
+const EFFECT_URL = "effect-part.json";
+const EFFECT_PARENT = {
   version: 1,
-  id: "reject-host",
-  title: "効果関数の拒否",
-  script: "reject-host.rhai",
-  components: { rejectPart: { url: REJECT_URL } },
+  id: "effect-host",
+  title: "子の効果関数",
+  script: "effect-host.rhai",
+  components: { effectPart: { url: EFFECT_URL } },
   state: { count: 0 },
   ui: {
     xtype: "container",
-    items: [{ xtype: "rejectPart", itemId: "part" }],
+    items: [{ xtype: "effectPart", itemId: "part" }],
   },
 };
-const REJECT_PARENT_SCRIPT = "fn init(s) { s }";
-const REJECT_CHILD = {
+const EFFECT_PARENT_SCRIPT = "fn init(s) { s }";
+const EFFECT_CHILD = {
   version: 1,
-  id: "reject-part",
+  id: "effect-part",
   title: "効果関数を呼ぶ部品",
-  script: "reject-part.rhai",
+  script: "effect-part.rhai",
   state: { value: 0 },
+  requests: { load: { url: "d.json", handler: "done" } },
   ui: {
     xtype: "container",
     items: [
@@ -213,36 +214,60 @@ const REJECT_CHILD = {
     ],
   },
 };
-// `Fn("http_get")` hides the name from the load-time walk, so the registered stub is what refuses
-// -- the rejection is only guaranteed at run time. docs/components.md states this.
-const REJECT_AT_RUNTIME =
-  'fn init(s) { s } fn run(s, e) { let f = Fn("http_get"); f.call("x"); s.value = 1; s }';
-// Written out, the same call is caught while the child compiles.
-const REJECT_AT_LOAD = 'fn init(s) { s } fn run(s, e) { http_get("x"); s }';
+const DONE = "fn done(s, r) { s }";
+// Written out, the call used to be caught while the child compiled; now the child declares the
+// request and queues it like a root does.
+const CALL_AT_LOAD = `fn init(s) { s } ${DONE} fn run(s, e) { http_get("load"); s.value = 1; s }`;
+// `Fn("http_get")` hid the name from the load-time walk, so a stub had to refuse at run time.
+const CALL_THROUGH_A_POINTER = `fn init(s) { s } ${DONE} fn run(s, e) { let f = Fn("http_get"); f.call("load"); s.value = 1; s }`;
+// A dialog is screen-wide, so the effect the host receives says which instance asked for it.
+const ASK_FOR_A_DIALOG = `fn init(s) { s } ${DONE} fn run(s, e) { alert("こんにちは"); s }`;
+// The tool surface stays the root's: a child publishing one is still refused at load.
+const CHILD_WITH_WEBMCP = { ...EFFECT_CHILD, webmcp: { description: "部品" } };
 
-function rejectSequences() {
-  const parent = { pkg: REJECT_PARENT, script: REJECT_PARENT_SCRIPT };
-  const bundleWith = (script) => ({
-    [REJECT_URL]: { package: REJECT_CHILD, script },
+function dialogEffect(response, instance) {
+  const effects = response?.data?.effects ?? [];
+  const dialog = effects.find((effect) => effect.kind === "dialog");
+  if (dialog === undefined) return [`dialog の effect が無い: ${JSON.stringify(effects)}`];
+  return equals(dialog.instance, instance, "dialog effect の instance");
+}
+
+function effectSequences() {
+  const parent = { pkg: EFFECT_PARENT, script: EFFECT_PARENT_SCRIPT };
+  const bundleWith = (script, pkg = EFFECT_CHILD) => ({ [EFFECT_URL]: { package: pkg, script } });
+  const queues = (script) => ({
+    id: script === CALL_AT_LOAD ? "child-effect-written-out" : "child-effect-through-a-pointer",
+    steps: [
+      loadStep("load", parent, bundleWith(script), isOk),
+      layoutStep("layout:800", 800, isOk),
+      // The handler runs to the end instead of being refused, so the child moves.
+      eventStep("event:part/fire", "part/fire", {}, (r) => [
+        ...isOk(r),
+        ...equals(r.data?.revision, 1, "revision"),
+      ]),
+      layoutStep("layout:800:after", 800, isOk),
+    ],
   });
-  const refused = ["http_get", "not available in components"];
   return [
+    queues(CALL_AT_LOAD),
+    queues(CALL_THROUGH_A_POINTER),
     {
-      id: "reject-at-runtime",
+      id: "child-dialog-carries-its-instance",
       steps: [
-        loadStep("load", parent, bundleWith(REJECT_AT_RUNTIME), isOk),
-        layoutStep("layout:800", 800, isOk),
-        eventStep("event:part/fire", "part/fire", {}, (r) => isRefused(r, refused)),
-        // A refused handler commits nothing, so the screen is exactly where it was.
-        layoutStep("layout:800:after", 800, (r, ctx) => [
+        loadStep("load", parent, bundleWith(ASK_FOR_A_DIALOG), isOk),
+        eventStep("event:part/fire", "part/fire", {}, (r) => [
           ...isOk(r),
-          ...equals(ctx.text("layout:800"), ctx.text("layout:800:after"), "拒否後の layout 応答"),
+          ...dialogEffect(r, "part"),
         ]),
       ],
     },
     {
-      id: "reject-at-load",
-      steps: [loadStep("load", parent, bundleWith(REJECT_AT_LOAD), (r) => isRefused(r, refused))],
+      id: "child-webmcp-refused",
+      steps: [
+        loadStep("load", parent, bundleWith(CALL_AT_LOAD, CHILD_WITH_WEBMCP), (r) =>
+          isRefused(r, ["webmcp is not available in components"]),
+        ),
+      ],
     },
   ];
 }
@@ -275,7 +300,7 @@ async function runSequence(module_, sequence) {
 const options = parseArguments(process.argv.slice(2));
 const started = Date.now();
 const module_ = await WebAssembly.compile(readFileSync(options.candidate));
-const sequences = [demoSequence(), ...rejectSequences()];
+const sequences = [demoSequence(), ...effectSequences()];
 const records = [];
 for (const sequence of sequences) records.push(...(await runSequence(module_, sequence)));
 
