@@ -1911,11 +1911,14 @@ fn effecting_items(extra: Value) -> Value {
         "fire_http",
         "fire_storage",
         "fire_file",
+        "fire_file_read",
         "fire_rpc",
         "fire_host",
         "fire_dialog",
         "fire_named",
         "fire_two",
+        "fire_fail",
+        "arm",
     ]
     .iter()
     .map(|name| json!({"xtype": "button", "itemId": name, "handler": name}))
@@ -1940,7 +1943,7 @@ fn effecting(id: &str, components: Value, items: Value) -> Package {
         .collect();
     serde_json::from_value(json!({
         "version": 1, "id": id, "title": id, "script": format!("{id}.rhai"),
-        "state": {"last": "", "notice": ""},
+        "state": {"last": "", "notice": "", "fail": "", "fat": []},
         "components": components,
         "requests": requests,
         "storage": {"draft": {"backend": "opfs", "key": "draft", "handler": "done_storage"}},
@@ -1969,10 +1972,27 @@ fn effecting_script(announce: bool) -> String {
     };
     format!(
         "fn init(s) {{ s }}
-fn land(s, k) {{ s.last = k; {announcement} s }}
+fn fatten() {{
+    let one = \"x\";
+    while one.len() < 60000 {{ one += one; }}
+    let rows = [];
+    for i in 0..20 {{ rows.push(one); }}
+    rows
+}}
+fn land(s, k) {{
+    if s.fail == \"before\" {{ throw \"the handler refused\"; }}
+    if s.fail == \"fat\" {{ s.fat = fatten(); }}
+    s.last = k;
+    {announcement}
+    if s.fail == \"after\" {{ throw \"the handler refused\"; }}
+    s
+}}
+fn arm(s, e) {{ s.fail = e.value; s }}
+fn fire_fail(s, e) {{ throw \"the handler refused\"; }}
 fn fire_http(s, e) {{ http_get(\"r1\"); s }}
 fn fire_storage(s, e) {{ storage_write(\"draft\", #{{\"a\": 1}}); s }}
 fn fire_file(s, e) {{ file_write_text(\"vol\", \"f.txt\", \"text\"); s }}
+fn fire_file_read(s, e) {{ file_read_bytes(\"vol\", \"f.txt\"); s }}
 fn fire_rpc(s, e) {{ rpc_call(\"echo\", #{{\"name\": \"太郎\"}}); s }}
 fn fire_host(s, e) {{ host_call(\"op\", #{{}}); s }}
 fn fire_dialog(s, e) {{ confirm(\"m\", \"done_dialog\"); s }}
@@ -2183,91 +2203,124 @@ fn a_listener_that_refuses_a_completion_rolls_the_screen_back_but_not_the_reques
     );
 }
 
-/// One completion kind: the button that queues it, the response the host sends back, and what
-/// the handler of that kind writes into `last`.
-fn completion_cases() -> Vec<(&'static str, fn(u64) -> Completion, &'static str)> {
+/// One row of the completion grid: the button that queues an effect of that channel, the
+/// response the host sends back, what the handler of that kind writes into `last`, and the two
+/// things that differ per channel — the message a request that is no longer pending is refused
+/// with, and whether the host may send the same response twice.
+struct Channel {
+    button: &'static str,
+    make: fn(u64) -> Completion,
+    landed: &'static str,
+    unknown: &'static str,
+    /// Every channel but `host_progress` consumes the request when the response arrives, a
+    /// failed handler included: the host is never asked to send that one again.
+    consuming: bool,
+    /// Every channel but the dialogs numbers its requests per instance, so two instances can
+    /// hold the same id. The dialog queue belongs to the screen, and its ids are unique in it.
+    per_instance_ids: bool,
+}
+
+/// The rows of the grid: one per kind of completion the host can deliver.
+fn completion_cases() -> Vec<Channel> {
     vec![
-        (
-            "fire_http",
-            (|id| Completion::Http {
-                id,
-                response: answered(),
-            }) as fn(u64) -> Completion,
-            "http",
-        ),
-        (
-            "fire_storage",
-            |id| Completion::Storage {
+        Channel {
+            button: "fire_http",
+            make: |id| Completion::Http {
                 id,
                 response: answered(),
             },
-            "storage",
-        ),
-        (
-            "fire_file",
-            |id| Completion::File {
+            landed: "http",
+            unknown: "Unknown or completed HTTP request",
+            consuming: true,
+            per_instance_ids: true,
+        },
+        Channel {
+            button: "fire_storage",
+            make: |id| Completion::Storage {
+                id,
+                response: answered(),
+            },
+            landed: "storage",
+            unknown: "Unknown or completed storage request",
+            consuming: true,
+            per_instance_ids: true,
+        },
+        Channel {
+            button: "fire_file",
+            make: |id| Completion::File {
                 id,
                 response: answered(),
                 buffer: None,
             },
-            "file",
-        ),
-        // A failed call is the one RPC completion that needs no encoded response message.
-        (
-            "fire_rpc",
-            |id| Completion::Rpc {
+            landed: "file",
+            unknown: "Unknown or completed file request",
+            consuming: true,
+            per_instance_ids: true,
+        },
+        // A failed call is the one RPC completion that needs no encoded response message; the
+        // successful one carries a buffer and has a cell of its own below.
+        Channel {
+            button: "fire_rpc",
+            make: |id| Completion::Rpc {
                 id,
                 response: json!({"ok": false, "data": null, "error": "no"}),
                 buffer: None,
             },
-            "rpc",
-        ),
-        (
-            "fire_host",
-            |id| Completion::Host {
+            landed: "rpc",
+            unknown: "Unknown or completed RPC call",
+            consuming: true,
+            per_instance_ids: true,
+        },
+        Channel {
+            button: "fire_host",
+            make: |id| Completion::Host {
                 id,
                 response: json!({"ok": true, "data": null, "error": null}),
             },
-            "host",
-        ),
-        (
-            "fire_host",
-            |id| Completion::HostProgress {
+            landed: "host",
+            unknown: "Unknown or completed host call",
+            consuming: true,
+            per_instance_ids: true,
+        },
+        Channel {
+            button: "fire_host",
+            make: |id| Completion::HostProgress {
                 id,
                 data: json!({"operation": "op", "transferred": 0, "total": null}),
             },
-            "progress",
-        ),
-        (
-            "fire_dialog",
-            |id| Completion::Dialog {
+            landed: "progress",
+            unknown: "Unknown or completed host call",
+            consuming: false,
+            per_instance_ids: true,
+        },
+        Channel {
+            button: "fire_dialog",
+            make: |id| Completion::Dialog {
                 id,
                 response: json!({"ok": true, "data": true, "error": ""}),
             },
-            "dialog",
-        ),
+            landed: "dialog",
+            unknown: "Unknown or completed dialog request",
+            consuming: true,
+            per_instance_ids: false,
+        },
     ]
 }
 
 #[test]
 fn every_kind_of_completion_reaches_a_child_and_a_grandchild() {
     for path in ["a", "a/c"] {
-        for (button, completion, expected) in completion_cases() {
+        for channel in completion_cases() {
             let mut runtime = routing("on_done");
+            let id = queue_effect(&mut runtime, path, &channel);
             runtime
-                .dispatch(&format!("{path}/{button}"), json!({}))
-                .unwrap_or_else(|e| panic!("{path} {button}: {e}"));
-            let effects = runtime.take_effects();
-            assert_eq!(effects.len(), 1, "{path} {button}");
-            assert_eq!(effects[0]["instance"], json!(path), "{path} {button}");
-            let id = effects[0]["id"].as_u64().expect("an effect id");
-            runtime
-                .complete(path, completion(id))
-                .unwrap_or_else(|e| panic!("{path} {button} {expected}: {e}"));
+                .complete(path, (channel.make)(id))
+                .unwrap_or_else(|e| panic!("{path} {}: {e}", channel.landed));
             assert_eq!(
                 child_state(&runtime, path)["last"],
-                json!(expected),
-                "{path} {button} {expected}"
+                json!(channel.landed),
+                "{path} {}",
+                channel.landed
             );
         }
     }
@@ -2472,4 +2525,501 @@ fn an_instance_path_the_host_sends_back_has_to_be_a_path() {
     for path in ["", "/a", "a/", "a//b", "a:b", ":dialog:1:ok", "/"] {
         assert!(!composition::valid_instance_path(path), "{path}");
     }
+}
+
+// --- the grid of entrances, results and instances ---
+//
+// Every cell below runs the whole screen, so a wrong route shows up as a state that moved, a
+// revision that counted or a request that was swallowed — not as a panic. None of these tests
+// is `should_panic`: a panic anywhere in the grid fails the suite.
+
+/// The target of an event or a button of `path`, the root being the unprefixed one.
+fn target_of(path: &str, item_id: &str) -> String {
+    match path.is_empty() {
+        true => item_id.to_owned(),
+        false => format!("{path}/{item_id}"),
+    }
+}
+
+/// The message `instance` is refused with: the instance that failed names itself, the root does
+/// not have to.
+fn blamed(instance: &str, message: &str) -> String {
+    match instance.is_empty() {
+        true => message.to_owned(),
+        false => format!("Component {instance}: {message}"),
+    }
+}
+
+fn instance_state(runtime: &Runtime, path: &str) -> Value {
+    match path.is_empty() {
+        true => runtime.state_json().expect("root state"),
+        false => child_state(runtime, path),
+    }
+}
+
+/// The state of every instance of the screen, root first: what a refused completion may not move.
+fn screen_states(runtime: &Runtime) -> Vec<Value> {
+    let mut states = vec![runtime.state_json().expect("root state")];
+    states.extend(
+        runtime
+            .components
+            .values()
+            .map(|instance| instance.state_json().expect("a child state")),
+    );
+    states
+}
+
+/// Tell the completion handlers of `path` to fail: `before` throws on arrival, `after` throws
+/// once it has already written and announced, `fat` grows the state past a megabyte.
+fn arm_failure(runtime: &mut Runtime, path: &str, how: &str) {
+    runtime
+        .dispatch(&target_of(path, "arm"), json!({"value": how}))
+        .unwrap_or_else(|e| panic!("arming {path} with {how}: {e}"));
+}
+
+/// Queue one effect of `channel` in `path` and return the id the host has to answer with. The
+/// effect names the instance it has to come back to, and the root's names none.
+fn queue_effect(runtime: &mut Runtime, path: &str, channel: &Channel) -> u64 {
+    runtime
+        .dispatch(&target_of(path, channel.button), json!({}))
+        .unwrap_or_else(|e| panic!("{path} {}: {e}", channel.landed));
+    let effects = runtime.take_effects();
+    assert_eq!(effects.len(), 1, "{path} {}", channel.landed);
+    assert_eq!(
+        effects[0].get("instance").and_then(Value::as_str),
+        (!path.is_empty()).then_some(path),
+        "{path} {}",
+        channel.landed
+    );
+    effects[0]["id"].as_u64().expect("an effect id")
+}
+
+/// 正常: the response reaches the instance that asked, the screen counts one step, and the only
+/// other instance that moves is the parent the child announced to.
+fn grid_normal(channel: &Channel) {
+    for path in ["", "a", "a/c"] {
+        let label = format!("{path} {}", channel.landed);
+        let mut runtime = routing("on_done");
+        let id = queue_effect(&mut runtime, path, channel);
+        let revision = runtime.revision;
+        runtime
+            .complete(path, (channel.make)(id))
+            .unwrap_or_else(|e| panic!("{label}: {e}"));
+        assert_eq!(
+            instance_state(&runtime, path)["last"],
+            json!(channel.landed),
+            "{label}"
+        );
+        assert_eq!(runtime.revision, revision + 1, "{label}");
+        // A child announces what arrived to the parent holding it; nobody else is told.
+        let heard = match path {
+            "" => json!(""),
+            "a" => json!(format!("a:{}", channel.landed)),
+            _ => json!(format!("c:{}", channel.landed)),
+        };
+        let parent = match path {
+            "a/c" => "a",
+            _ => "",
+        };
+        assert_eq!(instance_state(&runtime, parent)["notice"], heard, "{label}");
+        for other in ["", "a", "a/c"].iter().filter(|other| **other != path) {
+            assert_eq!(
+                instance_state(&runtime, other)["last"],
+                json!(""),
+                "{label}"
+            );
+        }
+    }
+}
+
+/// handler 失敗: the instance that threw names itself, no instance moves, and the request is
+/// gone all the same — except on the one channel that does not consume it.
+fn grid_handler_failure(channel: &Channel) {
+    for path in ["", "a", "a/c"] {
+        let label = format!("{path} {}", channel.landed);
+        let mut runtime = routing("on_done");
+        arm_failure(&mut runtime, path, "before");
+        let id = queue_effect(&mut runtime, path, channel);
+        let before = screen_states(&runtime);
+        let revision = runtime.revision;
+        let error = complete_error(&mut runtime, path, (channel.make)(id));
+        assert!(error.starts_with(&blamed(path, "")), "{label}: {error}");
+        assert!(error.contains("the handler refused"), "{label}: {error}");
+        assert_eq!(screen_states(&runtime), before, "{label}");
+        assert_eq!(runtime.revision, revision, "{label}");
+        let again = complete_error(&mut runtime, path, (channel.make)(id));
+        match channel.consuming {
+            true => assert_eq!(again, blamed(path, channel.unknown), "{label}"),
+            // Progress reports leave the request pending, so this one arrives again — and is
+            // refused by the handler, not by the channel.
+            false => assert!(again.contains("the handler refused"), "{label}: {again}"),
+        }
+    }
+}
+
+/// 不正な `instance`: a path that names no instance of this screen reaches nothing and swallows
+/// nothing. `a//c` is a path no instance can have, `zzz` one no instance has here.
+fn grid_bad_instance(channel: &Channel) {
+    let label = channel.landed;
+    let mut runtime = routing("on_done");
+    let id = queue_effect(&mut runtime, "a", channel);
+    let before = screen_states(&runtime);
+    let revision = runtime.revision;
+    for bad in ["zzz", "a//c"] {
+        assert_eq!(
+            complete_error(&mut runtime, bad, (channel.make)(id)),
+            format!("Unknown component instance: {bad}"),
+            "{label} {bad}"
+        );
+    }
+    assert_eq!(screen_states(&runtime), before, "{label}");
+    assert_eq!(runtime.revision, revision, "{label}");
+    runtime
+        .complete("a", (channel.make)(id))
+        .unwrap_or_else(|e| panic!("{label} after the bad paths: {e}"));
+    assert_eq!(child_state(&runtime, "a")["last"], json!(label), "{label}");
+}
+
+/// 他 Instance の id: the id of one instance, addressed to another. The other has nothing with
+/// that id, and the one that asked still gets its answer.
+fn grid_foreign_id(channel: &Channel) {
+    let label = channel.landed;
+    let mut runtime = routing("on_done");
+    let id = queue_effect(&mut runtime, "a", channel);
+    let before = screen_states(&runtime);
+    let revision = runtime.revision;
+    for other in ["", "a/c"] {
+        assert_eq!(
+            complete_error(&mut runtime, other, (channel.make)(id)),
+            blamed(other, channel.unknown),
+            "{label} {other}"
+        );
+    }
+    assert_eq!(screen_states(&runtime), before, "{label}");
+    assert_eq!(runtime.revision, revision, "{label}");
+    runtime
+        .complete("a", (channel.make)(id))
+        .unwrap_or_else(|e| panic!("{label} after the foreign ids: {e}"));
+    assert_eq!(child_state(&runtime, "a")["last"], json!(label), "{label}");
+}
+
+/// 重複: the same response, twice. The second one is refused on every channel that consumed the
+/// request, and delivered again on the one that did not.
+fn grid_repeated(channel: &Channel) {
+    let label = channel.landed;
+    let mut runtime = routing("on_done");
+    let id = queue_effect(&mut runtime, "a", channel);
+    runtime
+        .complete("a", (channel.make)(id))
+        .unwrap_or_else(|e| panic!("{label}: {e}"));
+    let revision = runtime.revision;
+    match channel.consuming {
+        true => {
+            assert_eq!(
+                complete_error(&mut runtime, "a", (channel.make)(id)),
+                blamed("a", channel.unknown),
+                "{label}"
+            );
+            assert_eq!(runtime.revision, revision, "{label}");
+        }
+        false => {
+            runtime
+                .complete("a", (channel.make)(id))
+                .unwrap_or_else(|e| panic!("{label} twice: {e}"));
+            assert_eq!(runtime.revision, revision + 1, "{label}");
+        }
+    }
+}
+
+/// `instance` 省略: the id of a child, sent back to nobody. The root answers for itself, so it
+/// looks the id up among its own requests — and finds nothing, unless it queued one of its own.
+fn grid_without_an_instance(channel: &Channel) {
+    let label = channel.landed;
+    let mut runtime = routing("on_done");
+    let id = queue_effect(&mut runtime, "a", channel);
+    assert_eq!(
+        complete_error(&mut runtime, "", (channel.make)(id)),
+        channel.unknown,
+        "{label}"
+    );
+    if !channel.per_instance_ids {
+        return;
+    }
+    // The root numbers its own requests from one as well, so the same id is its own here.
+    let own = queue_effect(&mut runtime, "", channel);
+    assert_eq!(own, id, "{label}");
+    runtime
+        .complete("", (channel.make)(own))
+        .unwrap_or_else(|e| panic!("{label} of the root: {e}"));
+    assert_eq!(
+        runtime.state_json().expect("root state")["last"],
+        json!(label),
+        "{label}"
+    );
+    // The request of the child is still waiting for an answer addressed to it.
+    assert_eq!(child_state(&runtime, "a")["last"], json!(""), "{label}");
+}
+
+#[test]
+fn completion_grid() {
+    for channel in completion_cases() {
+        grid_normal(&channel);
+        grid_handler_failure(&channel);
+        grid_bad_instance(&channel);
+        grid_foreign_id(&channel);
+        grid_repeated(&channel);
+        grid_without_an_instance(&channel);
+    }
+}
+
+#[test]
+fn the_dispatch_entrance_of_the_grid_names_its_instance_in_the_item_id() {
+    // An event carries no instance: the prefix of the itemId is the whole of the addressing.
+    let http = &completion_cases()[0];
+    for path in ["", "a", "a/c"] {
+        let mut runtime = routing("on_done");
+        queue_effect(&mut runtime, path, http);
+        assert_eq!(runtime.revision, 1, "{path}");
+
+        let mut runtime = routing("on_done");
+        let before = screen_states(&runtime);
+        let error = dispatch_error(&mut runtime, &target_of(path, "fire_fail"), json!({}));
+        assert!(error.starts_with(&blamed(path, "")), "{path}: {error}");
+        assert!(error.contains("the handler refused"), "{path}: {error}");
+        assert_eq!(screen_states(&runtime), before, "{path}");
+        assert_eq!(runtime.revision, 0, "{path}");
+        assert!(runtime.take_effects().is_empty(), "{path}");
+    }
+    // A prefix that names no instance is an itemId that does not exist, not an instance error.
+    let mut runtime = routing("on_done");
+    for target in ["zzz/fire_http", "a//c/fire_http"] {
+        assert_eq!(
+            dispatch_error(&mut runtime, target, json!({})),
+            format!("Unknown itemId: {target}")
+        );
+    }
+    assert_eq!(runtime.revision, 0);
+}
+
+/// `EchoResponse { name: "太郎", sequence_id: 7, payload: [1, 2, 3] }` — the 15 bytes a
+/// successful RPC completion has to carry: field 1 as a six-byte string, field 2 as a varint,
+/// field 3 as three bytes. The same message `scripts/compare-engine-behavior.mjs` encodes.
+const ECHO_RESPONSE: [u8; 15] = [
+    0x0a, 0x06, 0xe5, 0xa4, 0xaa, 0xe9, 0x83, 0x8e, 0x10, 0x07, 0x1a, 0x03, 0x01, 0x02, 0x03,
+];
+
+#[test]
+fn a_completion_that_carries_a_binary_buffer_reaches_the_instance_that_asked() {
+    for path in ["", "a", "a/c"] {
+        let mut runtime = routing("on_done");
+        // The decodable response message: the one RPC completion that reaches a handler.
+        runtime
+            .dispatch(&target_of(path, "fire_rpc"), json!({}))
+            .unwrap_or_else(|e| panic!("{path} rpc: {e}"));
+        let id = runtime.take_effects()[0]["id"]
+            .as_u64()
+            .expect("an effect id");
+        let buffer = buffers::put(ECHO_RESPONSE.to_vec()).expect("a response buffer");
+        runtime
+            .complete(
+                path,
+                Completion::Rpc {
+                    id,
+                    response: answered(),
+                    buffer: Some(buffer),
+                },
+            )
+            .unwrap_or_else(|e| panic!("{path} rpc: {e}"));
+        assert_eq!(
+            instance_state(&runtime, path)["last"],
+            json!("rpc"),
+            "{path}"
+        );
+
+        // `read_bytes` is the file completion that hands the handler the bytes it read.
+        runtime
+            .dispatch(&target_of(path, "fire_file_read"), json!({}))
+            .unwrap_or_else(|e| panic!("{path} read_bytes: {e}"));
+        let id = runtime.take_effects()[0]["id"]
+            .as_u64()
+            .expect("an effect id");
+        let buffer = buffers::put(vec![1, 2, 3]).expect("a file buffer");
+        runtime
+            .complete(
+                path,
+                Completion::File {
+                    id,
+                    response: answered(),
+                    buffer: Some(buffer),
+                },
+            )
+            .unwrap_or_else(|e| panic!("{path} read_bytes: {e}"));
+        assert_eq!(
+            instance_state(&runtime, path)["last"],
+            json!("file"),
+            "{path}"
+        );
+    }
+}
+
+#[test]
+fn a_response_that_arrives_after_the_screen_was_rebuilt_reaches_nothing() {
+    let mut runtime = routing("on_done");
+    runtime
+        .dispatch("a/fire_http", json!({}))
+        .expect("the child button");
+    let id = runtime.take_effects()[0]["id"]
+        .as_u64()
+        .expect("an effect id");
+    drop(runtime);
+
+    // The host still holds the id the old screen handed out; the new one never did.
+    let mut runtime = routing("on_done");
+    let before = screen_states(&runtime);
+    assert_eq!(
+        complete_error(
+            &mut runtime,
+            "a",
+            Completion::Http {
+                id,
+                response: answered()
+            }
+        ),
+        "Component a: Unknown or completed HTTP request"
+    );
+    assert_eq!(screen_states(&runtime), before);
+    assert_eq!(runtime.revision, 0);
+}
+
+#[test]
+fn a_completion_that_fails_after_it_announced_leaves_no_trace_in_its_parent() {
+    let mut runtime = routing("on_done");
+    arm_failure(&mut runtime, "a", "after");
+    runtime
+        .dispatch("a/fire_http", json!({}))
+        .expect("the child button");
+    let id = runtime.take_effects()[0]["id"]
+        .as_u64()
+        .expect("an effect id");
+    let before = screen_states(&runtime);
+    let revision = runtime.revision;
+    let error = complete_error(
+        &mut runtime,
+        "a",
+        Completion::Http {
+            id,
+            response: answered(),
+        },
+    );
+    assert!(error.contains("the handler refused"), "{error}");
+    // The announcement reached the listener of the root before the handler threw; neither the
+    // instance nor its parent kept any of it.
+    assert_eq!(screen_states(&runtime), before);
+    assert_eq!(runtime.revision, revision);
+
+    // Nothing is poisoned: the next response of another channel lands and is announced.
+    arm_failure(&mut runtime, "a", "");
+    runtime
+        .dispatch("a/fire_host", json!({}))
+        .expect("the child button");
+    let id = runtime.take_effects()[0]["id"]
+        .as_u64()
+        .expect("an effect id");
+    runtime
+        .complete(
+            "a",
+            Completion::Host {
+                id,
+                response: json!({"ok": true, "data": null, "error": null}),
+            },
+        )
+        .expect("the next completion of the child");
+    assert_eq!(child_state(&runtime, "a")["last"], json!("host"));
+    assert_eq!(
+        runtime.state_json().expect("root state")["notice"],
+        json!("a:host")
+    );
+}
+
+/// The routing root again, holding `loud.json` as `a`: a child that announces from `config`,
+/// bound to the key the completion handlers of the root write.
+fn routing_into_a_loud_child() -> Runtime {
+    let root = effecting(
+        "parent",
+        json!({"loud": {"url": "loud.json"}}),
+        json!([component("loud", "a", json!({"query": {"bind": "last"}}))]),
+    );
+    Runtime::load_with_bundle(
+        root,
+        &effecting_script(false),
+        descriptor_set(),
+        None,
+        HashMap::from([(
+            "loud.json".to_owned(),
+            Bundle {
+                package: emitting("loud"),
+                script: LOUD_SCRIPT.to_owned(),
+                descriptors: HashMap::new(),
+            },
+        )]),
+        |_| {},
+    )
+    .expect("the screen holding a loud child")
+}
+
+#[test]
+fn a_completion_that_reconfigures_a_child_cannot_make_it_announce() {
+    let mut runtime = routing_into_a_loud_child();
+    runtime
+        .dispatch("fire_http", json!({}))
+        .expect("the root button");
+    let id = runtime.take_effects()[0]["id"]
+        .as_u64()
+        .expect("an effect id");
+    let before = screen_states(&runtime);
+    let revision = runtime.revision;
+    assert_eq!(
+        complete_error(
+            &mut runtime,
+            "",
+            Completion::Http {
+                id,
+                response: answered()
+            }
+        ),
+        "Component a: emit is not available in config"
+    );
+    assert_eq!(screen_states(&runtime), before);
+    assert_eq!(runtime.revision, revision);
+}
+
+/// Rhai counts the strings of a value together, so `set_max_string_size(100_000)`
+/// (`instance.rs:114`) refuses a state this big before `check_state` ever sees it: the megabyte
+/// guard of `lib.rs` is the second line of defence, not the first. Either way the completion of
+/// a child that grows without bound is refused in that child's name and moves no instance.
+#[test]
+fn a_completion_that_grows_the_state_without_bound_moves_no_instance() {
+    let mut runtime = routing("on_done");
+    arm_failure(&mut runtime, "a", "fat");
+    runtime
+        .dispatch("a/fire_http", json!({}))
+        .expect("the child button");
+    let id = runtime.take_effects()[0]["id"]
+        .as_u64()
+        .expect("an effect id");
+    let before = screen_states(&runtime);
+    let revision = runtime.revision;
+    assert_eq!(
+        complete_error(
+            &mut runtime,
+            "a",
+            Completion::Http {
+                id,
+                response: answered()
+            }
+        ),
+        "Component a: middle.rhai / HTTP r1 / done_http: Length of string too large"
+    );
+    assert_eq!(screen_states(&runtime), before);
+    assert_eq!(runtime.revision, revision);
 }
