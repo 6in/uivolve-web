@@ -46,6 +46,22 @@ export const MUTATIONS = [
     to: "            if true || config == resolve(&committed)? {",
     diff: "order-dashboard の layout:800:filtered の行数",
   },
+  {
+    name: "instance-dropped",
+    probe: "composition",
+    file: "engine/src/lib.rs",
+    from: '                    object.insert("instance".to_owned(), json!(path));',
+    to: "                    object.remove(path.as_str());",
+    diff: "parts-lab の event:products/loadProducts の effects[*].instance",
+  },
+  {
+    name: "completion-routed-to-root",
+    probe: "composition",
+    file: "engine/src/lib.rs",
+    from: "                let target = match instance.is_empty() {",
+    to: "                let target = match true {",
+    diff: "parts-lab の http_result:products が Unknown or completed",
+  },
 ];
 
 function parseArgs(argv) {

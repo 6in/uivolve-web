@@ -2,8 +2,11 @@
 // (scripts/compare-engine-behavior.mjs) skips every screen that declares `components`, because a
 // base build from before composition cannot load one at all -- there is nothing to compare against.
 // This script covers that gap by asserting the composed behavior of a single WASM directly: the
-// shipped order-dashboard demo for the happy path, and inline fixtures for the effect functions
-// a child may now call and the tool surface it still may not publish.
+// shipped order-dashboard demo for the happy path, inline fixtures for the effect functions a
+// child may now call and the tool surface it still may not publish, and the shipped parts-lab
+// demo for the whole effect round trip -- every child effect naming its instance, every
+// completion reaching the instance that asked for it, and every misaddressed completion being
+// refused without moving the screen.
 // usage: bun scripts/probe-composition.mjs --candidate <wasm> [--evidence <json>]
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -13,7 +16,18 @@ import { packageFormat, parsePackage } from "../src/package-format.js";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // Same fixed clock as scripts/compare-engine-behavior.mjs, so both harnesses drive the same day.
 const CLOCK = { nowMs: 1_759_800_000_000, tzOffsetMinutes: 540 };
-const CLOCKED = new Set(["load", "event"]);
+// Completions run handlers too, so they get the same fixed clock as `load` and `event`.
+const CLOCKED = new Set([
+  "load",
+  "event",
+  "http_result",
+  "storage_result",
+  "file_result",
+  "rpc_result",
+  "dialog_result",
+  "host_result",
+  "host_progress",
+]);
 const DEMO_PARENT = "order-dashboard.json";
 const DEMO_CHILD = "parts/order-list.json";
 
@@ -102,6 +116,35 @@ function composedKeys(response) {
 function rowCount(response, prefix) {
   return widgetKeys(response).filter((key) => key.startsWith(`${prefix}orders:row:`)).length;
 }
+// A refused completion has to leave the screen exactly where it was, which the next layout of the
+// same width says in full: byte-for-byte the same response as the layout before the refusal.
+function sameText(context, label, reference) {
+  const actual = context.text(label);
+  const expected = context.text(reference);
+  if (actual === expected) return [];
+  return [
+    `${label} の応答が ${reference} と一致しない（${actual?.length} / ${expected?.length} バイト）`,
+  ];
+}
+// The one effect of `kind` the instance queued, so a step can both assert it and keep its id for
+// the completion that follows.
+function oneEffect(response, kind, instance) {
+  const effects = response?.data?.effects ?? [];
+  const found = effects.filter(
+    (effect) => effect.kind === kind && (effect.instance ?? "") === instance,
+  );
+  if (found.length === 1) return { effect: found[0], problems: [] };
+  return {
+    problems: [
+      `${kind} の effect（instance: ${JSON.stringify(instance)}）が ${found.length} 件: ${JSON.stringify(effects)}`,
+    ],
+  };
+}
+function capture(response, kind, instance, bag, key) {
+  const { effect, problems } = oneEffect(response, kind, instance);
+  if (effect) bag[key] = effect.id;
+  return problems;
+}
 
 // ---------------------------------------------------------------- sequences
 
@@ -131,6 +174,11 @@ function layoutStep(label, width, expect) {
 }
 function eventStep(label, target, payload, expect) {
   return { label, expect, build: () => ({ op: "event", target, payload }) };
+}
+// Completions carry ids the earlier steps read off the effects, so the body is built when the step
+// runs rather than when the sequence is assembled.
+function opStep(label, build, expect) {
+  return { label, expect, build };
 }
 
 // The shipped demo: a parent handing one part two configurations and listening to both.
@@ -272,6 +320,248 @@ function effectSequences() {
   ];
 }
 
+// ---------------------------------------------------------------- parts-lab
+
+const LAB_PARENT = "parts-lab.json";
+// The declared urls, which the bundle has to be keyed by.
+const LAB_CHILDREN = {
+  products: "http-grid.json",
+  note: "parts/note-pad.json",
+  approval: "parts/approval.json",
+};
+const LAB_KEYS = ["products/productsGrid:header", "note/text", "approval/ask"];
+const PRODUCTS = [{ id: 1, name: "x", price: 1, stock: 1 }];
+// One byte past the ABI limit, so the request is refused before anything is parsed.
+const OVER_2MB = "x".repeat(2_000_001);
+
+function labKeys(response) {
+  const keys = widgetKeys(response);
+  const problems = [];
+  if (new Set(keys).size !== keys.length) problems.push(`key が重複している: ${keys.length} 件`);
+  for (const key of LAB_KEYS) if (!keys.includes(key)) problems.push(`key ${key} が無い`);
+  return problems;
+}
+function labRows(response) {
+  return widgetKeys(response).filter((key) => key.startsWith("products/productsGrid:row:")).length;
+}
+// Every way of addressing a completion at the wrong instance, each one refused with its own
+// message and each one leaving the screen untouched.
+function misaddressed(ids) {
+  return [
+    {
+      label: "http_result:instance-omitted",
+      body: () => ({ op: "http_result", id: ids.products, ok: true, data: PRODUCTS }),
+      error: "Unknown or completed HTTP request",
+    },
+    {
+      label: "http_result:instance-unknown",
+      body: () => ({
+        op: "http_result",
+        id: ids.products,
+        instance: "nope",
+        ok: true,
+        data: PRODUCTS,
+      }),
+      error: "Unknown component instance: nope",
+    },
+    {
+      label: "http_result:instance-empty",
+      body: () => ({ op: "http_result", id: ids.products, instance: "", ok: true, data: PRODUCTS }),
+      error: "Invalid component instance",
+    },
+    {
+      label: "http_result:instance-null",
+      body: () => ({
+        op: "http_result",
+        id: ids.products,
+        instance: null,
+        ok: true,
+        data: PRODUCTS,
+      }),
+      error: "Invalid component instance",
+    },
+    {
+      label: "http_result:consumed",
+      body: () => ({
+        op: "http_result",
+        id: ids.products,
+        instance: "products",
+        ok: true,
+        data: PRODUCTS,
+      }),
+      error: "Component products: Unknown or completed HTTP request",
+    },
+  ];
+}
+
+// The shipped parts-lab demo: three parts that each queue their own effects and are each handed
+// their own completions back.
+function partsLabSequence() {
+  const parent = readPackage(LAB_PARENT);
+  const bundle = {};
+  for (const [name, url] of Object.entries(LAB_CHILDREN)) {
+    const declared = parent.pkg.components?.[name]?.url;
+    if (declared !== url)
+      fail(`${LAB_PARENT} の ${name} が ${url} を宣言していません: ${JSON.stringify(declared)}`);
+    const child = readPackage(url);
+    bundle[url] = { package: child.pkg, script: child.script };
+  }
+  // Ids and revisions the later steps read, filled in by the steps that see them first.
+  const ids = {};
+  const steps = [
+    // The memo part reads its own storage in `init`, so the load already carries a child effect.
+    loadStep("load", parent, bundle, (r) => [
+      ...isOk(r),
+      ...equals(r.data?.revision, 0, "revision"),
+      ...capture(r, "storage", "note", ids, "memoRead"),
+    ]),
+    layoutStep("layout:800", 800, (r) => [...isOk(r), ...labKeys(r)]),
+    eventStep("event:products/loadProducts", "products/loadProducts", {}, (r) => [
+      ...isOk(r),
+      ...equals(r.data?.revision, 1, "revision"),
+      ...capture(r, "http", "products", ids, "products"),
+    ]),
+    opStep(
+      "http_result:products",
+      () => ({
+        op: "http_result",
+        id: ids.products,
+        instance: "products",
+        ok: true,
+        data: PRODUCTS,
+      }),
+      (r) => [...isOk(r), ...equals(r.data?.revision, 2, "revision")],
+    ),
+    layoutStep("layout:800:rows", 800, (r) => [
+      ...isOk(r),
+      ...labKeys(r),
+      ...equals(labRows(r), PRODUCTS.length, "products/productsGrid:row:* の件数"),
+    ]),
+  ];
+  for (const bad of misaddressed(ids)) {
+    const after = `${bad.label}:layout`;
+    steps.push(
+      opStep(bad.label, bad.body, (r) => isRefused(r, [bad.error])),
+      layoutStep(after, 800, (r, context) => [
+        ...isOk(r),
+        ...sameText(context, after, "layout:800:rows"),
+      ]),
+    );
+  }
+  steps.push(
+    // The read `init` queued has to land before the part may queue the write of the same name.
+    opStep(
+      "storage_result:note:init",
+      () => ({
+        op: "storage_result",
+        id: ids.memoRead,
+        instance: "note",
+        ok: true,
+        data: null,
+      }),
+      isOk,
+    ),
+    // The memo part saves into its own scope and tells the parent only that it is done.
+    eventStep("event:note/text", "note/text", { value: "打ち合わせ" }, isOk),
+    eventStep("event:note/save", "note/save", {}, (r) => {
+      ids.saved = r?.data?.revision;
+      return [...isOk(r), ...capture(r, "storage", "note", ids, "memoWrite")];
+    }),
+    opStep(
+      "storage_result:note",
+      () => ({
+        op: "storage_result",
+        id: ids.memoWrite,
+        instance: "note",
+        ok: true,
+        data: null,
+      }),
+      (r) => [
+        ...isOk(r),
+        ...equals(r.data?.revision, ids.saved + 1, "revision"),
+        ...hasAll(r.data?.state?.notice, ["メモを保存しました", "打ち合わせ"], "state.notice"),
+      ],
+    ),
+    // A dialog is screen-wide: the effect names the part that asked, and the answer runs there.
+    eventStep("event:approval/ask", "approval/ask", {}, (r) => [
+      ...isOk(r),
+      ...capture(r, "dialog", "approval", ids, "dialog"),
+    ]),
+    opStep(
+      "event::dialog:ok",
+      () => ({ op: "event", target: `:dialog:${ids.dialog}:ok`, payload: {} }),
+      (r) => [...isOk(r), ...hasAll(r.data?.state?.notice, ["承認されました"], "state.notice")],
+    ),
+    eventStep("event:approval/ask:again", "approval/ask", {}, (r) => [
+      ...isOk(r),
+      ...capture(r, "dialog", "approval", ids, "dialogAgain"),
+    ]),
+    layoutStep("layout:800:asked", 800, (r) => [...isOk(r), ...labKeys(r)]),
+    // Naming the wrong instance may not swallow somebody else's dialog, so it stays pending.
+    opStep(
+      "dialog_result:instance-omitted",
+      () => ({ op: "dialog_result", id: ids.dialogAgain, ok: true, data: true }),
+      (r) => isRefused(r, ["Unknown or completed dialog request"]),
+    ),
+    layoutStep("layout:800:asked:after", 800, (r, context) => [
+      ...isOk(r),
+      ...sameText(context, "layout:800:asked:after", "layout:800:asked"),
+    ]),
+    opStep(
+      "dialog_result:approval",
+      () => ({
+        op: "dialog_result",
+        id: ids.dialogAgain,
+        instance: "approval",
+        ok: true,
+        data: true,
+      }),
+      (r) => [...isOk(r), ...hasAll(r.data?.state?.notice, ["承認されました"], "state.notice")],
+    ),
+    layoutStep("layout:800:approved", 800, (r) => [...isOk(r), ...labKeys(r)]),
+    opStep(
+      "http_result:over-2mb",
+      () => ({
+        op: "http_result",
+        id: ids.products,
+        instance: "products",
+        ok: true,
+        data: OVER_2MB,
+      }),
+      (r) => isRefused(r, ["Request exceeds 2 MB"]),
+    ),
+    layoutStep("layout:800:over-2mb:after", 800, (r, context) => [
+      ...isOk(r),
+      ...sameText(context, "layout:800:over-2mb:after", "layout:800:approved"),
+    ]),
+    // A completion that arrives after the screen was replaced belongs to nobody.
+    eventStep("event:products/loadProducts:again", "products/loadProducts", {}, (r) => [
+      ...isOk(r),
+      ...capture(r, "http", "products", ids, "stale"),
+    ]),
+    loadStep("load:reloaded", parent, bundle, (r) => [
+      ...isOk(r),
+      ...equals(r.data?.revision, 0, "revision"),
+    ]),
+    layoutStep("layout:800:reloaded", 800, (r) => [...isOk(r), ...labKeys(r)]),
+    opStep(
+      "http_result:stale",
+      () => ({ op: "http_result", id: ids.stale, instance: "products", ok: true, data: PRODUCTS }),
+      (r) => isRefused(r, ["Component products: Unknown or completed HTTP request"]),
+    ),
+    layoutStep("layout:800:reloaded:after", 800, (r, context) => [
+      ...isOk(r),
+      ...sameText(context, "layout:800:reloaded:after", "layout:800:reloaded"),
+    ]),
+    // The refusal left the reloaded screen at revision 0, which the next event says out loud.
+    eventStep("event:products/loadProducts:reloaded", "products/loadProducts", {}, (r) => [
+      ...isOk(r),
+      ...equals(r.data?.revision, 1, "revision"),
+    ]),
+  );
+  return { id: "parts-lab", steps };
+}
+
 // ---------------------------------------------------------------- run
 
 async function runSequence(module_, sequence) {
@@ -300,7 +590,7 @@ async function runSequence(module_, sequence) {
 const options = parseArguments(process.argv.slice(2));
 const started = Date.now();
 const module_ = await WebAssembly.compile(readFileSync(options.candidate));
-const sequences = [demoSequence(), ...effectSequences()];
+const sequences = [demoSequence(), ...effectSequences(), partsLabSequence()];
 const records = [];
 for (const sequence of sequences) records.push(...(await runSequence(module_, sequence)));
 
