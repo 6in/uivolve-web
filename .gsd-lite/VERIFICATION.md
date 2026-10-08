@@ -96,6 +96,8 @@ CRITICAL / HIGH / MEDIUM なし。`instance` は `BTreeMap` のキーとして�
 5. **`http / storage-effects.js` で配送先が無いとき WASM の pending が残る**: `onError` だけで完了を送らないので、その id は次の `load` / `compile` の `reset*` まで pending のまま。表が stale になる経路は `compile` の成功後にしか無く、そのとき世代が進んで古い effect は捨てられるので実害なし
 6. **`docs/components.md:193` の「空白が 2 つ並ぶ」**: root 由来の effect で `配送先が未登録です` が出ることは `reset` 直後には無い（`""` は常に表にある）ので、実際には子の path だけが入る。文書の注記は無害
 
-## リモート運用（合格時に行う）
+## リモート運用（round 2 で実施）
 
-- `origin` = `https://github.com/6in/uivolve-web.git`（github.com）。`gh` は認証済み（account `6in`）。合格ラウンドで `git push -u origin gsd-lite/component-effects` → `gh pr create --base main --head gsd-lite/component-effects --body-file <scratch>` を行い、URL をここと PROGRESS に記録する
+- `origin` = `https://github.com/6in/uivolve-web.git`（github.com）。`gh` は認証済み（account `6in`）
+- turn 16: `git push -u origin gsd-lite/component-effects`（新規ブランチ）→ `gh pr create --base main --head gsd-lite/component-effects --body-file .gsd-lite/logs/component-effects/scratch/turn-016-pr-body.md`
+- **PR: https://github.com/6in/uivolve-web/pull/3**（base `main` = `49c8183`、origin/main と一致を push 前に確認）。ローカルマージはしない。マージは人間 / CI
