@@ -194,13 +194,16 @@ bun scripts/probe-composition.mjs --candidate public/engine.wasm   # 候補の�
     - A: `docs/components.md` の書き換え（対象: `docs/components.md`）
     - B: 他 8 文書の追従（対象: `docs/components-plan.md`, `docs/architecture.md`, `docs/host-adapters-design.md`, `docs/tutorial-http-grid.md`, `docs/platform-features.md`, `docs/files-cache-rpc.md`, `docs/http-adapter.md`, `docs/dialogs.md`）
 
-- [ ] T11: 最終判定と受け入れ基準の総点検
+- [x] T11: 最終判定と受け入れ基準の総点検
+  - **PLAN 訂正（T11 で実測）**: ignorePatterns は `.gsd-lite/**` ではなく **`.gsd-lite/state.json`** に絞る。`.gsd-lite/**` を丸ごと除外すると下の「`.gsd-lite/*.md` も `bunx vp fmt` 済み」（受け入れ 9）が機械的に確かめられなくなる（`bunx vp fmt .gsd-lite/*.md` が `All matched files may have been excluded by ignore rules` で 0 件になる）。`state.json` だけ除けば `bun run check` は整形 280 files で green かつ `.gsd-lite/` の 47 ファイルが整形対象に入る。`lint` 側は `.claude/**` だけでよい（`.gsd-lite/` に JS が無い）
+  - **PLAN 訂正（T11 で実測）**: 下の「`git diff main -- engine/src/lib.rs | grep -E '^-.*pub fn'` が 0 行」は **2 行**（`complete_storage` / `complete_dialog` の `mut response` を落とした分だけ）。T3 の PLAN 訂正と追従先チェックリスト 4 行目と同じ根拠で、型・引数・呼び出し側は不変なので受け入れ 7 は満たす
+  - **PLAN 訂正（T11 で実測）**: 対象に `vite.config.js` を追加（「コードの変更は原則なし」の例外。下の完了基準が推奨している変更そのもの）
   - 完了基準:
     - `bun scripts/verify-instance-refactor.mjs` が OK（所要の表を PROGRESS に写す）。**前提**: `BASE_CHECKS`（`verify-instance-refactor.mjs:19-26`）に `bun run check` が入っているので、上の「検証コマンド」の既存の赤 4 件を先に消す必要がある。推奨は `vite.config.js:17-20` の `fmt.ignorePatterns` / `lint.ignorePatterns` に `.gsd-lite/**` と `.claude/**`（ワークフロー運用ファイル。製品コードではない）を足すこと。`state.json` はループが毎ターン `JSON.stringify(…, 2)` で書き直すので個別整形では直らない（T1 で実測。PLAN 訂正）
     - 受け入れ基準 1〜9 それぞれに「どのコマンド / テスト名で確かめたか」を 1 行ずつ PROGRESS に書く。受け入れ 4 の直交表（T4）の各行に対応する `fn` 名、受け入れ 5 の 5 項目（reload 後の遅延完了 / 2 MB / scope 80 バイト / emit を伴う完了の失敗 / trap 0）に対応するテスト名・probe のラベルを表にする（対応先の無い項目が 0 件）。RESEARCH §6 の P1〜P14 についても担当テスト名を 1 行ずつ
     - `git diff main -- engine/src/lib.rs | grep -E '^-.*pub fn'` が 0 行（受け入れ 7）。`abi.rs` の op 名 11 個が不変（`git diff main -- engine/src/abi.rs` に `"load"` 等の文字列の削除が無い）
     - `bun run fmt` 相当（`bunx vp fmt` / `cargo fmt`）済みで `bunx vp check <変更したファイル>` / `cargo fmt … --check` green、`.gsd-lite/*.md` も `bunx vp fmt` 済み、`git status` がクリーン
-  - 対象: `.gsd-lite/PROGRESS.md`（コードの変更は原則なし。失敗があればそのタスクに戻す）
+  - 対象: `.gsd-lite/PROGRESS.md`, `vite.config.js`（コードの変更は原則なし。失敗があればそのタスクに戻す）
   - 依存: T10
   - 並列サブ作業: なし
 
