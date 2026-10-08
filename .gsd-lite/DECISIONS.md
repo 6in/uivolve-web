@@ -1,69 +1,98 @@
-# 決定記録 — component-composition
+# 決定記録 — component-effects
 
 ## 前提
 
-- 方式は `docs/components-plan.md` の B 案（エンジン内合成）。本マイルストーンは段階 3（同期のみの合成）に、段階 5 のローダー再帰取得（キャッシュ・manifest を除く）と段階 6 の契約文書・デモ（WebMCP を除く）を前倒しして含める。ユーザーの要望どおり。
-- 前回振り返りからの採否（ユーザー指定）: 照合列を PLAN に固定する前に base WASM へ 1 度流す / サブエージェント依頼文に `git checkout` 系禁止 / research・plan も `bunx vp fmt <path>` / `rpc_result` の成功経路を照合列に足す。
+- 前回 component-composition は PR #2 でマージ済み。main（49c8183）= origin/main。前回成果物は `archive/component-composition/` へ退避。
+- 前回 reflect の提案 10 件を読み、スキル修正 7 件と「段階 4 以降の research の入力（残留リスク 1・3・9）」「`components.md:117` への 1 件追加」を本 discuss で扱う。
 
 ## Round 1
 
-### config handler の呼び出し時機
+### マイルストーンの対象
 
-- **採用: 親 handler 直後・同一トランザクション内**。親 handler が返した state を検証した後、bind 値が変わった子だけに `config` を呼び、子 state も検証してから親子を 1 回の commit で確定。失敗したら親子とも変更なし。
-- 却下: 次の layout 前（layout が state を書き換える経路になり「layout は読み取りのみ」が崩れる。WebMCP の state 取得との不整合）。却下: 初回ロード時のみ注入（フィルタ連動のデモが成立しない）。
+- 採用: 段階 4（効果の instance ルーティング）。slug `component-effects`。
+- 却下: 段階 5 ローダー（段階 4 を飛ばすと子が同期のみのまま）/ 段階 6 WebMCP（先にやる動機が薄い）。
 
-### 連鎖の順序
+### スキルの事前編集
 
-- **採用: 深さ優先・一括 commit、`config` からの `emit` は禁止**。子 handler → 集めた emit を親 listener へ順に → 親 state の bind 差分で子の config を順に → すべて検証後に親 → 子の順で代入。`config` 内の `emit` はエラーにしてピンポン連鎖を構造的に封じる（emit 1 段 + config 1 段で深さ上限は不要になるが、設計文書の「連鎖深さ上限 4」は「本構造では 2 段で打ち切り」と読み替えて契約文書に書く）。
-- 却下: config からの emit も許可（深さ 4）。表現力はあるがピンポン検出と順序の説明が要る。却下: emit を次トランザクションへ遅延（「失敗したら何も変わらない」が崩れる）。
-
-### デモの子パッケージ
-
-- **採用: 部品用に別ファイル**（`public/screens/parts/order-list.{json,rhai}`）。既存 22 画面を無改修に保ち、挙動照合の差分 0 を維持する。`public/screens/packages/` は生成物で gitignore のため使わない。
-- 却下: `orders.json` / `orders.rhai` に `config` / `emit` を追加（照合列の orders の応答が変わり、差分 0 の例外定義が要る）。却下: `orders.json` をそのまま子にする（連動・選択通知のデモが成立しない）。
-
-### 子の非同期効果の拒否時点
-
-- **採用: 実行時拒否を必須、load 時検出は可能なら追加**。子 Instance の Rhai engine に効果関数を「子では使えない」エラーを返す形で登録。rhai は `internals` なしでビルドされており `AST::walk` が使えないため、load 時検出は research で feature 追加のコスト（ビルド・WASM サイズ）を確かめて判断する。
-- 却下: load 時の静的検出のみ（動的呼び出しの取りこぼし・feature 追加の不確実性）。却下: 実行時のみ（早期検出がない。ただし採用案の下限として同じ）。
-
-## Round 2
+- 採用: reflect の「スキルを直す」提案のうち主要なものを discuss 中に編集してループ前にコミットする（scratch/ を消さない + `rm -rf` 禁止 / 前ターンのエントリ編集禁止 + `git show HEAD:<path>` / 直交表 / `gh pr create --head` / サブエージェント本数の記載 / Rhai 予約語）。
+- 理由: 前回 PLAN メモだけでは turn 13 で再発した。却下: PLAN メモへの転記だけ。
 
 ### 堅牢性の受け入れ基準
 
-- **採用: 入れる**。R10 として列挙し、plan は初回タスクに含める。verify は違反を差し戻す。
+- 採用: 入れる（R-robust）。非同期の完了経路が増える今回は特に重要。
 
-### 2MB 上限
+### 運用
 
-- **採用: 据え置き、超えたら load エラー**。JS 側で同梱後のサイズを先に検査し、どの子で超えたかを含むエラーで前画面を保つ。デモは数 KB × 3 で余裕。照合列 `abi-errors` の期待値も不変。
-- 却下: 8,000,000 バイトへ引き上げ（`abi.rs` / `engine.js` / 文書 / テスト期待値の変更と WASM メモリの再確認が要る）。却下: 子 1 つあたりの上限を別に設ける（無改修で部品にできる範囲が狭まる）。
+- 採用: 前回と同じ（push + PR、`.gsd-lite/` も PR に含める）。却下: `.gsd-lite/` を別コミットに分ける / ローカルのみ。
 
-### 子 ui の window
+## Round 2
 
-- **採用: 本マイルストーンでは load エラー**。最前面判定と z 順は root の window だけを見ればよく dispatch の変更が小さい。解放は段階 4 以降の課題として `components.md` に記す。既存で該当するのは `components.json` のみ。
-- 却下: 許可してページ全体の z 順に入れる（親子を通した最前面判定と座標変換の実装が要る）。
+### 解禁する効果の種類
 
-### 照合列の拡張
+- 採用: 7 種すべて（http / storage / files / rpc / host / dialog / navigate）。対応する宣言 `requests` / `storage` / `files` / `rpc` / `operations` / `pages` も子で許可する。`webmcp` は段階 6 のまま拒否。
+- 理由: 段階 4 で「子は同期のみ」の制限を一括で外し、段階 5（ローダー）以降は効果の種類を気にしなくてよい状態にする。
+- 補足: dialog のキューは root 1 本のまま（モーダル層は root）、完了ハンドラだけ子へ届ける。navigate は画面全体の遷移（B 案では子だけの遷移は存在しない）。
 
-- **採用: 3 つすべて**。`rpc_result` 成功経路（残留リスク 1）、`handlerNodes` の走査を `menu` / `bbar` / `tbar` / `buttons` へ（残留リスク 2）、新デモ画面を「候補のみ」の列として証跡に残す（次回の base）。拡張列は PLAN 固定前に base WASM へ 1 度流す（前回振り返りの採用）。
+### storage / files の子 scope
+
+- 採用: `<root の id>__<instance パス（`/`を`__` に置換）>`（例 `orders__a__b`）。root は従来どおり `<id>`。storage / files を宣言する子を置くとき、パス上の itemId が `[A-Za-z0-9_-]` に合わないか合成後 80 バイトを超えれば load エラー（Rust と JS の 2 段）。
+- 却下: 種別共有の宣言（`scope: "package"`）を今回入れる（契約とテストが増える。計画の「宣言で選択」は後の段階へ）/ 区切り `-` 1 文字（`a-b`+`c` と `a`+`b-c` が衝突）。
+
+### http effect の `kind`
+
+- 採用: 常に `kind: "http"` を付ける。`compare-engine-behavior.mjs` に「http effect の `kind` だけ無視」する正規化を入れて base との差分 0 を保つ（それ以外のキーは正規化しない）。JS は既に `kind === "http"` を受ける。契約文書（`docs/files-cache-rpc.md` / `http-adapter.md` 等の effect の形）を更新。
+- 却下: 子だけ付ける（非対称）/ 付けない。
+
+### `instance` の形と id の採番
+
+- 採用: effect は子のときだけ `"instance": "<接頭辞付き itemId>"` を持ち root は省略。完了 op（`*_result` / `host_progress`）も子は `instance` 必須、省略 = root。id は Instance ごとの連番のまま。未知の `instance`、他 Instance の id、root に子の id を返す等はエラーで state 不変（R-robust）。
+- 却下: root も `""` で常に出す（既存応答が変わる）/ id を画面全体で一意にする（既存構造と既存画面の id 列が変わる）。
+
+## Round 3
+
+### 子の完了ハンドラの意味論
+
+- 採用: 完了 = 子への dispatch と同じ経路。子の完了ハンドラは emit でき、親の listeners → 親の commit → config の伝播まで 1 commit・revision +1。失敗すれば root と子すべて不変。却下: 子 state だけ更新（emit 不可）。
+
+### 相対 URL の基準
+
+- 採用: 子の `requests` / `rpc` / `pages` / `operations` の URL は、その Instance の宣言 URL（子パッケージ URL）基準で JS が解決する。JS は `effect.instance` から Instance → 宣言 URL を引く。却下: root パッケージ URL 基準（子を別ディレクトリに置くと壊れる）。
+
+### dialog / navigate の細部
+
+- 採用: dialog も他の完了と同じく、子のダイアログは `dialog_result` に `instance` 必須（id は root 採番で一意だがルールを 1 つにする）。navigate は画面全体の遷移で、effect に `instance` を付け URL は子基準。却下: dialog だけ `instance` 任意。
+
+### デモ
+
+- 採用: storage / http / dialog を使う子 3 種をデモに足す（order-dashboard の拡張または新デモ 1 画面は plan が決める）。http の子は既存 `http-grid` を無改修で置く（「既存画面を無改修で部品に」の実証）。probe-composition と Vitest（両レンダラー）で確認。
+- 経緯: 最初の回答が「3 種を足す」と「増やさない」の両方だったため確認し、「3 種を足す」で確定。
+
+## Round 4
+
+### 追加スコープ
+
+- 採用: (1) `components.md:117` の JS 文言列挙に `コンポーネント {名前} の宣言が不正です（url を文字列で指定してください）` を追加（前回残留リスク 9）。(2) layout の子スナップショット（`layout_scope()` の `ui.clone()` + `state_json()`）を revision をキーにキャッシュ（前回残留リスク 1）。(3) `file_bytes` が子で使えることを契約文書に 1 文 + テスト 1 本（前回残留リスク 3）。
+
+### 上限
+
+- 採用: Instance ごと（pending 8 / handler あたり 8 / RPC 定義 8 など、キュー構造のまま）。契約文書に「画面全体では Instance 数 × 上限」と書く。却下: 画面全体の共有上限の追加。
 
 ## 終了シーケンス
 
 - 確定内容サマリー（REQUIREMENTS.md / DECISIONS.md）にユーザーが合意。
-- research の対象: local_projects（検索先 `.`）、official_docs（Rhai の AST 走査と `internals` feature / Engine ごとの関数登録 / `call_fn`、serde の `deny_unknown_fields` と値の形）、similar_oss（ExtJS の xtype / listeners / config の意味論、他の宣言的 UI エンジンの子コンポーネント合成。契約文書の語彙合わせ）。
+- research の対象: local_projects（検索先 `.`。effect / 完了 / scope / HostEffects の実装と段階 3 の決定、前回残留リスク 1・3・9）、official_docs（Rhai の Engine 単位の関数登録と `call_fn`、OPFS のディレクトリ名制約とロック、serde の任意フィールド `skip_serializing_if`）、similar_oss（宣言的 UI エンジンでの子コンポーネントの非同期効果ルーティング（Elm の `Cmd.map` 等）と ID の名前空間）。
 - 実行パターン: 現在の設定を維持。全フェーズ Claude（engine=claude、phase_engines={}）。model は research / plan / verify / reflect = claude-fable-5-1、impl = claude-opus-5。subagents=auto、reflect=true。`gsd-lite-loop.sh --check` は discuss 中に通過（trust 受理済み、allowlist 有効）。
-- リモート運用: 前回と同じ。verify 合格後に `gsd-lite/component-composition` を origin（github と同 URL）へ push して PR を作る。`.gsd-lite/` の管理文書（archive 退避を含む）も PR に含める。却下: archive 退避を別コミットに分ける / ローカルマージのみ。
-- ブランチ: base は `main`（`ef582d5`、github/main と一致、PR #1 マージ済み）。
+- スキル編集: `.claude/skills/gsd-lite-{impl,plan,research,verify,reflect}/SKILL.md` に reflect 提案を反映（scratch/ を消さない + `rm -rf` 禁止、native Read の unchanged → `git show HEAD:<path>`、PROGRESS の前ターン編集禁止と接尾辞禁止、サブエージェント本数の記載、追従先の `rg -l` と直交表、`gh pr create --head --body-file`、Rhai 予約語の 1 行）。discuss スキルは未変更。
+- 却下した reflect 提案（今回は見送り）: verify の F 系完了基準テンプレート（契約文書の文言列挙節への追記）。lean-ctx フックの project root はマイルストーン外。
+- リモート運用: 前回と同じ。verify 合格後に `gsd-lite/component-effects` を origin へ push して PR を作る。`.gsd-lite/` も PR に含める。
+- ブランチ: base は `main`（`49c8183`、origin/main と一致、PR #2 マージ済み）。
+- 起動: discuss のセッションから `setsid` でデタッチ起動し手を離す。
 
 ## discuss 側で確定した細目（ユーザーの明示判断なし。最終サマリーで提示）
 
-- component ノードの許可属性は `xtype / itemId（必須）/ config / listeners / flex / width / visibleBind`。`bind` / `handler` / `items` 等はエラー（子の中身は子 ui が決める）。
-- `config` の値で `{ "bind": "<key>" }`（キーが `bind` 1 つのオブジェクト）だけを親 state 参照とし、それ以外は固定値。`bind` は node の bind と同じ規則（最上位キー、ドットなし）。
-- emit の event map は既存の形を流用: `#{ target: "<component itemId>", action: "<emit 名>", value: <payload> }`。`listeners` に無い emit は無視（ExtJS と同じ）。`init` 中と `config` 中の emit はエラー。
-- `config` handler の引数は `(state, event)`、`event = #{ config: <map> }`。load 時は `state.config` を注入してから `init`（`config` handler は呼ばない。init が `state.config` を読む）。
-- `/` を itemId の予約文字に加える（既存画面・tests に使用例なし）。
-- Instance 数 8 は root を含む総数、深さ 3 は root を 1 と数える。
-- `components` を持つ親の `network-first` は拒否（段階 5 まで）。
-- 子パッケージの `requests` / `storage` / `files` / `rpc` / `pages` / `webmcp` 宣言は load エラー。
-- 用語: 契約文書では「コンポーネント」= components 宣言の画面パッケージ、「ウィジェット（組み込み部品）」= 組み込み xtype。既存文書の「部品」は書き換えない。
-- 新デモ画面は base WASM が load できないので照合列から除外し、Rust 単体テスト / Vitest で検証する。
+- `instance` の値は接頭辞付き itemId（`Runtime.components` のキー）そのもの。root は省略。
+- dialog のキューは root 1 本のまま（`Runtime.dialogs`）。完了ハンドラの実行先だけ Instance へ振る。
+- navigate は画面全体の遷移。子の `pages` 宣言を許し、URL は子パッケージ基準で JS が解決。
+- 子の `window` と `webmcp` の拒否、`network-first` の拒否、エディタの「変更を適用」の制約は段階 3 のまま。
+- scope の規則は契約文書に 1 か所で書き、Rust と JS の規則が一致するテストを置く。
+- 新デモの子 3 種は base WASM が load できないので照合列から除外し、probe / Rust 単体 / Vitest で検証する。
