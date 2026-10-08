@@ -207,6 +207,19 @@ bun scripts/probe-composition.mjs --candidate public/engine.wasm   # 候補の�
   - 依存: T10
   - 並列サブ作業: なし
 
+- [ ] F1: 契約文書の文言列挙の補完（verify round 1 の指摘 2 件。文書のみ。コード・テストは触らない）
+  - 背景: verify round 1（turn 14）はコード・テスト・最終判定・堅牢性格子・セキュリティで差し戻し事由 0 件。残ったのは `docs/components.md` の 2 点で、どちらも R10 / 受け入れ 6（契約文書と実装の一対一）に掛かる
+  - 期待結果（完了基準・確かめ方はこの表だけを参照する）:
+    | 条件                                                                                        | 期待                                                                                                                                                                                                                                                                                                                                                                                                             |
+    | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+    | `git grep -n -F '宣言が不正です' -- docs/components.md`                                     | 1 件。「エラー文言」節の「日本語（JS）」の列挙に `コンポーネント {名前} の宣言が不正です（url を文字列で指定してください）` を 1 行足す（`components` の宣言の `url` が文字列でないとき、ローダー `src/application-loader.js:128` と `UiRuntime` `src/runtime.js:51` の両方が出す文言。R10 が明示した 1 件 = 前回残留リスク 9）                                                                                  |
+    | `docs/components.md` の「完了ハンドラのトランザクション」節                                 | 「handlerの失敗は完了を消費する（既存どおり）」の箇条書きに `host_progress` の例外を 1 文足す: progress は pending を**消費しない**ので、progress handler が失敗しても同じ id の `host_progress` / `host_result` はその後も届く（根拠: `engine/src/host.rs:151-173` の `progress` は `pending.get` のみ。格子 `completion_grid` の `HostProgress` 行は `consuming: false` でその挙動を固定済み。実装は変えない） |
+    | `git grep -n -F '宣言が不正です' -- docs/components.md` 以外の追従先チェックリストの条件    | T11 完了時と同じ（再実行して全部成立）                                                                                                                                                                                                                                                                                                                                                                           |
+    | `bun run docs:check` / `bunx vp check docs/components.md`（整形 stage）/ `bunx vp test run` | すべて exit 0（`docs/components.md` を読むテストは無いので件数は 672 のまま）                                                                                                                                                                                                                                                                                                                                    |
+  - 対象: `docs/components.md`（2 か所。`engine/**` / `src/**` / `tests/**` / `scripts/**` は触らない）
+  - 依存: T11
+  - 並列サブ作業: なし
+
 ## 決めた事項
 
 1. http effect の形は `{ kind: "http", id, request, url }`（`storage::Effect` `storage.rs:33-41` と同形）。子は `"instance"` を加える。照合の正規化は http effect の `kind` だけ（REQUIREMENTS R4 / DECISIONS Round 2）。**キー順は決めない**（T1 の PLAN 訂正: `serde_json` が `preserve_order` 無しなので応答は常にアルファベット順。`storage::Effect` も宣言順では出ていない）
