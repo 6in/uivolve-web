@@ -238,3 +238,10 @@
 - 想定外: なし（lean-ctx の MCP は今ターンも未接続。Read / Bash で進めた）
 - やり直し: 0 回
 - 次への注意: 次は `/gsd-lite-reflect`（`phase: "reflect"`）。PR #3 のマージは人間 / CI。ブランチは `gsd-lite/component-effects` に残したまま（ベースへの checkout はしない）。reflect の材料: round 1 の指摘 2 件はどちらも「追従先チェックリストの 1 行が T11 の再実測から抜けていた」「7 op 共通の文として書いた契約が 1 op の例外を含んでいた」で、impl の最終タスクが追従先チェックリストを**行ごとに機械的に**再実行する手順（T11 の 9 条件 → 11 条件）にすれば round 1 で合格できた。PLAN 訂正は通算 13 件（F1 で 1 件追加）。`bunx vp check <単一 Markdown>` は lint 対象 0 件で非 0 終了する（PLAN F1 の訂正と turn 15 の申し送りどおり）
+
+## turn 17 — reflect — component-effects
+
+- やったこと: 振り返りを .gsd-lite/reflect/20261009-0342-component-effects.md に作成（提案 11 件）。turns.jsonl 16 試行（229.1 分・147.39 USD・リトライ 0・権限拒否 0）、PROGRESS turn 1〜16、PLAN（11 タスク + F1、PLAN 訂正 13 件）、VERIFICATION（round 1 指摘 2 件 → F1 → round 2 合格）、`git log main...HEAD` 30 コミット、前回の振り返り 2 件（提案 10 件の反映: 守られた 8 / 部分的 1 / 却下 1 / 対象外 1）を読んで集計した
+- 想定外: なし
+- やり直し: 0 回
+- 次への注意: 最終判定型タスクは追従先チェックリストを行番号つきで全行再実行する（round 1 の指摘 2 件は 11 行中 9 条件しか再実測しなかった抜け）。discuss のスキル編集は整形してからコミットする（`bun run check` が 11 ターン赤だった原因）。PR #3 のマージは人間 / CI
