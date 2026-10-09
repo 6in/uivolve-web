@@ -129,6 +129,7 @@ dialogs / pagesのキューは画面で1本なのでrootの位置に並び、子
 - **子の完了には必須**。`instance`キーの省略がroot宛という意味になる。
 - 受理する形は「1つ以上の空でない要素を`/`で繋いだもの。`:`を含まない」（正規表現なら`^[^/:]+(/[^/:]+)*$`）。rootを空文字列で名乗ることはできず、キーを省略して名乗る。
 - 形から外れた値は`Invalid component instance`。形は合うが存在しないパスは`Unknown component instance: {instance}`。
+- 長さは256バイト（UTF-8）まで。256バイトを超えるパスは形の検査より先に`Component instance path exceeds 256 bytes`で拒否し、**その値を文言に載せない**。
 
 `dialog_result`も同じ規則で名乗る。ダイアログのスタックは画面のものだが、**どのInstanceのhandlerが走るかは「効果を出したInstance」（リクエスト側）が決める**。hostはeffectに載っていた`instance`をそのまま名乗る契約で、違うInstanceを名乗ると他人のダイアログを食べずに拒否される。
 
@@ -181,6 +182,7 @@ scope規則の定義は本節が唯一で、他の文書はここを参照する
 英語（Rust）。
 
 - `Invalid component instance`
+- `Component instance path exceeds 256 bytes`
 - `Unknown component instance: {instance}`
 - `Component {path}: Unknown or completed {HTTP request|storage request|file request|RPC call|host call|dialog request}`
 - `Component {path}: storage scope {scope} requires 1–80 ASCII letters, digits, - or _ without "__" in any part`
@@ -199,15 +201,18 @@ scope規則の定義は本節が唯一で、他の文書はここを参照する
 
 Instanceごとの既存上限はそのまま。1画面分の予算を部品が食い潰さないので、既存画面を無改修で部品にできる。
 
-| 対象                      | 上限                                 |
-| ------------------------- | ------------------------------------ |
-| Instance数                | 8（rootを含む）                      |
-| 入れ子の深さ              | 3（rootが1段目）                     |
-| UIノード / 階層           | Instanceごとに200ノード / 20階層     |
-| スクリプト                | Instanceごとに100 KB                 |
-| state                     | InstanceごとにJSONシリアライズ後1 MB |
-| ABIの1リクエスト          | 2 MB（子を同梱した合計。据え置き）   |
-| ABIの`components`エントリ | 8パッケージ                          |
+| 対象                      | 上限                                             |
+| ------------------------- | ------------------------------------------------ |
+| Instance数                | 8（rootを含む）                                  |
+| 入れ子の深さ              | 3（rootが1段目）                                 |
+| UIノード / 階層           | Instanceごとに200ノード / 20階層                 |
+| スクリプト                | Instanceごとに100 KB                             |
+| state                     | InstanceごとにJSONシリアライズ後1 MB             |
+| ABIの1リクエスト          | 2 MB（子を同梱した合計。据え置き）               |
+| ABIの`components`エントリ | 8パッケージ                                      |
+| 完了opの`instance`        | 256バイト（UTF-8。超過は値を文言に載せずに拒否） |
+
+`instance`の256バイトは完了opの入口だけに掛かる。接頭辞付きのパスが256バイトを超える子は完了を受け取れないので、`itemId`はこの範囲に収める。
 
 効果の上限は所属が2通りに分かれる。
 
