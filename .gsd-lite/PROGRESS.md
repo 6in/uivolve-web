@@ -1,0 +1,8 @@
+# PROGRESS — component-loader（段階 5: 子を含む画面の配信キャッシュ）
+
+## turn 1 — research — ローダー・生成・OPFS・無効化の契機の現状を固め、木のマニフェストの設計材料と落とし穴 18 件を RESEARCH.md に集約
+
+- やったこと: `src/application-loader.js` / `scripts/publish-packages.mjs` / `src/opfs.js` / `src/runtime.js` / `src/main.js` / `engine/src/abi.rs` と既存テスト・R9 の文書行を静的に読み、サブエージェント 2 本（読み取り専用。official_docs: OPFS / Web Locks / SubtleCrypto / JCS / URL / Vitest、similar_oss: Workbox / AppCache / SRI / npm・Go・Nix・OCI / ESM module map / OPFS 原子書き込み）の結果を §2 / §4 に写した。計測スクリプト 1 本（`scratch/turn-001-size-probe.mjs`）で同梱デモの生バイト合計と `load` の JSON バイト数の比（0.87〜0.93）を取り、2 MB 前段の「合計」の基準の提案（§7-1）の根拠にした。BLOCKED なし、`phase: plan` へ
+- 想定外: (1) `parts-lab.json.manifest.json` / `order-dashboard.json.manifest.json` は**今も生成されている**（version 1、子なし）。R2「生成する」の実体は「子を列挙する」だった（RESEARCH §1.2）。(2) 生バイト合計は JSON 化後より**大きい**（整形済み JSON が縮む）ので、マニフェスト段階の拒否は load 時より厳しい側に出る。descriptor を合計に含めると現状 load できる画面を拒否しうる（§1.5 / §7-1）。(3) `main.js:201` は毎回の load で `runtime.cacheMode` を代入するため、R5 の「cacheMode の変更」は代入ではなく値比較で検知する必要がある（§1.4 / P11）。(4) `instance` の 256 バイト上限は load 時に対称な検査が無く、256 バイト超のパスの子は load できるのに完了できない（§1.6 / §7-2）。(5) `abi::take_instance` は私的関数で、Rust テストから呼ぶには `pub(crate)` が要る（P14）
+- やり直し: 0 回
+- 次への注意: plan は §5 の A〜G（走査の供給元抽象化、`manifest()` の 2 段化、共有の形、添字の規則、生成側の書き出し順、2 MB の合計の定義、Rust テスト経路）を DECISIONS に書いて決める。§7-1（descriptor を合計に含めるか）と §7-2（load 時の 256 バイト検査）は plan の決定事項として明記する。R9 の追従先には `docs/files-cache-rpc.md:102,104,106,185` を足し、全行に連番を振る（前回 reflect の提案）。テストの置き場所（`components-loader.test.js` か `files-cache-rpc.test.js`）を plan が決める。lean-ctx の `ctx_*` は本セッションでも未接続で通常ツールで実施（規則どおり想定外には書かない）
