@@ -63,7 +63,7 @@ bun run docs:check                                   # Markdown のローカル�
     - B: 配送先未登録の 3 経路テスト（対象: `tests/components-effects.test.js`）
     - 親: (C) の文書 3 行、`bun run build:wasm` → `bun run test:rust` → `bunx vp test run tests/abi.test.js tests/components-effects.test.js` → `bun run check` → コミット（サブエージェントには `bun run build:wasm` / `cargo` / 全体 Vitest を禁止し、親が統合後にまとめて回す）
 
-- [ ] T2: マニフェスト version 2 の検証と revision（`manifest()` の両受け・`components` の形・キーの絶対化・2 MB 早期拒否）
+- [x] T2: マニフェスト version 2 の検証と revision（`manifest()` の両受け・`components` の形・キーの絶対化・2 MB 早期拒否）
   - 完了基準:
     - `src/application-loader.js:13-25` `manifestRevision(value)` が `value.version === 2` のとき R1 の式 `SHA-256(JSON.stringify([source.sha256, script.sha256, ソート済み[descriptorキー, sha256], ソート済み[子キー, 子.source.sha256, 子.script.sha256, ソート済み[descriptorキー, sha256]]]))` を返し、version 1（および `version` 無し）は既存の 3 要素の式のまま。比較子は既存の `<` / `>`（`:20`）を子キーにも使う（P1）
     - `manifest(value, base)`（`:26-54`）: `version` が 1 でも 2 でもない → `配信マニフェストが不正です`。version 1 で `Object.hasOwn(value, "components")` → `配信マニフェストが不正です`（P16: 空 `{}` でも不正）。version 2 で `components` が own property でない・`null`・配列・object 以外 → `配信マニフェストが不正です`。各子（`Object.entries` で読み、`Object.create(null)` に写す。P17）: 値が object でない / `source` `script` `descriptors` が root と同じ `check`（1 MB / 100 KB / 各 1 MB・8 件）を通らない / `httpUrl(key, base)` が投げる / 絶対化した href が別のキーと重複（P3 の `a.json` と `./a.json`）/ 子が 8 件超 → `マニフェストのコンポーネント情報が不正です`。この段階では子ファイルの `url` の形だけ見る（`httpUrl(entry.url, base)`。取得はしない）

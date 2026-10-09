@@ -10,21 +10,45 @@ export async function sha256(bytes) {
     .map((n) => n.toString(16).padStart(2, "0"))
     .join("");
 }
+const byKey = ([a], [b]) => (a < b ? -1 : a > b ? 1 : 0);
+// Revision covers the hashes of every file the version delivers, each list sorted by its key so
+// that the same tree published in a different declaration order keeps the same revision.
 export async function manifestRevision(value) {
-  return sha256(
-    encoder.encode(
-      JSON.stringify([
-        value.source.sha256,
-        value.script.sha256,
-        Object.entries(value.descriptors ?? {})
-          .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-          .map(([key, entry]) => [key, entry.sha256]),
-      ]),
-    ),
-  );
+  const hashes = (entries) =>
+    Object.entries(entries ?? {})
+      .sort(byKey)
+      .map(([key, entry]) => [key, entry.sha256]);
+  const root = [value.source.sha256, value.script.sha256, hashes(value.descriptors)];
+  const parts =
+    value.version === 2
+      ? [
+          ...root,
+          Object.entries(value.components ?? {})
+            .sort(byKey)
+            .map(([key, child]) => [
+              key,
+              child.source.sha256,
+              child.script.sha256,
+              hashes(child.descriptors),
+            ]),
+        ]
+      : root;
+  return sha256(encoder.encode(JSON.stringify(parts)));
 }
+// A version 2 manifest lists the whole tree; version 1 describes one package and must not carry a
+// `components` key at all, so an older loader never silently drops children it cannot see.
 async function manifest(value, base) {
-  if (!value || value.version !== 1 || !/^[a-f0-9]{64}$/.test(value.revision))
+  if (
+    !value ||
+    ![1, 2].includes(value.version) ||
+    !/^[a-f0-9]{64}$/.test(value.revision) ||
+    (value.version === 1 && Object.hasOwn(value, "components")) ||
+    (value.version === 2 &&
+      (!Object.hasOwn(value, "components") ||
+        typeof value.components !== "object" ||
+        value.components === null ||
+        Array.isArray(value.components)))
+  )
     throw new Error("配信マニフェストが不正です");
   const check = (entry, limit) => {
     if (
@@ -48,6 +72,46 @@ async function manifest(value, base) {
   )
     throw new Error("マニフェストの型情報が不正です");
   for (const entry of Object.values(descriptors)) check(entry, 1_000_000);
+  // Children are read as own properties into a null-prototype map keyed by the href their relative
+  // key resolves to, so a `__proto__` key and `a.json` vs `./a.json` are both plain collisions.
+  const components = Object.create(null);
+  if (value.version === 2) {
+    const bad = () => new Error("マニフェストのコンポーネント情報が不正です");
+    const children = Object.entries(value.components);
+    if (children.length > 8) throw bad();
+    for (const [key, child] of children) {
+      if (!child || typeof child !== "object" || Array.isArray(child)) throw bad();
+      let href;
+      try {
+        check(child.source, 1_000_000);
+        check(child.script, 100_000);
+        const own = child.descriptors ?? {};
+        if (typeof own !== "object" || Array.isArray(own) || Object.keys(own).length > 8)
+          throw bad();
+        for (const entry of Object.values(own)) check(entry, 1_000_000);
+        href = httpUrl(key, base).href;
+      } catch {
+        throw bad();
+      }
+      if (Object.hasOwn(components, href)) throw bad();
+      components[href] = child;
+    }
+  }
+  // A coarse gate on the delivered bytes before anything is fetched. Descriptors travel over the
+  // buffer ABI rather than the request, so only bodies and scripts count; `load` has the final say
+  // on the JSON-encoded length. The root alone cannot reach the limit, so a child is always named.
+  const total = [value, ...Object.values(components)].reduce(
+    (sum, entry) => sum + entry.source.size + entry.script.size,
+    0,
+  );
+  if (total > 2_000_000) {
+    const [href, bytes] = Object.entries(components)
+      .map(([key, child]) => [key, child.source.size + child.script.size])
+      .sort((a, b) => b[1] - a[1] || byKey(a, b))[0];
+    throw new Error(
+      `配信ファイルの合計が2 MBを超えています（合計 ${total} バイト。最大の子: ${href} ${bytes} バイト）`,
+    );
+  }
   if (value.revision !== (await manifestRevision(value)))
     throw new Error("配信revisionとファイルのハッシュが一致しません");
   return value;

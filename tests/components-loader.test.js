@@ -6,6 +6,7 @@ import { WasmEngine } from "../src/engine.js";
 import { parsePackage } from "../src/package-format.js";
 import { ResourceClient } from "../src/resource-client.js";
 import { UiRuntime } from "../src/runtime.js";
+import { memoryOpfs } from "./helpers/opfs.js";
 
 // Adapters are verified in-browser. These tests exercise the shared host with real WASM.
 vi.mock("../src/dom-renderer.js", () => ({
@@ -339,6 +340,224 @@ describe("ApplicationLoader の components 取得", () => {
     ]);
     const candidate = await f.loader.fetch(href("parent.json"));
     expect(Object.keys(candidate.components)).toEqual([href("part.json")]);
+  });
+
+  // A version 2 manifest lists the whole tree: the root plus every descendant, keyed by the path
+  // the child resolves to against the root's own URL. Files are published under `packages/rev/`
+  // with the names `publish-packages.mjs` gives them, the child index taken from the sorted keys.
+  describe("ApplicationLoader の木のマニフェスト", () => {
+    const MALFORMED = "マニフェストのコンポーネント情報が不正です";
+    // `list` has the shape `fixture` takes, the first entry being the root; `descriptors` maps a
+    // package path to the descriptor bytes it delivers.
+    async function treeManifest(f, list, { descriptors = {} } = {}) {
+      const url = new URL(href(list[0][0]));
+      const sidecar = new URL(url);
+      sidecar.pathname += ".manifest.json";
+      const publish = async (name, bytes) => {
+        const entry = {
+          url: `packages/rev/${name}`,
+          sha256: await sha256(bytes),
+          size: bytes.length,
+        };
+        f.responses.set(new URL(entry.url, sidecar).href, bytes);
+        return entry;
+      };
+      const pkg = async (prefix, [path, value, script = "fn init(s) { s }"]) => {
+        const own = {};
+        const keys = Object.keys(descriptors[path] ?? {}).sort();
+        for (let n = 0; n < keys.length; n++)
+          own[keys[n]] = await publish(`${prefix}descriptor-${n}`, descriptors[path][keys[n]]);
+        return {
+          source: await publish(`${prefix}source`, encoder.encode(JSON.stringify(value))),
+          script: await publish(`${prefix}script`, encoder.encode(script)),
+          descriptors: own,
+        };
+      };
+      const metadata = {
+        version: 2,
+        revision: "a".repeat(64),
+        ...(await pkg("", list[0])),
+        components: {},
+      };
+      const children = list.slice(1);
+      const order = children.map(([path]) => path).sort();
+      for (const child of children)
+        metadata.components[child[0]] = await pkg(`component-${order.indexOf(child[0])}-`, child);
+      metadata.revision = await manifestRevision(metadata);
+      f.responses.set(sidecar.href, JSON.stringify(metadata));
+      return { url, sidecar, metadata };
+    }
+    const parentWithChild = () => [
+      ["parent.json", screen("parent", { components: { a: { url: "a.json" } } })],
+      ["a.json", screen("a")],
+    ];
+
+    it("delivers and restores a version 2 manifest for a screen without children", async () => {
+      const plain = screen("plain");
+      const f = fixture([["plain.json", plain]]);
+      const fs = memoryOpfs();
+      const loader = new ApplicationLoader({
+        resources: f.resources,
+        storage: fs.storage,
+        locks: null,
+      });
+      const t = await treeManifest(f, [["plain.json", plain]]);
+      const candidate = await loader.fetch(t.url, { mode: "network-first" });
+      expect(candidate.metadata.version).toBe(2);
+      expect(candidate.metadata.components).toEqual({});
+      expect(candidate.components).toEqual({});
+      await loader.save(candidate);
+      f.responses.set(t.sidecar.href, new TypeError("offline"));
+      const restored = await loader.fetch(t.url, { mode: "network-first" });
+      expect(restored.status).toBe("cache");
+      expect(restored.metadata.revision).toBe(candidate.metadata.revision);
+      expect(restored.source).toBe(candidate.source);
+    });
+
+    it("refuses a manifest whose version and components do not agree", async () => {
+      const patches = [
+        { version: 1, components: {} },
+        { version: 1 },
+        { version: 3 },
+        { components: undefined },
+        { components: null },
+        { components: [] },
+      ];
+      for (const patch of patches) {
+        const list = parentWithChild();
+        const f = fixture(list);
+        const t = await treeManifest(f, list);
+        f.responses.set(t.sidecar.href, JSON.stringify({ ...t.metadata, ...patch }));
+        await expect(f.loader.fetch(t.url, { mode: "network-first" })).rejects.toThrow(
+          "配信マニフェストが不正です",
+        );
+        expect([...f.reads.keys()]).toEqual([t.sidecar.href]);
+      }
+    });
+
+    it("refuses a malformed child before fetching any file", async () => {
+      const spare = (size = 1) => ({ url: "packages/rev/x", sha256: "c".repeat(64), size });
+      const cases = [
+        ["script が 100 KB を超える", (c) => (c["a.json"].script.size = 100_001)],
+        [
+          "descriptors が 9 件",
+          (c) =>
+            (c["a.json"].descriptors = Object.fromEntries(
+              Array.from({ length: 9 }, (_, n) => [`d-${n}.pb`, spare()]),
+            )),
+        ],
+        ["sha256 が 63 桁", (c) => (c["a.json"].source.sha256 = "a".repeat(63))],
+        ["子が object でない", (c) => (c["a.json"] = 5)],
+        ["絶対化したキーが重複する", (c) => (c["./a.json"] = c["a.json"])],
+        [
+          "キーが HTTP / HTTPS に解決しない",
+          (c) => {
+            c["javascript:alert(1)"] = c["a.json"];
+            delete c["a.json"];
+          },
+        ],
+        [
+          "子が 9 件",
+          (c) => {
+            for (let n = 0; n < 9; n++) c[`c-${n}.json`] = c["a.json"];
+          },
+        ],
+      ];
+      for (const [name, mutate] of cases) {
+        const list = parentWithChild();
+        const f = fixture(list);
+        const t = await treeManifest(f, list);
+        const metadata = structuredClone(t.metadata);
+        mutate(metadata.components);
+        f.responses.set(t.sidecar.href, JSON.stringify(metadata));
+        await expect(f.loader.fetch(t.url, { mode: "network-first" }), name).rejects.toThrow(
+          MALFORMED,
+        );
+        // The shape is judged before anything is downloaded, so only the manifest was read.
+        expect([...f.reads.keys()], name).toEqual([t.sidecar.href]);
+      }
+    });
+
+    it("rejects a delivered total over 2 MB and names the largest child", async () => {
+      // Sizes alone decide this gate, and the revision covers hashes only, so the entries need no
+      // matching bytes: nothing is fetched before the total is judged.
+      const sized = async (f, childSize) => {
+        const url = new URL(href("parent.json"));
+        const sidecar = new URL(url);
+        sidecar.pathname += ".manifest.json";
+        const entry = (name, size, seed) => ({
+          url: `packages/rev/${name}`,
+          sha256: seed.repeat(64),
+          size,
+        });
+        const child = (i, size, seed) => ({
+          source: entry(`component-${i}-source`, size, seed),
+          script: entry(`component-${i}-script`, 0, seed),
+          descriptors: {},
+        });
+        const metadata = {
+          version: 2,
+          revision: "a".repeat(64),
+          source: entry("source", 1_000_000, "1"),
+          script: entry("script", 1, "2"),
+          components: { "a.json": child(0, childSize, "3"), "b.json": child(1, 1_000, "4") },
+        };
+        metadata.revision = await manifestRevision(metadata);
+        f.responses.set(sidecar.href, JSON.stringify(metadata));
+        return { url, sidecar, metadata };
+      };
+      const over = fixture([]);
+      const t = await sized(over, 999_000);
+      await expect(over.loader.fetch(t.url, { mode: "network-first" })).rejects.toThrow(
+        `配信ファイルの合計が2 MBを超えています（合計 2000001 バイト。最大の子: ${href("a.json")} 999000 バイト）`,
+      );
+      expect([...over.reads.keys()]).toEqual([t.sidecar.href]);
+      // Exactly 2,000,000 passes the manifest and only then fails on the missing delivered file.
+      const edge = fixture([]);
+      const e = await sized(edge, 998_999);
+      await expect(edge.loader.fetch(e.url, { mode: "network-first" })).rejects.toThrow("HTTP 404");
+    });
+
+    it("hashes the tree independently of the order the children are listed in", async () => {
+      const list = [
+        [
+          "parent.json",
+          screen("parent", { components: { a: { url: "a.json" }, b: { url: "parts/b.json" } } }),
+        ],
+        ["a.json", screen("a")],
+        ["parts/b.json", screen("b")],
+      ];
+      const flipped = [list[0], list[2], list[1]];
+      const forward = await treeManifest(fixture(list), list);
+      const reversed = await treeManifest(fixture(flipped), flipped);
+      expect(Object.keys(reversed.metadata.components)).toEqual(["parts/b.json", "a.json"]);
+      expect(reversed.metadata.revision).toBe(forward.metadata.revision);
+      // A child carrying a descriptor hashes its descriptor list the same way the root does.
+      const bytes = new Uint8Array(
+        await readFile(new URL("../public/screens/rpc-demo.pb", import.meta.url)),
+      );
+      const descriptors = { "a.json": { "rpc-demo.pb": bytes } };
+      const one = await treeManifest(fixture(list), list, { descriptors });
+      const two = await treeManifest(fixture(flipped), flipped, { descriptors });
+      expect(two.metadata.revision).toBe(one.metadata.revision);
+      expect(one.metadata.revision).not.toBe(forward.metadata.revision);
+      const tampered = structuredClone(one.metadata);
+      tampered.components["a.json"].source.sha256 = "f".repeat(64);
+      expect(await manifestRevision(tampered)).not.toBe(one.metadata.revision);
+    });
+
+    it("reads a __proto__ child key as a plain entry instead of a prototype write", async () => {
+      const list = parentWithChild();
+      const f = fixture(list);
+      const t = await treeManifest(f, list);
+      const raw = JSON.stringify({ ...t.metadata, components: { "a.json": 5 } }).replace(
+        '"a.json":',
+        '"__proto__":',
+      );
+      expect(Object.hasOwn(JSON.parse(raw).components, "__proto__")).toBe(true);
+      f.responses.set(t.sidecar.href, raw);
+      await expect(f.loader.fetch(t.url, { mode: "network-first" })).rejects.toThrow(MALFORMED);
+    });
   });
 });
 
