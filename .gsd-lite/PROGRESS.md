@@ -121,3 +121,125 @@
 - やり直し: 0 回
 - PLAN 訂正: なし（追従先チェックリストの 14 行はすべて書かれたとおりの条件で満たした）
 - 次への注意: 次は T8（最終判定と受け入れ基準の総点検）。足場: (i) **T6 から引き継いだ不備 1 件が未解決**——`scripts/publish-packages.mjs:73-80` の合計 2 MB 超の拒否は「最大の子」を `children[...][0]` で選ぶので、子が 1 つも無い 1.9 MB 超の画面 1 枚で `children` が空になり `TypeError`（分割代入が `undefined`）になる。ローダー側は `manifest()` が root の `source` を 1 MB・`script` を 100 KB に制限するので到達不能だが、生成側には root の `source` の上限検査が無い。T7 では直していない（新しい文言を増やす判断は決めた事項 9 と追従先 行 4 に触るため。T8 の 対象 が「見つけた不備は本タスクで直し、PLAN 訂正として記録する」と明記しているのでそこで決める）。選択肢は (a) 生成側に root の `source` 1 MB / `script` 100 KB 検査を足して既存文言（`画面は1 MB以内にしてください` 相当が無いので新設）、(b) 子が無いときは「最大の子」を名乗らない別の分岐にする、の二択。どちらも `docs/components.md` の文言列挙と `docs/files-cache-rpc.md` の追従が必要になる。(ii) T8 は `bun scripts/verify-instance-refactor.mjs` を**クリーンな状態から**回す（`git status --short` が空であること。本ターン終了時点で空）。所要は `BASE_CHECKS` 6 本 + base の WASM ビルド + probe + 変異 7 本で長い。(iii) 追従先チェックリストの 14 行再実行は `bun .gsd-lite/logs/component-loader/scratch/turn-009-checks.mjs` をそのまま再利用できる（exit 0 / NG 0 / 行数 14 を印字する）。T8 の表はこの出力を写せばよい。(iv) `public/screens/browser-dialogs.yaml.manifest.json` は `SCREEN_CATALOG` に無い旧カタログの残骸で version 1 のまま再生成されない（gitignore 済み）ので「すべて version 2」と書かないこと
+
+## turn 10 — impl — T8 最終判定と受け入れ基準の総点検
+
+- やったこと: サブエージェントなし。最終判定 `bun scripts/verify-instance-refactor.mjs` を回し、落ちた 1 手順の原因（照合ハーネスの陳腐化。本マイルストーンとは無関係）を直して OK まで通した。T6 から引き継いだ「生成側の 2 MB 超で `TypeError`」の申し送りは**不備ではない**ことを実測で確かめ、到達不能であることをテスト 1 本とコメントで固定した。追従先チェックリスト 14 行・T8 固有の 11 条件・受け入れ基準 1〜9・落とし穴 P1〜P17 を下の 4 表に実測で書いた。コードの挙動は 1 行も変えていない
+- 最終判定 `bun scripts/verify-instance-refactor.mjs`（exit 0。`.gsd-lite/logs/component-loader/scratch/turn-010-verify-2.log`）:
+
+  | 手順                            | 期待 | 実際 |   秒 |
+  | ------------------------------- | ---: | ---: | ---: |
+  | `bun run build:wasm`            |    0 |    0 |  0.2 |
+  | `bunx vp test run`              |    0 |    0 |  5.9 |
+  | `bun run test:rust`             |    0 |    0 |  2.7 |
+  | `bun run check`                 |    0 |    0 |  2.8 |
+  | `bun run docs:check`            |    0 |    0 |  0.0 |
+  | `bun run build`                 |    0 |    0 |  0.5 |
+  | compare candidate               |    0 |    0 |  0.9 |
+  | probe composition               |    0 |    0 |  0.2 |
+  | build layout-x-offset           |    0 |    0 |  8.6 |
+  | compare layout-x-offset         |    1 |    1 |  0.8 |
+  | build dialog-draft-revision     |    0 |    0 |  8.7 |
+  | compare dialog-draft-revision   |    1 |    1 |  0.8 |
+  | build unknown-item-message      |    0 |    0 |  8.7 |
+  | compare unknown-item-message    |    1 |    1 |  0.8 |
+  | build emit-skips-listener       |    0 |    0 |  9.4 |
+  | probe emit-skips-listener       |    1 |    1 |  0.2 |
+  | build config-diff-ignored       |    0 |    0 |  9.0 |
+  | probe config-diff-ignored       |    1 |    1 |  0.2 |
+  | build instance-dropped          |    0 |    0 |  9.0 |
+  | probe instance-dropped          |    1 |    1 |  0.2 |
+  | build completion-routed-to-root |    0 |    0 |  9.0 |
+  | probe completion-routed-to-root |    1 |    1 |  0.2 |
+  | 合計                            |      |      | 78.8 |
+
+  内訳: `BASE_CHECKS` 6 本（Vitest 35 files / 715 passed、cargo 91 passed、整形 288 ファイル・lint 110 ファイル、ローカルリンク 59 ファイル / 501 件、`vp build` 114 modules）→ base `aa79bd1` の WASM をビルド（8.7 秒）→ 照合 370 ステップ **差分 0**（44 sequences / ok 348 / error 22）→ probe composition 54 ステップ **problems 0**（6 列）→ 変異 7 本が各 exit 1（検出した問題は 2・2・2・7・2・19・12 件）。`OK すべての手順が期待どおり`
+
+- 追従先チェックリスト 行 1〜14 の再実行（`bun .gsd-lite/logs/component-loader/scratch/turn-009-checks.mjs` を T7 と同じ条件・同じ期待値で再実行。exit 0 / 行数 14 / NG 0）:
+
+  | 行  | 変更の種類                                    | 実測                                                                                                                                                       | 判定 |
+  | --- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
+  | 1   | 旧契約の言い回し（配信キャッシュの拒否）      | 旧言い回し 5 種が `docs README.md skills src tests scripts index.html .claude` で 0 件                                                                     | OK   |
+  | 2   | 旧契約の言い回し（段階の状態行）              | `実装済み契約（段階4）` 0 / `状態: 段階4` 0 / `段階5で決める` 0 / `段階5（ローダー）。本マイルストーンで完了` 1                                            | OK   |
+  | 3   | マニフェストの形・revision の式・生成物の命名 | `version: 1 / revision` 0 / `version: 2` 1 / `component-<i>-source` 1                                                                                      | OK   |
+  | 4   | JS の日本語文言（ローダー・生成スクリプト）   | 3 文言 × 2 文書の 6 条件がすべて 1 以上（components.md 3 / 2 / 1、files-cache-rpc.md 1 / 1 / 1）                                                           | OK   |
+  | 5   | 2 MB の段構え                                 | `2段構え` 0 / `3段構え` 1                                                                                                                                  | OK   |
+  | 6   | Rust の英語文言（`instance` 256 バイト）      | `Component instance path exceeds 256 bytes` が components.md で 2 / `256` が architecture.md で 1                                                          | OK   |
+  | 7   | メモリ共有（R5）の契約                        | `メモリ共有` が両文書で 1 / `再読込` が components.md で 2                                                                                                 | OK   |
+  | 8   | テストファイルを足す・役割を変える            | `tests/publish-packages.test.js` が testing.md でちょうど 1 / `配送先` が 1                                                                                | OK   |
+  | 9   | OPFS の調査文書（計画・検討の履歴）           | `段階5` が opfs-cache-rpc-investigation.md で 1                                                                                                            | OK   |
+  | 10  | README・スキル・ホスト設計の 1 行             | README.md の `木｜子を含む` が 1 / engine-dev スキルの `application-loader` が 1 / host-adapters-design.md の 3 語が 0 件（**無改修**）                    | OK   |
+  | 11  | 無改修と判定する文書（6 か所）                | runtime-distribution.md・io-extensions.md・host.md が main から 0 行差分 / components.md の `配送先が未登録です` は据え置き / verify スクリプトも 0 行差分 | OK   |
+  | 12  | ソースをテキストとして読むテスト・スクリプト  | `engine/src/lib.rs` が main から 0 行差分 / ソースを `readFile` するのは `tests/browser/font-parity.mjs` の 1 件だけ                                       | OK   |
+  | 13  | 件数を書いている文書                          | `次の4つだけ` 0 / `次の3つだけ` 1 / `6列・54ステップ` 1（probe は無改修で実測も 54 ステップ）                                                              | OK   |
+  | 14  | AI への生成指示文書（常に追従先）             | `配信キャッシュ` の行が ai-development.md で 1 件、その行は `段階5以降` を含まない                                                                         | OK   |
+
+  行 11 の無改修は T7 と同じ 6 か所・同じ理由（配信キャッシュとマニフェストの一般論が木でもそのまま真 / 配送先未登録の説明はテストを足しただけ / 最終判定の手順は `verify-instance-refactor.mjs` 本体が無改修）。本ターンで触った `scripts/compare-engine-behavior.mjs` は追従先チェックリストのどの行にも現れない（行 11 が名指しするのは `verify-instance-refactor.mjs`、行 12 が名指しするのは `build-engine-variant.mjs` の `MUTATIONS` と `font-parity.mjs`）
+
+- T8 固有の条件（`bun .gsd-lite/logs/component-loader/scratch/turn-010-t8-checks.mjs`。11 条件 / NG 0）:
+
+  | 条件                                                                       | 実測                                                                                          |
+  | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+  | `git diff main --stat -- engine/src/lib.rs`                                | 0 行                                                                                          |
+  | `git grep -n -F 'withoutComponents' -- src tests docs`                     | 0 件                                                                                          |
+  | `git grep -n -F 'componentsを持つ画面' -- src tests docs skills README.md` | 0 件                                                                                          |
+  | `order-dashboard.json.manifest.json`                                       | version 2 / `["parts/order-list.json"]`                                                       |
+  | `parts-lab.json.manifest.json`                                             | version 2 / `["http-grid.json","parts/approval.json","parts/note-pad.json"]`                  |
+  | `http-grid.json.manifest.json`                                             | version 2 / `[]`（`components: {}`）                                                          |
+  | 生成物の gitignore                                                         | `git check-ignore` が sidecar と `public/screens/packages` の 2 件を返す                      |
+  | `git status --short` の生成物                                              | `public/` `target/` `dist/` `app-dist/` `runtime-dist/` の行が 0（本ターンの 3 ファイルだけ） |
+
+  `public/screens/*.manifest.json` 25 本のうち 24 本が version 2、`browser-dialogs.yaml.manifest.json` だけ version 1（`SCREEN_CATALOG` に無い旧カタログの残骸で再生成されない。gitignore 済み）。文書に「すべて version 2」とは書いていない
+
+- 受け入れ基準 1〜9（REQUIREMENTS `:99-107`。2 は (a)〜(h) の 8 行、4 は 契機ごとの行に展開）:
+
+  | #    | 受け入れ基準                                                          | 満たしたテスト / コマンド                                                                                                                                                                                                                                                            |
+  | ---- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+  | 1    | `bun run check` と `bun run test` が green                            | 最終判定の `BASE_CHECKS`: `bun run check` exit 0（整形 288 / lint 110）、`bunx vp test run` 35 files / 715 passed、`bun run test:rust` 91 passed                                                                                                                                     |
+  | 2(a) | version 2 の木で取得→検証→保存→`current.json` 公開                    | `components-loader.test.js:758` stores every child of a delivered tree at the slot its sorted key gives it（`components/0..2` と `beforeClose` 10 回）                                                                                                                               |
+  | 2(b) | 通信障害で木全体を復元、URL 書き換えと scope 表が network-only と同じ | `:790` rebuilds the stored tree exactly as the network builds it（`status: "cache"`・`fallbackReason`・実 WASM への load まで）                                                                                                                                                      |
+  | 2(c) | 子 1 つの破損で現在版を使わず直前版へ                                 | `:853` skips a generation whose stored child no longer matches its entry                                                                                                                                                                                                             |
+  | 2(d) | 直前版も壊れていれば `通信に失敗し、利用できる保存版もありません`     | `:866` names the reason no stored generation could be used                                                                                                                                                                                                                           |
+  | 2(e) | 合計 2 MB 超はファイル取得前に拒否（取得 0 回）                       | `:458` rejects a delivered total over 2 MB and names the largest child（`reads` が sidecar 1 件のみ。2,000,000 ちょうどは通って `HTTP 404`）                                                                                                                                         |
+  | 2(f) | version 1 のマニフェスト / 保存版が今までどおり                       | `tests/files-cache-rpc.test.js` を無改修のまま green（最終判定の Vitest 全体に含む）                                                                                                                                                                                                 |
+  | 2(g) | version 1 + `components` は拒否                                       | `:394` refuses a manifest whose version and components do not agree（version 1 + `{}` / version 3 / version 2 で `components` 無し）                                                                                                                                                 |
+  | 2(h) | 同じ子を 2 か所に置いた木は 1 回だけ保存                              | `:875` stores a child two declarations place at a single slot                                                                                                                                                                                                                        |
+  | 3    | 生成スクリプトの version 2 と拒否 4 種                                | `publish-packages.test.js:124` / `:146`（ローダーの `manifest()` を通り save→restore 往復）/ `:339` / `:349`（カタログ全画面）、拒否は `:172` 循環 / `:189` 深さ 4 / `:217` 9 Instance / `:242` 2 MB 超 / `:278` 絶対 URL                                                            |
+  | 4-1  | 別ページへの遷移で同じ子を再取得しない                                | `components-loader.test.js:1025` fetches a child once across two screens that place it / runtime レベルは `parts-lab.test.js:298` keeps the parts of the lab across a detour                                                                                                         |
+  | 4-2  | `refreshEngine` で再取得                                              | `:1040` takes the child again on an explicit refresh but not on the load after it / `:1386` passes the engine refresh on to the loader                                                                                                                                               |
+  | 4-3  | `cacheMode` 変更で再取得                                              | `:1115` empties the shared map when the cache mode changes, either way round                                                                                                                                                                                                         |
+  | 4-4  | 認証変更で再取得                                                      | `:1049` empties the shared map only when the authentication metadata differs                                                                                                                                                                                                         |
+  | 4-5  | `network-first` で sha256 が違えば再取得                              | `:1073` reuses a delivered child while the manifest promises the same files                                                                                                                                                                                                          |
+  | 5    | 残留リスク 3 が http / storage / page の 3 経路                       | `components-effects.test.js:555` / `:578` / `:602`（`describe("配送先が未登録の Instance")`）                                                                                                                                                                                        |
+  | 6    | 残留リスク 1 の Rust テスト                                           | `composition_tests::a_completion_naming_an_instance_longer_than_256_bytes_is_refused_on_length` + `tests/abi.test.js:200` の表の行                                                                                                                                                   |
+  | 7    | `build:wasm` 後の sidecar が version 2 で子を列挙                     | 上の T8 固有条件の 6 行 + `publish-packages.test.js:339` / `:349`。`.gitignore` の 2 行も `git check-ignore` で確認                                                                                                                                                                  |
+  | 8    | R8 の堅牢性（未捕捉例外なし・表示と `current.json` が残る）           | 2(c)(d) + `components-loader.test.js:933` publishes no pointer when a child of the new generation cannot be written（quota / abort）+ `:1467` reports a failed save without disturbing the screen it just loaded + `:967` collects the stale generations before removing any of them |
+  | 9    | R9 の文書追従が全行済み                                               | 上の 14 行の表（exit 0 / NG 0）。`docs/components.md` は「段階6以降の課題」へ、`components-plan.md` の段階 5 は完了に更新済み                                                                                                                                                        |
+
+- 落とし穴 P1〜P17（RESEARCH §6。P18 は恒常注意なので除く）:
+
+  | #   | 検証したテスト                                                                                                                                                                                                                                                           |
+  | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+  | P1  | `components-loader.test.js:498` hashes the tree independently of the order the children are listed in / `publish-packages.test.js:295` gives a child the slot its sorted key names however the root declares it（生成側は `manifestRevision` を import する 1 か所実装） |
+  | P2  | `publish-packages.test.js:124` keys every child by its path relative to the root and publishes the files it names（`../shared/x.json` を含む 4 子がローダーの絶対化と一致）                                                                                              |
+  | P3  | `components-loader.test.js:415` refuses a malformed child before fetching any file（`a.json` と `./a.json` の重複を含む 7 種で `resources.bytes` 0 回）                                                                                                                  |
+  | P4  | `:1137` walks into the declarations of a shared child as well（共有した `mid` 経由で depth 4 を `入れ子が3段を超えています`。循環は共有経由では構成不能＝最初の load で落ちる）                                                                                          |
+  | P5  | `:1025` fetches a child once across two screens that place it（`toBe` で同一オブジェクト、`toEqual` で `screen` が 1 回目と同じ）                                                                                                                                        |
+  | P6  | `:1154` shares nothing from a walk that failed partway（失敗後に同じ子が再び読まれる）                                                                                                                                                                                   |
+  | P7  | `:866` names the reason no stored generation could be used / `:933` publishes no pointer when a child of the new generation cannot be written（`AbortError` を握りつぶさない）                                                                                           |
+  | P8  | `:906` carries every child back through a key order that is not alphabetical by eye（`A.json` / `_a.json` / `a-1.json` / `a.json`）                                                                                                                                      |
+  | P9  | `:967` collects the stale generations before removing any of them（`entries()` を開いている間の `removeEntry` が 0 件）+ `files-cache-rpc.test.js` の既存 1 本が green                                                                                                   |
+  | P10 | `:458` rejects a delivered total over 2 MB and names the largest child（2,000,001 で取得 0 回 / 2,000,000 ちょうどは通る）                                                                                                                                               |
+  | P11 | `:1040` takes the child again on an explicit refresh but not on the load after it（同じ `mode` の再代入では消えない）                                                                                                                                                    |
+  | P12 | `:1049` empties the shared map only when the authentication metadata differs（`mode: "none"` の再設定では消えず、`jwt` と `allowedOrigins` の変更で消える）                                                                                                              |
+  | P13 | Rust `a_completion_naming_an_instance_longer_than_256_bytes_is_refused_on_length`（256 / 257 ASCII、258 バイトの 3 バイト文字、`:` 入り 257、値を文言に載せない）                                                                                                        |
+  | P14 | 同じ Rust テストが `crate::abi::take_instance` を直接呼べている（`pub(crate)` で足りる。`bun run test:rust` 91 passed）                                                                                                                                                  |
+  | P15 | `:875` stores a child two declarations place at a single slot（保存はマニフェストのキーで回す）                                                                                                                                                                          |
+  | P16 | `:394` refuses a manifest whose version and components do not agree（version 1 + `components: {}` も不正）                                                                                                                                                               |
+  | P17 | `:526` reads a **proto** child key as a plain entry instead of a prototype write / `:596` refuses a manifest and a declaration tree that do not list the same children（`（宣言に無い子: …）`）                                                                          |
+
+- 既存テストの期待値の変更: なし（既存テストは 1 本も触っていない。追加は `tests/publish-packages.test.js` の 1 本 `refuses an oversized body before the sum is taken, so the root alone never reaches the limit` だけで、これは新しい契約ではなく既存の `画面定義が1 MBを超えています`（`src/package-format.js:7-8`）が先に効くことを固定する回帰テスト）
+- 想定外: (1) **最終判定が 1 手順で落ちた。原因は本マイルストーンの変更ではなく照合ハーネスの陳腐化**——`scripts/compare-engine-behavior.mjs` の `matches()` が HTTP の effect を「`kind` が無いもの」だけで探していて（段階 3 以前の base を前提にしたコメント付き）、base が段階 4 の `aa79bd1` になったいま base 側で id を引けず `http の effect が見つかりません` で落ちる。base の WASM を base と candidate の両側に渡した照合（`turn-010-base-vs-base.json` を取ろうとした実行）でも同じ所で落ちるので、候補側とは無関係と確定した。`effect.kind === undefined || effect.kind === "http"` の 1 行に直して 370 ステップ / 差分 0。照合は元々 `effects[*].kind === "http" → kind を除去` の正規化を持っているので、判定の意味は変えていない。前マイルストーン（段階 4）が main に入った時点で陳腐化していたが、最終判定を回すのは verify / T8 だけなので今まで出なかった。(2) **T6 → T7 → T8 と申し送られた「生成側の合計 2 MB 超で `TypeError`」は不備ではなかった**。申し送りは「生成側には root の `source` の上限検査が無い」が前提だったが、`readPackage` が呼ぶ `parsePackage`（`src/package-format.js:7-8`）が root も子も 1 MB で `画面定義が1 MBを超えています` を投げ、`readPackage` 自身が script を 100 KB で止める。したがって生成側の root 単独の重みは最大 1.1 MB で、子が 1 つも無いまま合計が 2 MB を超える経路は到達不能（2,000,001 バイトの画面 1 枚で実測したら `配信ファイルの合計が…` ではなく `画面定義が1 MBを超えています` だった）。新しい文言を増やす二択（T7 の申し送り (i)）はどちらも不要で、ローダー側と同じ不変条件のコメントと到達性を固定するテスト 1 本だけを足した。(3) 完了を待つ `until grep` の最初のパターンに `FAIL ` を入れたら、変異 probe が**期待どおり**出す `FAIL …` 行に当たって早く抜けた。`: exit N（期待 M）` で引き直した（ハーネスの出力に `FAIL` が正常系として出ることを忘れていた）
+- やり直し: 2 回（1: 申し送りの不備を「子が無ければ最大の子を名乗らない」分岐として実装し、テストで `画面定義が1 MBを超えています` が先に出たため到達不能と判明して実装を取り消し、到達性を固定するテストとコメントに置き換えた。2: 最終判定の 1 回目が `compare candidate` で exit 1 → 上の 想定外 (1) を直して 2 回目で OK）
+- PLAN 訂正: 「検証コマンド」の最終判定の行（`スクリプト本体は無改修`）→ 「`verify-instance-refactor.mjs` 本体は無改修（T8 訂正: `scripts/compare-engine-behavior.mjs` の `matches()` は base が段階 4 になったことで陳腐化していて、HTTP の effect の id を引けず base 側で落ちる。`effect.kind === undefined || effect.kind === "http"` の 1 行に直す。照合そのものは `kind` を正規化で除去しているので差分 0 は変わらない）」。旧文字列 `無改修` を PLAN 全体に `git grep -n -F` で引き、残るのは追従先 行 11（6 か所の文書と `verify-instance-refactor.mjs`。どれも今も無改修）・行 12（`lib.rs` と `MUTATIONS`）・行 10 の host-adapters-design.md で、`compare-engine-behavior.mjs` を無改修と宣言している箇所は無い。後続タスクは無い（T8 が最後）
+- 次への注意: 次は verify。足場: (i) 最終判定は `bun scripts/verify-instance-refactor.mjs` で OK（78.8 秒。base の WASM は `target/engine-compare/base-aa79bd1.wasm` にキャッシュ済みなので 2 回目以降は 70 秒ほど）。ログは `.gsd-lite/logs/component-loader/scratch/turn-010-verify-2.log`。(ii) 本ターンのコミットは照合ハーネスの 1 行・生成スクリプトのコメント・テスト 1 本だけで、ローダー / 生成の挙動は T7 時点から変わっていない。(iii) 14 行の再実行は `bun .gsd-lite/logs/component-loader/scratch/turn-009-checks.mjs`、T8 固有の 11 条件は `turn-010-t8-checks.mjs` でそのまま再実行できる（どちらも exit 0 / NG 0）。(iv) PLAN「verify への申し送り」の 4 点（契約文書 ↔ 実装の一対一 / セキュリティ 1 本 / R8 の格子 / 決めた事項 1・2 の残留リスク）はそのまま有効。決めた事項 2 の非対称（load できた 257 バイト超の `instance` が完了を受け取れない）は仕様どおりの残留リスク
