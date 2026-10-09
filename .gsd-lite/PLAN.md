@@ -166,7 +166,7 @@ bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-52ec88
   - 依存: T5
   - 並列サブ作業: なし（数字は probe の実測に依存）
 
-- [ ] T7: 契約文書の追従（受け入れ 7 + `docs/testing.md` + `docs/files-cache-rpc.md`）
+- [x] T7: 契約文書の追従（受け入れ 7 + `docs/testing.md` + `docs/files-cache-rpc.md`）
   - 完了基準:
     - `docs/components.md`: `:108`「残る`webmcp`だけが据え置き」→ 7 種とも子で宣言できる（`webmcp` は `components[]` に instance 別で公開）。`:166`「据え置きの拒否」節を「子に許していないもの」に改め、`webmcp` の項を削除して `window`（新文言）と「変更を適用」の 2 つに。`:197` の英語一覧を `Component {path}: webmcp: description/label/tags exceed limits or have duplicate tags` に差し替え。`:272`「段階6以降の課題」→「段階7以降の課題」で `webmcp` の項を削除。新節「子の `webmcp`」（R1 / R2 の契約: 部品の `webmcp` は接頭辞付き key の widget に出る、パッケージの `webmcp` は `ui_get_screen.components[]`、`screen.webmcp` は root のみ、上限は root と同じで文言は `Component {path}: ` 前置、itemId の無いノードの `webmcp` は出ない（P3 の既存挙動を仕様として明記））
     - `docs/webmcp.md`: `ui_get_screen` の説明（`:14` の表と `:21`）に `components` を足す。「次の拡張点」`:65` の段落に `components[]` の形 `{instance, id, title, webmcp, hidden}`、順序（`instance` 文字列のバイト順 = `BTreeMap` の順。ASCII なら辞書順。§7-7）、`hidden` の定義（親の `visibleBind` による非表示だけ。折りたたみ・非アクティブタブ・モーダル背後は `widgets[]` の有無と `blocked` で判断。§7-2）、突き合わせ規則（`widgets[].key` を末尾の `/` で割った左側が `components[].instance`。`/` を含まない key は root。`a/b/c` は instance `a/b`。§7-9）、`id` / `title` はパッケージのもので WebMCP 草案の `ModelContextTool.title` とは別（§7-8）、説明情報であり許可 action・入力 schema・認可を変えない（R2）。`:5` の草案確認日を `2026-10-09` に更新（RESEARCH §2）

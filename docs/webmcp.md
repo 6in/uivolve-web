@@ -2,23 +2,23 @@
 
 WebMCPはブラウザを介してページ内の構造化ツールをAIへ公開するAPI。この試作では、描画アダプターと別の`src/webmcp.js`から共通WASMエンジンへの操作を公開する。Canvasを画像認識でクリックせず、DOM版と同じ状態・検証・Rhaiハンドラを使える。
 
-2026-10-02に確認した[W3Cコミュニティグループ草案](https://webmachinelearning.github.io/webmcp/)と[ChromeのImperative API](https://developer.chrome.com/docs/ai/webmcp/imperative-api)に合わせ、`document.modelContext.registerTool(tool, {signal})`を使用する。仕様は草案で、APIや対応環境は変わり得る。`navigator.modelContext`を公開する旧プレビューにも対応する。登録部分は`registerUiTools`へ隔離し、ツール定義は`createUiTools(host)`で独立してテストできる。
+2026-10-09に確認した[W3Cコミュニティグループ草案](https://webmachinelearning.github.io/webmcp/)と[ChromeのImperative API](https://developer.chrome.com/docs/ai/webmcp/imperative-api)に合わせ、`document.modelContext.registerTool(tool, {signal})`を使用する。仕様は草案で、APIや対応環境は変わり得る。`navigator.modelContext`を公開する旧プレビューにも対応する。登録部分は`registerUiTools`へ隔離し、ツール定義は`createUiTools(host)`で独立してテストできる。
 
 APIがないブラウザには登録しない。グローバルAPIの偽装やpolyfillは追加しない。ページのWEBMCP表示は「5 tools」「未対応」「登録失敗」で実際の登録結果を示す。通常の画面操作はそのまま使える。
 
 ## 共通ツール
 
-| 名前            | 操作                                                                                           |
-| --------------- | ---------------------------------------------------------------------------------------------- |
-| ui_list_screens | 同梱の画面IDとタイトルを取得                                                                   |
-| ui_get_screen   | 現在の画面token・revision、表示中の部品、値、操作payload、許可action、モーダル／メニューを参照 |
-| ui_get_state    | 指定したトップレベル状態キーを参照。配列はページ分割                                           |
-| ui_dispatch     | 表示中の部品keyへ一つのイベントを送り、WASMで実行してDOM／Canvasへ反映                         |
-| ui_load_screen  | 同梱の画面IDをHTTPから読み込み、初期状態で開く                                                 |
+| 名前            | 操作                                                                                                                             |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| ui_list_screens | 同梱の画面IDとタイトルを取得                                                                                                     |
+| ui_get_screen   | 現在の画面token・revision、表示中の部品、値、操作payload、許可action、モーダル／メニュー、`components`（子Instanceの一覧）を参照 |
+| ui_get_state    | 指定したトップレベル状態キーを参照。配列はページ分割                                                                             |
+| ui_dispatch     | 表示中の部品keyへ一つのイベントを送り、WASMで実行してDOM／Canvasへ反映                                                           |
+| ui_load_screen  | 同梱の画面IDをHTTPから読み込み、初期状態で開く                                                                                   |
 
 読み取りの3ツールは`readOnlyHint: true`。画面・入力・Rhai診断には外部パッケージやユーザー由来の文字列が含まれるため`untrustedContentHint: true`。ツール結果はJSONの`{ok:true,...}`または`{ok:false,error:{code,message}}`。MCPサーバーの結果ラッパーに依存しない。
 
-`ui_get_screen`はWASMの部品スナップショットを読む。CSSセレクターや座標を使わない。`widgets`は既定100件、最大200件で、`nextOffset`から続きを取得できる。Gridは表示中のページだけを返す。`actions`の空文字列は通常のボタン／フィールド操作。`blocked`がtrueの部品は操作できない。非操作部品の`actions`は空配列。
+`ui_get_screen`はWASMの部品スナップショットを読む。CSSセレクターや座標を使わない。`widgets`は既定100件、最大200件で、`nextOffset`から続きを取得できる。Gridは表示中のページだけを返す。`actions`の空文字列は通常のボタン／フィールド操作。`blocked`がtrueの部品は操作できない。非操作部品の`actions`は空配列。子Instanceを置いた画面では`components`が子Instanceの一覧を返す。`widgets`と違ってページ分割せず、`offset` / `limit`は`widgets`だけに掛かるため`components`は常に全件返る。子が1つも無ければ`[]`。各要素の形と`widgets`との突き合わせは後述の「次の拡張点」を参照。
 
 `ui_get_state`は1〜10個のキーを指定する。配列は既定25件、最大50件で、total / offset / nextOffsetを返す。入れ子の配列・オブジェクトは50項目、文字列2,000文字、深さ6、値1,000個までのプレビュー。省略した場合は`truncated:true`。全状態を無制限に返す機能ではない。
 
@@ -63,5 +63,13 @@ WebMCPを使うには対応ブラウザとsecure contextが必要。Chromeのロ
 現段階は試作用の共通操作契約。任意URLの読み込み、スクリプト評価、状態への直接書き込みはツールに含めない。ui_load_screenは同梱画面だけを受け付け、状態を初期化する。
 
 画面と部品には任意の`webmcp: {label, description, tags}`を記述できる。`ui_get_screen.screen.webmcp`と`widgets[].metadata.webmcp`へ公開し、stateSchemaも同ツールのプレビューへ含める。省略したschema内容は`stateSchemaTruncated:true`で通知する。上限・記法は[ブラウザ機能の契約](platform-features.md)を参照。これらは説明情報で、共通ツールの許可action・入力schemaや認可を変更しない。
+
+子パッケージ直下の`webmcp`は`ui_get_screen.components[]`へinstance別で公開する。`components[]`の各要素は`{instance, id, title, webmcp, hidden}`。`webmcp`を宣言していない子にはキー自体が出ない。子が1つも無い画面では`Scene`に`components`キーが出ず、`ui_get_screen`は`[]`を返す。順序は`instance`文字列のUTF-8バイト順（WASM側の`BTreeMap`のキー順。ASCIIなら辞書順）で、親は必ず子より先に来る。`components`はページングしない。`ui_get_screen`の`offset` / `limit`は`widgets`だけに掛かり、`components`は常に全件返る。
+
+`hidden`は親の`visibleBind`による非表示だけを意味する。祖先が隠れていれば子孫も`true`。折りたたみ・非アクティブタブ・モーダル背後・無効は`hidden`に含めず、`widgets[]`に出ているかと`blocked`で判断する。
+
+`widgets[].key`を末尾の`/`で割った左側が`components[].instance`。`/`を含まないkeyはrootのもので、`a/b/c`はinstance`a/b`のもの。gridのように1つのノードが複数widgetへ展開される場合は、その全widgetに`widgets[].metadata.webmcp`が載る。
+
+`components[].id` / `.title`はその子パッケージのもので、WebMCP草案の`ModelContextTool.title`とは別物。`screen.webmcp`はrootのものだけで、子が`webmcp`を宣言しても変わらず、ツールは画面1登録のまま。子の`webmcp`の上限はrootと同じ。`itemId`を持たないノードの`webmcp`は検証はされるがどこにも出ない。`components[]`も説明情報で、共通ツールの許可action・入力schemaや認可を変更しない。子の宣言の詳細は[部品化の契約](components.md)を参照。
 
 業務アプリでは、DSLから「注文検索」「見積確定」などの入力schema・結果schemaを宣言し、WASMのハンドラへ接続する専用ツールを追加する余地がある。公開する状態キー、操作ごとの権限・確認、機密値の扱いもその契約に含める。専用ツールのDSL属性・認可・外部MCPサーバー・クロスオリジン公開は今回の実装範囲に含まない。

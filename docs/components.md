@@ -1,6 +1,6 @@
 # 画面合成（コンポーネント）
 
-状態: 実装済み契約（段階5）。方式の選定理由・却下案・段階計画は[部品化の計画・検討](components-plan.md)にあるが、現行仕様の根拠は本文書とコードとする。
+状態: 実装済み契約（段階6）。方式の選定理由・却下案・段階計画は[部品化の計画・検討](components-plan.md)にあるが、現行仕様の根拠は本文書とコードとする。
 
 画面パッケージは別の画面パッケージを埋め込める。埋め込まれた側はエンジン内で独立したInstance（自分のRhaiエンジン・AST・state・確定UIツリー）になり、Sceneは1つ、確定は1トランザクション。単体の画面の契約は[画面契約](screen-format.md)、Instanceと確定の流れは[アーキテクチャ](architecture.md)を参照。
 
@@ -105,7 +105,7 @@ emitは**上方向のみ**、configは**下方向のみ**に連鎖する。emit�
 
 子は非同期効果を自分で出せる。効果関数（`alert`・`confirm`・`file_list`・`file_mkdir`・`file_read_bytes`・`file_read_text`・`file_remove`・`file_stat`・`file_write_bytes`・`file_write_text`・`host_call`・`host_cancel`・`http_get`・`navigate`・`prompt`・`rpc_call`・`storage_read`・`storage_remove`・`storage_write`）はすべてrootと同じに子でも使え、バイト列を作る純粋なコンストラクタの`file_bytes`（効果を積まない）も子で使える。
 
-トップレベルの効果宣言のうち`requests` / `operations` / `storage` / `files` / `rpc` / `pages`の6種は子でも宣言できる。残る`webmcp`だけが据え置き。
+トップレベルの効果宣言は`requests` / `operations` / `storage` / `files` / `rpc` / `pages` / `webmcp`の7種とも子で宣言できる。`webmcp`は効果を積まない説明情報で、子パッケージ直下のものは`ui_get_screen.components[]`にinstance別で公開される。詳細は「子の`webmcp`」節にある。
 
 ### effectの形
 
@@ -163,11 +163,30 @@ Instanceの保存領域scopeは「`<rootパッケージのid>`に、パスの`/`
 
 scope規則の定義は本節が唯一で、他の文書はここを参照する。
 
-## 据え置きの拒否
+## 子の`webmcp`
 
-子に許していないのは次の3つだけ。
+子パッケージも子ノードも`webmcp`を宣言できる。宣言は説明情報だけで、共通ツールの許可action・入力schema・認可は変えない。`ui_get_screen`の応答全体の読み方は[WebMCP契約](webmcp.md)を参照する。
 
-**子の`webmcp`**。`webmcp`を宣言する子は`webmcp is not available in components (reserved for a later stage)`。画面全体のツール面はrootのもの。
+**子パッケージ直下の`webmcp`**は`ui_get_screen.components[]`にinstance別で公開する。
+
+- `components[]`の各要素は`{instance, id, title, webmcp, hidden}`。`webmcp`を宣言していない子にはキー自体が出ない。
+- 子が1つも無い画面では`Scene`に`components`キーが出ず、`ui_get_screen`は`[]`を返す。
+- 順序は`instance`文字列のUTF-8バイト順（`BTreeMap`のキー順。ASCIIなら辞書順）で、親は必ず子より先に来る。
+- `hidden`は**親の`visibleBind`による非表示だけ**を意味する。祖先が隠れていれば子孫も`true`。無効・折りたたみ・非アクティブタブ・モーダル背後は`hidden`に含めず、`widgets[]`に出ているかと`blocked`で判断する。
+
+**子ノード（`itemId`を持つ部品）の`webmcp`**は`widgets[].metadata.webmcp`に出る。keyは接頭辞付き。
+
+- `widgets[].key`を**末尾の`/`**で割った左側が`components[].instance`。`/`を含まないkeyはrootのもの。`a/b/c`はinstance`a/b`。
+- gridのように1つのノードが複数widgetに展開される場合、その**全widget**に`config.webmcp`（= `widgets[].metadata.webmcp`）が載る（実測: `open/orders:header` / `open/orders:row:0` / `open/orders:row:1`の3つとも持つ）。
+- `itemId`を持たないノードの`webmcp`は**どこにも出ない**。検証はされる。これは既存挙動で、仕様として明記する。
+
+`ui_get_screen.screen.webmcp`（画面全体のツール面）は**rootのものだけ**。子が`webmcp`を宣言しても変わらず、ツールは画面1登録のまま。
+
+子の`webmcp`の上限はrootと同じ。`label`は160 UTF-8バイト、`description`は2,000バイト、`tags`は重複なしで最大8件・1件1–80バイト。超えると`Component {path}: webmcp: description/label/tags exceed limits or have duplicate tags`。
+
+## 子に許していないもの
+
+子に許していないのは次の2つだけ。
 
 **子uiの`window`**。`window is not available in components`。画面全体のモーダル層とフォーカスはrootのもの。正規化が`window`へ書き換える`messagebox` / `msgbox`も同じエラーで拒否される。判定はload時に解決済みUIツリーへ掛けるので、`visibleBind`などで条件付きに現れるwindowも通らない。
 
@@ -194,7 +213,7 @@ scope規則の定義は本節が唯一で、他の文書はここを参照する
 - `Unknown component instance: {instance}`
 - `Component {path}: Unknown or completed {HTTP request|storage request|file request|RPC call|host call|dialog request}`
 - `Component {path}: storage scope {scope} requires 1–80 ASCII letters, digits, - or _ without "__" in any part`
-- `webmcp is not available in components (reserved for a later stage)`
+- `Component {path}: webmcp: description/label/tags exceed limits or have duplicate tags`
 - `Host operation has no progress handler`
 
 日本語（JS）。
@@ -274,10 +293,9 @@ Instanceごとの既存上限はそのまま。1画面分の予算を部品が�
 - **handlerの`false`戻り値に意味は無い**。handlerはstateオブジェクトを返す契約で、`false`を返せば`Handler must return a state object`。伝播や既定動作を止める手段としては使えない。
 - **`scope`は無い**。`listeners`は「emit名→同じパッケージ内の関数名」の対応表だけ。実行文脈を差し替える指定は持たない。
 
-## 段階6以降の課題
+## 段階7以降の課題
 
 - 子の`window`。画面全体のモーダル層を親子で共有する方式。
-- WebMCPの合成。子の`webmcp`を画面1登録へまとめる方式。子ノードの`webmcp`は検証されるが登録されない（段階6）。
 - `with_clock`は`ExtensionContext`を画面で1つ共有する前提に乗っている。rootから入った時計が子にも効くのはこの共有によるので、Instanceごとの文脈へ分ける変更は入れない。
 - 計画で置いたemitの連鎖深さ上限4は、入れ子の深さが3の木では使われない。最も深い子からrootまでが2段で、そこで打ち切られる。深さを広げるときに改めて考える。
 
