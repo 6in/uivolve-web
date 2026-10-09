@@ -184,3 +184,10 @@
 - 想定外: なし（最終判定・格子・チェックリスト・F1 回帰はすべて impl turn 12 の報告どおり。`gh` は認証済みで PR 作成も 1 回で通った）
 - やり直し: 0 回
 - 次への注意: (i) **次は `/gsd-lite-reflect`**。PR #5 のマージは人間 / CI。マイルストーンブランチに残ったまま終える（ベースへの checkout はしない）。(ii) reflect の材料: round 1 の差し戻し 4 点はすべて「文書の断言 → 実装シンボル」の照合が**語の一致**で止まり、断言の**反例**（itemId の無い root ノード / `/` を含む grid 行 id / window の中の子）を試していなかったことによる（turn 11 想定外 (1)）。plan のチェックリスト行 12 に「断言ごとに反例を 1 つ流す」を足す提案。(iii) impl turn 12 の「回帰テストを足したら修正を一時的に無効化して落ちることを確認する」は今回効いた（guard `&& false` で `root.0 carries webmcp` が落ちた）。(iv) 残留リスク 7 件は VERIFICATION.md「残留リスク」（`save()` の `metadata` 不正時 / `title` `id` の長さ / Rust 側の宣言上限なし / `components` が文字列 / `publish-packages.mjs` の `rpc` `null` / 3 段の木で 24 宣言 / `toast` 内の子は未実測）。次のマイルストーンの research の入力にする。(v) `verify-instance-refactor.mjs` の最終手順が `composition.json` を変異の結果で上書きする件（turn 10 想定外 (3)）は 3 ターン連続で手で戻しており、スクリプト側で real candidate の probe を最後にもう 1 度回すか、変異の証跡を別ファイルに書く改修候補
+
+## turn 14 — reflect — component-webmcp
+
+- やったこと: 振り返りを .gsd-lite/reflect/20261010-0251-component-webmcp.md に作成（提案 11 件）。計測は turns.jsonl 13 行（13 試行 / 137.9 分 / 93.59 USD、リトライ・無進捗・権限拒否・BLOCKED すべて 0）。前回提案 11 件の反映は 10 件（スキル 3 ファイル + REQUIREMENTS）、未反映 1 件（`usage_total` / reflect 注記）。Plus 10 / Minus 8 / Interesting 8
+- 想定外: なし（記録は揃っていた。PROGRESS.md が約 27,000 トークンで 1 回では読めず 4 分割で読んだ点は Minus 6 に書いた）
+- やり直し: 0 回
+- 次への注意: 契約文書の断言には反例を 1 つ流す（2 マイルストーン連続で F1 が契約文書）。F 系の小修正はサブエージェントを立てない。格子・probe 用の engine ブートストラップ雛形をコミットする。`verify-instance-refactor.mjs` の証跡上書きを T1 で直す
