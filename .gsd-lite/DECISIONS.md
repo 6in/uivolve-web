@@ -51,3 +51,25 @@
 - engine=claude, phase_engines={}。model は research / plan / verify / reflect = claude-fable-5-1、impl = claude-opus-5（前 5 マイルストーンと同じ）。
 - research.targets = local_projects / official_docs / similar_oss。
 - 却下: impl だけ Codex、verify だけ Codex（Codex sandbox の検証で止まるリスク、別モデルの目は今回は不要）。
+
+## plan で確定した細部（2026-10-10、turn 2。詳細は PLAN.md「決めた事項」）
+
+### D11. スコープ外の `window` は拒否文言だけ変える
+
+- 選んだ案: `window is not available in components (reserved for a later stage)` → `window is not available in components`。`reject_windows` の判定・テスト対象・文書の位置は不変。受け入れ 7 の「`reserved for a later stage` が `src/ engine/ docs/ scripts/ tests/` に残らない」が `window` の文言にも当たるため（RESEARCH §1.3）。
+- 却下: 受け入れ 7 の grep 対象から `window` を除外する（要件の書き換えになる）。
+
+### D12. 子の `webmcp` 上限超過の文言は `Component {path}: ` 前置 + root と同じ本文
+
+- 選んだ案: `Component {path}: webmcp: description/label/tags exceed limits or have duplicate tags`（`Composing::load` の `map_err`、`engine/src/lib.rs:513` の既存規約）。受け入れ 2 の「root と同じ文言」はこの形で満たす。
+- 却下: 前置を外して root と完全一致にする（失敗した Instance が分からなくなり、既存の文言規約 `docs/components.md:212` に反する）。
+
+### D13. `Scene.components` は空なら出さない（`skip_serializing_if`）、JS が `[]` を埋める
+
+- 選んだ案: 子の無い画面の `layout` 応答を 1 バイトも変えず、base との文字列照合（正規化は http の `kind` 1 か所のみ）を保つ。出所は WASM のまま（JS は無い = 空と読むだけで推測しない）。
+- 却下: 常に出して照合に正規化を足す（`docs/testing.md` の「正規化はこの1か所だけ」を崩す）。
+
+### D14. `restore` の壊れたポインタは `キャッシュの管理情報が不正です`、`save` は読み飛ばす
+
+- 選んだ案: `restore` は理由を残す（`通信に失敗し、利用できる保存版もありません（キャッシュの管理情報が不正です）`）。`save` は `NotFoundError` と同じく読み飛ばして保存を続ける（R0「保存版なしとして処理を続ける」）。
+- 却下: `restore` でも理由なしで次のポインタへ（情報が消える）。
