@@ -189,6 +189,46 @@ bun run docs:check                                   # Markdown のローカル�
   - 依存: T7
   - 並列サブ作業: なし
 
+- [ ] F1: 契約文書の 4 か所の言い切り・帰属・欠落を直す（verify round 1 の指摘。文書のみ。コードとテストは触らない）
+  - 完了基準（4 件すべて。行番号は HEAD `844162e` のもの。`git grep -n -F` で引き直す）:
+    1. `docs/components.md:181`「マニフェストが約束するsha256 / sizeが…すべてで一致するときだけ」→ `size` を外し「sha256 が source・script・descriptor（キー集合と各 sha256）のすべてで一致するときだけ」にする（根拠: `src/application-loader.js` の `sameHashes` は sha256 だけを比べる。REQUIREMENTS R5 も sha256 だけ）
+    2. `docs/components.md:205` と `docs/files-cache-rpc.md:109` の「`components`の形・子の件数・…が外れたとき」→ 「子エントリの形・子の件数・子のファイル情報・絶対化後の重複が外れたとき。`components` 自体が無い・`null`・配列・object 以外のときは `配信マニフェストが不正です`」にする（根拠: `manifest()` の先頭の判定 `application-loader.js:46-52` と `tests/components-loader.test.js:394`）
+    3. `docs/components.md:202`「ローダーと`UiRuntime`の両方が出す」→ 生成スクリプト（`scripts/publish-packages.mjs`）も出すことを足す。同 `:256` の「JS側は取得中に日本語（…）」の 3 文言のうち `コンポーネントの入れ子が3段を超えています: {URL}` と `コンポーネント {名前} の循環参照: {URL}` は生成スクリプトも出し、そのとき `{URL}` の位置は絶対ファイルパスであることを 1 句足す（根拠: `publish-packages.mjs:44,51,52`）
+    4. `docs/components.md` の「エラー文言」日本語の列挙に `通信に失敗し、利用できる保存版もありません` と括弧付きの派生 `通信に失敗し、利用できる保存版もありません（{最後に試した版の失敗文言}）`（ポインタが 1 つも無いときは括弧なし）を足し、`docs/files-cache-rpc.md:93` の「画面へ復元理由を表示する」の直後にも同じ 2 形を書く（根拠: `application-loader.js:581-585`。DECISIONS「plan が決めた細部」9）
+  - 期待結果（`git grep` の条件。文書のみなのでテストは無い）:
+
+    | 条件                                                                                                        | 期待           |
+    | ----------------------------------------------------------------------------------------------------------- | -------------- |
+    | `git grep -n -F 'sha256 / size' -- docs`                                                                    | 0 件           |
+    | `git grep -n -F '`components`の形' -- docs/components.md docs/files-cache-rpc.md`                           | 0 件           |
+    | `git grep -c -F '通信に失敗し、利用できる保存版もありません' -- docs/components.md docs/files-cache-rpc.md` | 両方 1 以上    |
+    | `git grep -n -F 'publish-packages' -- docs/components.md`                                                   | 2 件以上       |
+    | `bun .gsd-lite/logs/component-loader/scratch/turn-009-checks.mjs`                                           | 行数 14 / NG 0 |
+    | `bun run check` と `bun run docs:check`                                                                     | exit 0         |
+
+  - 対象: `docs/components.md`, `docs/files-cache-rpc.md`
+  - 依存: T8
+  - 並列サブ作業: なし
+
+- [ ] F2: マニフェストの子キーの絶対化の基準を `fetch` / `save` / `restore` で揃える（verify round 1 の指摘。コード 1 行 + テスト 1 本 + 文書 1 句）
+  - 背景: `fetch` の network-first は `#childIndex(metadata, sidecar)`（`application-loader.js:412`）でキーを sidecar URL 基準に絶対化し、`save`（`:459`）と `restore`（`:565`）は画面 URL 基準。通常の相対パスでは同じ href になるが、基準に依存するキー（`""` / `?x` / `#f`）は `fetch` が通した木を `save` が `マニフェストに無い子` で拒否する（root のファイルを書いた後に失敗し、ポインタは更新されない）。生成スクリプトはそのキーを出さないが、ローダー内で 1 つのマニフェストに 2 つの解釈があるのは契約の穴
+  - 完了基準:
+    - `fetch` の network-first で索引を `this.#childIndex(metadata, url)`（画面 URL 基準）にする。`manifest(value, sidecar)` と `#fromManifest(index, sidecar, signal)` の `open`（配信ファイルの `url` の基準）は sidecar のまま。`save` / `restore` は無改修
+    - テスト（`tests/components-loader.test.js` の `describe("ApplicationLoader の木のマニフェスト")` に 1 本）: 子キー `"?x"` を持ち、宣言が `parent.json.manifest.json?x` を指す木（sidecar 基準なら一致、画面 URL 基準なら不一致）を network-first で取得 → 下の表の文言で拒否され、`reads` に `?x` 付きの配信ファイルは無い。あわせて通常の相対キー（`a.json` / `parts/b.json` / `../x.json`）の既存テストが期待値不変
+    - `docs/files-cache-rpc.md:105` の「ローダーは子キーを`httpUrl(key, base)`で絶対化し」の `base` を「rootの画面URL（`save` / `restore` と同じ基準）」と明記する
+  - 期待結果:
+
+    | 条件                                                                                                            | 期待                                                                                                                    |
+    | --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+    | 子キー `"?x"` + 宣言 `parent.json.manifest.json?x`                                                              | `fetch` が `マニフェストのコンポーネント情報が不正です（マニフェストに無い子: …parent.json.manifest.json?x）` で reject |
+    | 既存の木のテスト（相対キー）                                                                                    | 期待値不変で green                                                                                                      |
+    | `bunx vp test run tests/components-loader.test.js tests/publish-packages.test.js tests/files-cache-rpc.test.js` | green                                                                                                                   |
+    | `bun run check`                                                                                                 | exit 0                                                                                                                  |
+
+  - 対象: `src/application-loader.js`, `tests/components-loader.test.js`, `docs/files-cache-rpc.md`
+  - 依存: F1
+  - 並列サブ作業: なし
+
 ## 決めた事項
 
 要件・決定の範囲で plan が確定した細部。impl はこれを再議論しない。
