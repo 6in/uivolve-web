@@ -136,6 +136,54 @@ function parsed(url, source, script, descriptors) {
   if (typeof screen.script !== "string") throw new Error("script URLがありません");
   return { screen, format, script: decoder.decode(script), source: decoder.decode(source) };
 }
+// The body both verified suppliers share. A declaration the manifest says nothing about is refused
+// before any file is opened; everything else is read through `open`, checked against the entry it
+// was published with and carried with the manifest's own hashes so a later load can tell this body
+// apart. `reuse` decides whether a package already in memory stands in for the read.
+function supplied({ index, open, reuse }) {
+  return async (href) => {
+    const child = index[href.href];
+    if (!child)
+      throw new Error(
+        `マニフェストのコンポーネント情報が不正です（マニフェストに無い子: ${href.href}）`,
+      );
+    const kept = reuse(href, child);
+    if (kept) return kept;
+    const file = async (name, entry) => {
+      // Opening stays outside the catch: a network failure must keep its code so the delivery path
+      // can still fall back to a stored version.
+      const bytes = await open(name, entry, href);
+      try {
+        return await verify(bytes, entry);
+      } catch {
+        // Which package the damaged file belongs to is the part the root's own wording lacks.
+        throw new Error(`配信ファイルのサイズ・ハッシュが一致しません（${href.href}）`);
+      }
+    };
+    const source = await file("source", child.source);
+    const script = await file("script", child.script);
+    const descriptors = Object.create(null);
+    const hashes = {
+      source: child.source.sha256,
+      script: child.script.sha256,
+      descriptors: Object.create(null),
+    };
+    const keys = Object.keys(child.descriptors ?? {}).sort();
+    for (let n = 0; n < keys.length; n++) {
+      descriptors[keys[n]] = await file(`descriptor-${n}`, child.descriptors[keys[n]]);
+      hashes.descriptors[keys[n]] = child.descriptors[keys[n]].sha256;
+    }
+    const judged = parsed(href, source, script, descriptors);
+    return {
+      screen: judged.screen,
+      script: judged.script,
+      descriptors,
+      sourceBytes: source,
+      scriptBytes: script,
+      hashes,
+    };
+  };
+}
 // True when a shared package was built from exactly the files a manifest entry names. A token
 // swapped behind the same hashes is not detected here; a changed file always is.
 function sameHashes(hashes, child) {
@@ -266,50 +314,33 @@ export class ApplicationLoader {
       index[httpUrl(key, base).href] = child;
     return index;
   }
-  // Supplies a child from the files the manifest delivers, each one verified against its entry.
-  // A declaration the manifest says nothing about is refused before any URL is guessed at.
+  // Supplies a child from the files the manifest delivers, each one named by its own entry.
   #fromManifest(index, base, signal) {
-    return async (href) => {
-      const child = index[href.href];
-      if (!child)
-        throw new Error(
-          `マニフェストのコンポーネント情報が不正です（マニフェストに無い子: ${href.href}）`,
-        );
+    return supplied({
+      index,
+      open: (name, entry) => this.resources.bytes(httpUrl(entry.url, base), { signal }),
       // A shared body stands in only while the manifest promises the very files it was built from:
       // one differing hash, a descriptor's included, means this version delivers something else.
-      const shared = this.#share.get(href.href);
-      if (shared && sameHashes(shared.hashes, child)) return shared;
-      const file = async (entry) => {
-        const bytes = await this.resources.bytes(httpUrl(entry.url, base), { signal });
-        try {
-          return await verify(bytes, entry);
-        } catch {
-          // Which package the damaged file belongs to is the part the root's own wording lacks.
-          throw new Error(`配信ファイルのサイズ・ハッシュが一致しません（${href.href}）`);
-        }
-      };
-      const source = await file(child.source);
-      const script = await file(child.script);
-      const descriptors = Object.create(null);
-      const hashes = {
-        source: child.source.sha256,
-        script: child.script.sha256,
-        descriptors: Object.create(null),
-      };
-      for (const key of Object.keys(child.descriptors ?? {}).sort()) {
-        descriptors[key] = await file(child.descriptors[key]);
-        hashes.descriptors[key] = child.descriptors[key].sha256;
-      }
-      const judged = parsed(href, source, script, descriptors);
-      return {
-        screen: judged.screen,
-        script: judged.script,
-        descriptors,
-        sourceBytes: source,
-        scriptBytes: script,
-        hashes,
-      };
-    };
+      reuse: (href, child) => {
+        const shared = this.#share.get(href.href);
+        return shared && sameHashes(shared.hashes, child) ? shared : undefined;
+      },
+    });
+  }
+  // Supplies a child from the stored generation, where the files sit at the slot the child's
+  // position in the sorted manifest keys gives it rather than at a URL of their own. Nothing is
+  // reused from memory here: reading every file back is how a damaged generation is found.
+  #fromStore(directory, metadata, base, signal) {
+    const keys = Object.keys(metadata.components ?? {}).sort();
+    const slots = Object.create(null);
+    for (let i = 0; i < keys.length; i++) slots[httpUrl(keys[i], base).href] = i;
+    const path = `versions/${metadata.revision}/components`;
+    return supplied({
+      index: this.#childIndex(metadata, base),
+      open: (name, entry, href) =>
+        directory.read(`${path}/${slots[href.href]}/${name}`, { signal }),
+      reuse: () => undefined,
+    });
   }
   // Every child the manifest lists must have been reached through a declaration; a key nothing
   // places would otherwise ride along in the revision without ever being loaded.
@@ -421,6 +452,26 @@ export class ApplicationLoader {
           await directory.write(`${path}/descriptor-${i}`, candidate.descriptors[keys[i]], {
             signal,
           });
+        // The children are stored by the manifest's own keys, sorted: the same slot the restore
+        // reads them back from. A child two declarations place is still one key, so one slot.
+        const children = Object.keys(candidate.metadata.components ?? {}).sort();
+        for (let i = 0; i < children.length; i++) {
+          const href = httpUrl(children[i], candidate.url).href;
+          const entry = candidate.components?.[href];
+          if (!entry)
+            throw new Error(
+              `マニフェストのコンポーネント情報が不正です（マニフェストに無い子: ${href}）`,
+            );
+          const slot = `${path}/components/${i}`;
+          await directory.mkdir(slot, { signal });
+          await directory.write(`${slot}/source`, entry.sourceBytes, { signal });
+          await directory.write(`${slot}/script`, entry.scriptBytes, { signal });
+          const own = Object.keys(
+            candidate.metadata.components[children[i]].descriptors ?? {},
+          ).sort();
+          for (let n = 0; n < own.length; n++)
+            await directory.write(`${slot}/descriptor-${n}`, entry.descriptors[own[n]], { signal });
+        }
         signal?.throwIfAborted();
         if (this.resources.getAuthentication().mode !== "none")
           throw new Error("認証設定が変更されたためキャッシュを中止しました");
@@ -450,10 +501,21 @@ export class ApplicationLoader {
           signal?.throwIfAborted();
         }
         const versions = await directory.directory(["versions"], { signal });
+        // Collected first: removing while the iterator is open is not something the OPFS contract
+        // promises, and a tree now spans several entries per generation.
+        const stale = [];
         for await (const [name, handle] of versions.entries()) {
           signal?.throwIfAborted();
           if (handle.kind === "directory" && /^[a-f0-9]{64}$/.test(name) && !keep.has(name))
+            stale.push(name);
+        }
+        for (const name of stale) {
+          signal?.throwIfAborted();
+          try {
             await versions.removeEntry(name, { recursive: true });
+          } catch (e) {
+            if (e.name !== "NotFoundError") throw e;
+          }
         }
       },
       { signal, locks: this.locks },
@@ -465,8 +527,10 @@ export class ApplicationLoader {
     return withFileLock(
       `uivolve-web:cache:${url.href}`,
       async () => {
+        // The reason the newest generation was rejected is the one worth reporting, so it is kept
+        // until every pointer has been tried. A pointer that simply is not there says nothing.
+        let last;
         for (const pointer of ["current.json", "previous.json"]) {
-          let candidate;
           try {
             const stored = JSON.parse(decoder.decode(await directory.read(pointer, { signal })));
             if (stored.url !== url.href) throw new Error("キャッシュのURLが一致しません");
@@ -488,21 +552,37 @@ export class ApplicationLoader {
                 metadata.descriptors[key],
               );
             signal?.throwIfAborted();
-            candidate = await this.#candidate(url, source, script, descriptors, "cache", metadata);
-          } catch {
-            signal?.throwIfAborted();
-          }
-          // Until the stored tree is walked on this path, a saved screen that declares children
-          // cannot be rebuilt. Refusing it is a decision, not a damaged generation, so it must not
-          // fall through to the previous pointer.
-          if (candidate) {
-            if (Object.keys(candidate.screen.components ?? {}).length)
-              throw new Error("マニフェストのコンポーネント情報が不正です");
-            candidate.components = Object.create(null);
+            const candidate = await this.#candidate(
+              url,
+              source,
+              script,
+              descriptors,
+              "cache",
+              metadata,
+            );
+            // The stored tree is walked and matched exactly as a delivered one is: one child that
+            // fails to come back whole takes the whole generation out of use.
+            const index = this.#childIndex(metadata, url);
+            const packages = await this.#walk(
+              candidate.screen,
+              url,
+              signal,
+              this.#fromStore(directory, metadata, url, signal),
+            );
+            this.#matchTree(index, packages);
+            candidate.components = packages;
+            this.#remember(packages);
             return candidate;
+          } catch (e) {
+            signal?.throwIfAborted();
+            if (e.name !== "NotFoundError") last = e;
           }
         }
-        throw new Error("通信に失敗し、利用できる保存版もありません");
+        throw new Error(
+          last
+            ? `通信に失敗し、利用できる保存版もありません（${last.message}）`
+            : "通信に失敗し、利用できる保存版もありません",
+        );
       },
       { signal, locks: this.locks },
     );

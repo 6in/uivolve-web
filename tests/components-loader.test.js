@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { ApplicationLoader, manifestRevision, sha256 } from "../src/application-loader.js";
 import { componentScope, instanceTable, scopeProblem } from "../src/component-tree.js";
 import { WasmEngine } from "../src/engine.js";
+import { OpfsDirectory } from "../src/opfs.js";
 import { parsePackage } from "../src/package-format.js";
 import { ResourceClient } from "../src/resource-client.js";
 import { UiRuntime } from "../src/runtime.js";
@@ -33,6 +34,7 @@ vi.mock("../src/canvas-renderer.js", () => ({
 describe("ApplicationLoader の components 取得", () => {
   const base = "https://parts.test/screens/";
   const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
   const href = (path) => new URL(path, base).href;
   const screen = (id, extra = {}) => ({
     version: 1,
@@ -711,27 +713,281 @@ describe("ApplicationLoader の components 取得", () => {
       );
     });
 
-    // `save` and `restore` still hold one package each: the stored tree arrives with T5.
-    it("stores the root alone and refuses to restore a screen that declares children", async () => {
+    // A loader backed by a small OPFS, and the version directory of a url as the cache tests read
+    // it: `versions/<revision>/components/<slot>/{source,script,descriptor-n}`.
+    const withCache = (f) => {
+      const fs = memoryOpfs();
+      return {
+        fs,
+        loader: new ApplicationLoader({
+          resources: f.resources,
+          storage: fs.storage,
+          locks: null,
+        }),
+      };
+    };
+    const cacheDirectory = async (fs, url) =>
+      new OpfsDirectory(["uivolve-web", "cache", await sha256(encoder.encode(url.href))], {
+        storage: fs.storage,
+      });
+    const pointerOf = async (directory, name) =>
+      JSON.parse(decoder.decode(await directory.read(name)));
+    const names = async (directory, path) =>
+      (await directory.list(path)).map((entry) => entry.name);
+    // The same tree, with an RPC descriptor on the second child so a slot holds every file kind.
+    const treeWithDescriptor = () => {
+      const list = tree();
+      list[2] = [
+        "parts/b.json",
+        screen("b", {
+          rpc: {
+            echo: {
+              url: "https://rpc.test/uivolve.demo.EchoService/Echo",
+              descriptor: "b.pb",
+              service: "uivolve.demo.EchoService",
+              method: "Echo",
+              protocol: "connect",
+              handler: "echoDone",
+            },
+          },
+        }),
+      ];
+      return list;
+    };
+
+    it("stores every child of a delivered tree at the slot its sorted key gives it", async () => {
+      const list = treeWithDescriptor();
+      const f = fixture(list);
+      const { fs, loader } = withCache(f);
+      const t = await treeManifest(f, list, {
+        descriptors: { "parts/b.json": { "b.pb": encoder.encode("descriptor") } },
+      });
+      const candidate = await loader.fetch(t.url, { mode: "network-first" });
+      const closed = [];
+      fs.controls.beforeClose = async (name) => closed.push(name);
+      await loader.save(candidate);
+      // The root's body and script, two files for each of the three children, the one descriptor
+      // and the pointer: a tree is written once through, nothing twice.
+      expect(closed.length).toBe(10);
+      const directory = await cacheDirectory(fs, t.url);
+      const path = `versions/${candidate.metadata.revision}/components`;
+      expect(await names(directory, path)).toEqual(["0", "1", "2"]);
+      expect(await names(directory, `${path}/0`)).toEqual(["script", "source"]);
+      expect(await names(directory, `${path}/2`)).toEqual(["descriptor-0", "script", "source"]);
+      // Slot 0 is `a.json`, the first of the sorted manifest keys.
+      expect(await directory.read(`${path}/0/source`)).toEqual(
+        candidate.components[href("a.json")].sourceBytes,
+      );
+      const pointer = await pointerOf(directory, "current.json");
+      expect(pointer.metadata.version).toBe(2);
+      expect(Object.keys(pointer.metadata.components).sort()).toEqual([
+        "a.json",
+        "leaf.json",
+        "parts/b.json",
+      ]);
+    });
+
+    it("rebuilds the stored tree exactly as the network builds it", async () => {
+      const list = tree();
+      const direct = await fixture(list).loader.fetch(href("parent.json"));
+      const f = fixture(list);
+      const { loader } = withCache(f);
+      const t = await treeManifest(f, list);
+      await loader.save(await loader.fetch(t.url, { mode: "network-first" }));
+      f.responses.set(t.sidecar.href, new TypeError("offline"));
+      const restored = await loader.fetch(t.url, { mode: "network-first" });
+      expect(restored.status).toBe("cache");
+      // The reason is the one the resource client reports for a failed transfer, not the
+      // underlying `TypeError`: that is what the host puts in front of the user.
+      expect(restored.fallbackReason).toBe(
+        "HTTP取得に失敗しました（通信・CORS・リダイレクトを確認してください）",
+      );
+      expect(Object.keys(restored.components).sort()).toEqual(
+        Object.keys(direct.components).sort(),
+      );
+      expect(restored.screen.components).toEqual(direct.screen.components);
+      expect(restored.components[href("a.json")].screen.components).toEqual(
+        direct.components[href("a.json")].screen.components,
+      );
+      // The Instance table and the scope judgement are the walk's, so a stored tree that rebuilds
+      // at all rebuilds into the same shape the network produced.
+      expect(table(restored)).toEqual(table(direct));
+      await loader.clear(t.url);
+      await expect(loader.fetch(t.url, { mode: "network-first" })).rejects.toThrow(
+        /保存版もありません/,
+      );
+    });
+
+    // One complete generation saved, plus a way to deliver the next one: the child's script is
+    // what differs, so the root is republished unchanged and only one slot has to be refetched.
+    const afterFirstSave = async () => {
       const list = tree();
       const f = fixture(list);
-      const fs = memoryOpfs();
-      const loader = new ApplicationLoader({
-        resources: f.resources,
-        storage: fs.storage,
-        locks: null,
-      });
+      const { fs, loader } = withCache(f);
+      const first = await treeManifest(f, list);
+      const one = await loader.fetch(first.url, { mode: "network-first" });
+      await loader.save(one);
+      const nextCandidate = async (suffix) => {
+        const next = tree();
+        next[1][2] = `fn init(s) { s } // ${suffix}`;
+        const t = await treeManifest(f, next);
+        return loader.fetch(t.url, { mode: "network-first" });
+      };
+      return {
+        f,
+        fs,
+        loader,
+        url: first.url,
+        one,
+        nextCandidate,
+        directory: await cacheDirectory(fs, first.url),
+      };
+    };
+    const twoGenerations = async () => {
+      const held = await afterFirstSave();
+      const two = await held.nextCandidate("generation two");
+      await held.loader.save(two);
+      return { ...held, two };
+    };
+
+    it("skips a generation whose stored child no longer matches its entry", async () => {
+      const { loader, url, one, two, directory } = await twoGenerations();
+      await directory.write(
+        `versions/${two.metadata.revision}/components/0/script`,
+        encoder.encode("bad"),
+      );
+      expect((await loader.restore(url)).metadata.revision).toBe(one.metadata.revision);
+      // A damaged generation is passed over, not deleted: the pointer still names it.
+      expect((await pointerOf(directory, "current.json")).metadata.revision).toBe(
+        two.metadata.revision,
+      );
+    });
+
+    it("names the reason no stored generation could be used", async () => {
+      const { loader, url, one, two, directory } = await twoGenerations();
+      for (const revision of [two.metadata.revision, one.metadata.revision])
+        await directory.write(`versions/${revision}/components/0/script`, encoder.encode("bad"));
+      await expect(loader.restore(url)).rejects.toThrow(
+        `通信に失敗し、利用できる保存版もありません（配信ファイルのサイズ・ハッシュが一致しません（${href("a.json")}））`,
+      );
+    });
+
+    it("stores a child two declarations place at a single slot", async () => {
+      const list = [
+        [
+          "parent.json",
+          screen("parent", {
+            components: { left: { url: "part.json" }, right: { url: "./part.json" } },
+            ui: {
+              xtype: "container",
+              items: [node("left"), { xtype: "panel", items: [node("right")] }],
+            },
+          }),
+        ],
+        ["part.json", screen("part")],
+      ];
+      const f = fixture(list);
+      const { fs, loader } = withCache(f);
       const t = await treeManifest(f, list);
       const candidate = await loader.fetch(t.url, { mode: "network-first" });
-      const written = [];
-      fs.controls.beforeClose = async (name) => written.push(name);
+      const closed = [];
+      fs.controls.beforeClose = async (name) => closed.push(name);
       await loader.save(candidate);
-      expect(written).toEqual(["source", "script", "current.json"]);
-      await expect(loader.restore(t.url)).rejects.toThrow(MALFORMED);
-      await loader.clear(t.url);
-      await expect(loader.restore(t.url)).rejects.toThrow(
-        "通信に失敗し、利用できる保存版もありません",
+      expect(closed.length).toBe(5);
+      const directory = await cacheDirectory(fs, t.url);
+      expect(await names(directory, `versions/${candidate.metadata.revision}/components`)).toEqual([
+        "0",
+      ]);
+      const restored = await loader.restore(t.url);
+      expect(Object.keys(restored.components)).toEqual([href("part.json")]);
+      expect(restored.screen.components.right.url).toBe(href("part.json"));
+    });
+
+    it("carries every child back through a key order that is not alphabetical by eye", async () => {
+      const keys = ["A.json", "_a.json", "a-1.json", "a.json"];
+      const list = [
+        [
+          "parent.json",
+          screen("parent", {
+            components: Object.fromEntries(keys.map((key, i) => [`c${i}`, { url: key }])),
+          }),
+        ],
+        ...keys.map((key, i) => [key, screen(`c${i}`), `fn init(s) { s } // ${i}`]),
+      ];
+      const f = fixture(list);
+      const { loader } = withCache(f);
+      const t = await treeManifest(f, list);
+      await loader.save(await loader.fetch(t.url, { mode: "network-first" }));
+      const restored = await loader.restore(t.url);
+      for (let i = 0; i < keys.length; i++)
+        expect(restored.components[href(keys[i])].script).toBe(`fn init(s) { s } // ${i}`);
+      // UTF-16 code units, not a locale collation: the slots follow `Object.keys(...).sort()`.
+      expect(Object.keys(t.metadata.components).sort()).toEqual([
+        "A.json",
+        "_a.json",
+        "a-1.json",
+        "a.json",
+      ]);
+    });
+
+    it("publishes no pointer when a child of the new generation cannot be written", async () => {
+      const quota = await afterFirstSave();
+      const second = await quota.nextCandidate("quota");
+      let closes = 0;
+      // The fourth file of a save is the first child's script: the generation is half written.
+      quota.fs.controls.beforeClose = async () => {
+        if (++closes === 4) throw new DOMException("quota", "QuotaExceededError");
+      };
+      await expect(quota.loader.save(second)).rejects.toMatchObject({ name: "QuotaExceededError" });
+      quota.fs.controls.beforeClose = async () => {};
+      expect((await quota.loader.restore(quota.url)).metadata.revision).toBe(
+        quota.one.metadata.revision,
       );
+      expect((await pointerOf(quota.directory, "current.json")).metadata.revision).toBe(
+        quota.one.metadata.revision,
+      );
+      const aborted = await afterFirstSave();
+      const third = await aborted.nextCandidate("abort");
+      const controller = new AbortController();
+      let seen = 0;
+      aborted.fs.controls.beforeClose = async () => {
+        if (++seen === 4) controller.abort();
+      };
+      await expect(aborted.loader.save(third, { signal: controller.signal })).rejects.toMatchObject(
+        {
+          name: "AbortError",
+        },
+      );
+      aborted.fs.controls.beforeClose = async () => {};
+      expect((await pointerOf(aborted.directory, "current.json")).metadata.revision).toBe(
+        aborted.one.metadata.revision,
+      );
+    });
+
+    it("collects the stale generations before removing any of them", async () => {
+      const held = await afterFirstSave();
+      const versions = await held.directory.directory(["versions"]);
+      let open = 0;
+      const entries = versions.entries.bind(versions);
+      versions.entries = async function* () {
+        open++;
+        try {
+          yield* entries();
+        } finally {
+          open--;
+        }
+      };
+      const removals = [];
+      const remove = versions.removeEntry.bind(versions);
+      versions.removeEntry = vi.fn(async (name, options) => {
+        removals.push(open);
+        return remove(name, options);
+      });
+      await held.loader.save(await held.nextCandidate("two"));
+      await held.loader.save(await held.nextCandidate("three"));
+      // The first generation falls out once a third arrives, and nothing was iterating by then.
+      expect(removals).toEqual([0]);
+      expect(await names(held.directory, "versions")).toHaveLength(2);
     });
   });
 
@@ -1139,5 +1395,85 @@ describe("WasmEngine / UiRuntime の components", () => {
     expect(fetch.mock.calls.at(-1)[1]).toMatchObject({ refresh: true });
     await runtime.load(SOURCE);
     expect(fetch.mock.calls.at(-1)[1]).toMatchObject({ refresh: false });
+  });
+
+  // A version 2 manifest for the parent and its card, published under the names
+  // `publish-packages.mjs` gives them, behind a loader with its own small OPFS.
+  async function deliveredTree() {
+    const responses = new Map();
+    const encode = new TextEncoder();
+    const url = new URL("pages/home.json", BASE);
+    const sidecar = new URL(`${url.href}.manifest.json`);
+    const publish = async (name, bytes) => {
+      const entry = {
+        url: `packages/rev/${name}`,
+        sha256: await sha256(bytes),
+        size: bytes.length,
+      };
+      responses.set(new URL(entry.url, sidecar).href, bytes);
+      return entry;
+    };
+    const metadata = {
+      version: 2,
+      revision: "a".repeat(64),
+      source: await publish("source", encode.encode(JSON.stringify(parent("card.json")))),
+      script: await publish("script", encode.encode(ROOT_SCRIPT)),
+      descriptors: {},
+      components: {
+        "card.json": {
+          source: await publish("component-0-source", encode.encode(JSON.stringify(card()))),
+          script: await publish("component-0-script", encode.encode(CARD_SCRIPT)),
+          descriptors: {},
+        },
+      },
+    };
+    metadata.revision = await manifestRevision(metadata);
+    responses.set(sidecar.href, encode.encode(JSON.stringify(metadata)));
+    const resources = new ResourceClient({
+      baseUrl: BASE,
+      fetch: async (target) => {
+        const value = responses.get(String(target));
+        if (value instanceof Error) throw value;
+        if (value === undefined) return new Response("missing", { status: 404 });
+        return new Response(value);
+      },
+    });
+    const fs = memoryOpfs();
+    return {
+      url,
+      sidecar,
+      responses,
+      loader: new ApplicationLoader({ resources, storage: fs.storage, locks: null }),
+    };
+  }
+
+  it("loads a tree rebuilt from the delivery cache into real WASM", async () => {
+    const t = await deliveredTree();
+    const runtime = await host({ clockProvider: fixedClock });
+    await t.loader.save(await t.loader.fetch(t.url, { mode: "network-first" }));
+    t.responses.set(t.sidecar.href, new TypeError("offline"));
+    const restored = await t.loader.fetch(t.url, { mode: "network-first" });
+    expect(restored.status).toBe("cache");
+    runtime.compile(restored.screen, restored.script, t.url.href, {
+      format: restored.format,
+      components: restored.components,
+    });
+    expect(Object.keys(runtime.components)).toEqual([CARD_URL]);
+    expect(runtime.components[CARD_URL].screen.ui.items[0].today).toBe("2026-10-04");
+    expect(runtime.screen.id).toBe("home");
+  });
+
+  // Storing a generation is housekeeping: it must never take down the screen already on screen.
+  it("reports a failed save without disturbing the screen it just loaded", async () => {
+    const events = [];
+    const runtime = await host({ clockProvider: fixedClock, onCache: (e) => events.push(e) });
+    await runtime.load(SOURCE);
+    vi.spyOn(runtime.applicationLoader, "save").mockRejectedValue(
+      new DOMException("quota", "QuotaExceededError"),
+    );
+    await runtime.load(SOURCE);
+    expect(events.at(-1)).toMatchObject({ status: "save-error" });
+    expect(events.at(-1).error.name).toBe("QuotaExceededError");
+    expect(runtime.screen.id).toBe(definition.id);
   });
 });
