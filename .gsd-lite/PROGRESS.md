@@ -277,3 +277,10 @@
 - 想定外: (1) turn 13 の申し送り (iv)（`manifest()` の重複判定が sidecar 基準のまま）は、画面 URL 基準でだけ衝突する `""` + `parent.json` を実際に流しても `#childIndex` で 1 エントリに畳まれて `（宣言に無い子: …）` に収まり、`TypeError` にも無言の candidate にもならなかった。残留リスク 10 として記録し差し戻していない。(2) F2 の格子で「宣言が `parent.json?x` を指す木」は candidate が返り `save` → `restore` が同じキーで往復した（F2 の背景だった「`fetch` が通した木を `save` が拒否する」が消えていることの直接確認）
 - やり直し: 0 回
 - 次への注意: 次は reflect。材料は PROGRESS の turn 1〜14（やり直しは turn 2・4・5・7 の整形起因 1 回ずつと turn 10 の 2 回、verify round 1 → 2 の差し戻し 1 回）。reflect が見るべき点: (i) verify round 1 の指摘 2 件のうち F2 は plan の「決めた事項」3 が `fetch` と `save` / `restore` で別の基準を許していたことが原因（plan 段階で 3 入口の基準を 1 つに決めていれば impl で揃っていた）。(ii) round 1 の格子はキーを変えただけで revision を再計算しておらず、形の検査の先に到達していなかった（格子を書くときは「どの検査段で止まるか」を各ケースに書き、狙った段に到達しているかを確認する）。(iii) `bun run check` の整形起因のやり直しが 4 ターンで起きている（`Edit` の前に `bunx vp fmt` を掛ける習慣で消える）。(iv) 最終 state は PR #4 のブランチに載せて再 push する。reflect 後の DONE への遷移もブランチ上でコミットして push する（ベースへは戻らない）
+
+## turn 15 — reflect — component-loader
+
+- やったこと: 振り返りを .gsd-lite/reflect/20261009-1151-component-loader.md に作成（提案 11 件）。turns.jsonl の 14 試行（142.4 分 / 99.34 USD。リトライ・無進捗・BLOCKED・権限拒否 0）、PROGRESS turn 1〜14、git log 26 件、PLAN / VERIFICATION / DECISIONS、前回 reflect 2 件を突き合わせた。前回の提案 11 件はすべて反映済みで、verify のサブエージェントの「一対一」化が F1 / F2 の発見として実効を持った。state を `done` にしてブランチに push する
+- 想定外: なし（記録は揃っていた。turns.jsonl の `usage` がサブエージェント分を含まない疑いは推測として Interesting に書いた）
+- やり直し: 0 回
+- 次への注意: 整形は `check` の前に `fmt`、同じ値を 2 経路で導出する設計は基準を 1 つに決める、格子は各ケースの到達段を明記、申し送りの「不備」には再現コマンドを添える、最終判定は plan で 1 回回す
