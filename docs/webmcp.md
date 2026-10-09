@@ -66,10 +66,10 @@ WebMCPを使うには対応ブラウザとsecure contextが必要。Chromeのロ
 
 子パッケージ直下の`webmcp`は`ui_get_screen.components[]`へinstance別で公開する。`components[]`の各要素は`{instance, id, title, webmcp, hidden}`。`webmcp`を宣言していない子にはキー自体が出ない。子が1つも無い画面では`Scene`に`components`キーが出ず、`ui_get_screen`は`[]`を返す。順序は`instance`文字列のUTF-8バイト順（WASM側の`BTreeMap`のキー順。ASCIIなら辞書順）で、親は必ず子より先に来る。`components`はページングしない。`ui_get_screen`の`offset` / `limit`は`widgets`だけに掛かり、`components`は常に全件返る。
 
-`hidden`は親の`visibleBind`による非表示だけを意味する。祖先が隠れていれば子孫も`true`。折りたたみ・非アクティブタブ・モーダル背後・無効は`hidden`に含めず、`widgets[]`に出ているかと`blocked`で判断する。
+`hidden`は配置ノード（componentノード）自身の`visibleBind`による非表示だけを意味する。祖先が隠れていれば子孫も`true`。rootの`window`（これも`visibleBind`を持つ）の中に置いた子は、windowが閉じていても`hidden: false`（`widgets[]`に出ないので、`blocked`と同じ側で読む）。折りたたみ・非アクティブタブ・モーダル背後・無効は`hidden`に含めず、`widgets[]`に出ているかと`blocked`で判断する。
 
-`widgets[].key`を末尾の`/`で割った左側が`components[].instance`。`/`を含まないkeyはrootのもので、`a/b/c`はinstance`a/b`のもの。gridのように1つのノードが複数widgetへ展開される場合は、その全widgetに`widgets[].metadata.webmcp`が載る。
+`widgets[].key`の最初の`:`より前（`:`が無ければkey全体）を末尾の`/`で割った左側が`components[].instance`。`itemId`は`:`と`/`を含めないので一意で、advanced gridの行key`a/g:row:"x/y"`のように`:`より後ろには`/`が入り得る。`/`を含まないkeyはrootのもので、`a/b/c`はinstance`a/b`のもの。gridのように1つのノードが複数widgetへ展開される場合は、その全widgetに`widgets[].metadata.webmcp`が載る。
 
-`components[].id` / `.title`はその子パッケージのもので、WebMCP草案の`ModelContextTool.title`とは別物。`screen.webmcp`はrootのものだけで、子が`webmcp`を宣言しても変わらず、ツールは画面1登録のまま。子の`webmcp`の上限はrootと同じ。`itemId`を持たないノードの`webmcp`は検証はされるがどこにも出ない。`components[]`も説明情報で、共通ツールの許可action・入力schemaや認可を変更しない。子の宣言の詳細は[部品化の契約](components.md)を参照。
+`components[].id` / `.title`はその子パッケージのもので、WebMCP草案の`ModelContextTool.title`とは別物。`screen.webmcp`はrootのものだけで、子が`webmcp`を宣言しても変わらず、ツールは画面1登録のまま。子の`webmcp`の上限はrootと同じ。`itemId`を持たないノードの`webmcp`は検証はされるがどこにも出ない。rootのUIノード自身も同じで、`target`を持たないwidgetには載らない。`components[]`も説明情報で、共通ツールの許可action・入力schemaや認可を変更しない。子の宣言の詳細は[部品化の契約](components.md)を参照。
 
 業務アプリでは、DSLから「注文検索」「見積確定」などの入力schema・結果schemaを宣言し、WASMのハンドラへ接続する専用ツールを追加する余地がある。公開する状態キー、操作ごとの権限・確認、機密値の扱いもその契約に含める。専用ツールのDSL属性・認可・外部MCPサーバー・クロスオリジン公開は今回の実装範囲に含まない。

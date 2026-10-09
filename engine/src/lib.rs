@@ -1350,6 +1350,11 @@ impl Runtime {
         // target, and an itemId holds no `/`, so the last one splits the instance from the node
         // that declared the metadata. Without the split only the root's tree would be searched.
         for widget in &mut widgets {
+            // An empty target is a node without an itemId, and `find_path` answers the root node
+            // for the empty itemId, so without this the root's metadata lands on every one of them.
+            if widget.target.is_empty() {
+                continue;
+            }
             let (instance_path, item_id) = match widget.target.rsplit_once('/') {
                 Some((instance_path, item_id)) => (instance_path, item_id),
                 None => ("", widget.target.as_str()),

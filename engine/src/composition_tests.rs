@@ -1291,6 +1291,58 @@ fn a_child_node_publishes_its_webmcp_on_the_prefixed_widget() {
     );
 }
 
+/// `labelled.json` — a child whose only node declares metadata without an itemId to publish it
+/// under, the way the root of a screen does.
+fn labelled() -> Package {
+    part(
+        "labelled",
+        json!({"value": 0}),
+        json!({}),
+        json!([{"xtype": "label", "text": "子", "webmcp": {"description": "子のラベル"}}]),
+    )
+}
+
+#[test]
+fn a_node_without_an_item_id_publishes_its_webmcp_on_no_widget() {
+    let mut root = part(
+        "parent",
+        json!({"query": ""}),
+        json!({"labelled": {"url": "labelled.json"}}),
+        json!([
+            {"xtype": "label", "text": "親", "webmcp": {"description": "rootのラベル"}},
+            {"xtype": "textfield", "itemId": "search", "bind": "query", "fieldLabel": "検索",
+             "webmcp": {"description": "絞り込みの語"}},
+            component("labelled", "a", json!({})),
+        ]),
+    );
+    // The root node carries no itemId either, and `find_path` answers it for the empty one.
+    root.ui.webmcp.description = "rootのコンテナ".into();
+    let parts = bundle(vec![("labelled.json", labelled(), CHILD_SCRIPT)]);
+    let runtime = compose(root, parts).expect("a composed screen");
+    let scene = runtime.layout(800.0).expect("a scene");
+    let keys = keys(&scene);
+    // A widget without a target has no node of its own to publish, in any instance.
+    for widget in scene.widgets.iter().filter(|w| w.target.is_empty()) {
+        assert!(
+            widget.config.get("webmcp").is_none(),
+            "{} carries webmcp in {keys:?}",
+            widget.key
+        );
+    }
+    // The two labels, keyed by their index because neither declared an itemId.
+    for key in ["root.0", "a/root.0"] {
+        assert!(
+            widget_at(&scene, key).config.get("webmcp").is_none(),
+            "{key} carries webmcp in {keys:?}"
+        );
+    }
+    // A node with an itemId still publishes what it declared.
+    assert_eq!(
+        widget_at(&scene, "search").config["webmcp"],
+        json!({"description": "絞り込みの語"})
+    );
+}
+
 #[test]
 fn a_grandchild_node_publishes_its_webmcp_under_the_full_instance_path() {
     let runtime = compose(

@@ -151,16 +151,18 @@ describe("raw ABI で読む受注ダッシュボード", () => {
     const { widgets } = raw({ op: "layout", width: 800 }).data;
     // The grid of the part expands into a header and its rows; every one of them carries it.
     const grid = (prefix) =>
-      widgets.find((w) => w.key.startsWith(`${prefix}orders`) && Object.hasOwn(w.config, "webmcp"));
+      widgets.filter(
+        (w) => w.key.startsWith(`${prefix}orders`) && Object.hasOwn(w.config, "webmcp"),
+      );
     const open = grid("open/");
     const shipped = grid("shipped/");
-    expect(open?.key, widgets.map((w) => w.key).join(" ")).toBeDefined();
-    expect(shipped?.key, widgets.map((w) => w.key).join(" ")).toBeDefined();
-    expect(open.config.webmcp).toEqual({
-      description: "行を選ぶと親へselectedを通知する。",
-      tags: ["select"],
-    });
-    expect(shipped.config.webmcp).toEqual(open.config.webmcp);
+    const declared = { description: "行を選ぶと親へselectedを通知する。", tags: ["select"] };
+    const keys = widgets.map((w) => w.key).join(" ");
+    expect(open.length, keys).toBeGreaterThanOrEqual(3);
+    expect(shipped.length, keys).toBeGreaterThanOrEqual(3);
+    for (const w of open) expect(w.config.webmcp, w.key).toEqual(declared);
+    for (const w of shipped) expect(w.config.webmcp, w.key).toEqual(declared);
+    expect(shipped[0].config.webmcp, keys).toEqual(open[0].config.webmcp);
   });
 
   it("keeps the screen webmcp at the root, which this dashboard never declares", () => {

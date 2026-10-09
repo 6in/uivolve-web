@@ -172,13 +172,13 @@ scope規則の定義は本節が唯一で、他の文書はここを参照する
 - `components[]`の各要素は`{instance, id, title, webmcp, hidden}`。`webmcp`を宣言していない子にはキー自体が出ない。
 - 子が1つも無い画面では`Scene`に`components`キーが出ず、`ui_get_screen`は`[]`を返す。
 - 順序は`instance`文字列のUTF-8バイト順（`BTreeMap`のキー順。ASCIIなら辞書順）で、親は必ず子より先に来る。
-- `hidden`は**親の`visibleBind`による非表示だけ**を意味する。祖先が隠れていれば子孫も`true`。無効・折りたたみ・非アクティブタブ・モーダル背後は`hidden`に含めず、`widgets[]`に出ているかと`blocked`で判断する。
+- `hidden`は**配置ノード（componentノード）自身の`visibleBind`による非表示だけ**を意味する。祖先が隠れていれば子孫も`true`。rootの`window`（これも`visibleBind`を持つ）の中に置いた子は、windowが閉じていても`hidden: false`（`widgets[]`に出ないので、`blocked`と同じ側で読む）。無効・折りたたみ・非アクティブタブ・モーダル背後は`hidden`に含めず、`widgets[]`に出ているかと`blocked`で判断する。
 
 **子ノード（`itemId`を持つ部品）の`webmcp`**は`widgets[].metadata.webmcp`に出る。keyは接頭辞付き。
 
-- `widgets[].key`を**末尾の`/`**で割った左側が`components[].instance`。`/`を含まないkeyはrootのもの。`a/b/c`はinstance`a/b`。
+- `widgets[].key`の**最初の`:`より前**（`:`が無ければkey全体）を末尾の`/`で割った左側が`components[].instance`。`itemId`は`:`と`/`を含めないので一意。advanced gridの行key`a/g:row:"x/y"`のように`:`より後ろには`/`が入り得る。`/`を含まないkeyはrootのもの。`a/b/c`はinstance`a/b`。
 - gridのように1つのノードが複数widgetに展開される場合、その**全widget**に`config.webmcp`（= `widgets[].metadata.webmcp`）が載る（実測: `open/orders:header` / `open/orders:row:0` / `open/orders:row:1`の3つとも持つ）。
-- `itemId`を持たないノードの`webmcp`は**どこにも出ない**。検証はされる。これは既存挙動で、仕様として明記する。
+- `itemId`を持たないノードの`webmcp`は**どこにも出ない**。検証はされる。子パッケージの中では既存挙動で、仕様として明記する。rootのUIノード自身も同じで（`target`を持たないwidgetには載らない）、こちらは本マイルストーンで漏れを止めた。
 
 `ui_get_screen.screen.webmcp`（画面全体のツール面）は**rootのものだけ**。子が`webmcp`を宣言しても変わらず、ツールは画面1登録のまま。
 
