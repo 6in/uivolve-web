@@ -33,9 +33,14 @@ fn take_descriptors(
 /// The instance a completion is addressed to. A missing key means the root, which is how every
 /// effect without an `instance` of its own comes back; anything that is not a usable path is
 /// refused rather than silently read as the root.
-fn take_instance(request: &Value) -> Result<String, String> {
+/// The length is capped first so a host cannot spend the engine's work, or its error strings, on
+/// a path no placement could ever have produced.
+pub(crate) fn take_instance(request: &Value) -> Result<String, String> {
     match request.get("instance") {
         None => Ok(String::new()),
+        Some(Value::String(path)) if path.len() > 256 => {
+            Err("Component instance path exceeds 256 bytes".into())
+        }
         Some(Value::String(path)) if composition::valid_instance_path(path) => Ok(path.clone()),
         _ => Err("Invalid component instance".into()),
     }

@@ -3226,3 +3226,35 @@ fn a_completion_that_grows_the_state_without_bound_moves_no_instance() {
     assert_eq!(screen_states(&runtime), before);
     assert_eq!(runtime.revision, revision);
 }
+
+/// A completion names its instance by path, so the path is the one part of the request a host can
+/// make arbitrarily long. 256 bytes is the cap: anything longer is refused on length alone, before
+/// the shape of the path is ever judged, and the refusal does not quote the path back.
+#[test]
+fn a_completion_naming_an_instance_longer_than_256_bytes_is_refused_on_length() {
+    let at_the_cap = "a".repeat(256);
+    assert_eq!(
+        crate::abi::take_instance(&json!({"instance": at_the_cap.clone()})),
+        Ok(at_the_cap)
+    );
+    let too_long = "a".repeat(257);
+    let err = crate::abi::take_instance(&json!({"instance": too_long.clone()}))
+        .expect_err("a path over the cap");
+    assert_eq!(err, "Component instance path exceeds 256 bytes");
+    assert!(!err.contains(&too_long));
+    // The length is judged first, so a path that is both too long and malformed is refused for
+    // its length; and the cap counts UTF-8 bytes, not characters, so 86 three-byte characters are
+    // already over it.
+    for path in [
+        format!("{}:{}", "a".repeat(200), "b".repeat(57)),
+        "あ".repeat(86),
+        format!("{}/x", "a".repeat(255)),
+    ] {
+        assert_eq!(
+            crate::abi::take_instance(&json!({"instance": path})),
+            Err("Component instance path exceeds 256 bytes".to_owned())
+        );
+    }
+    // A completion with no instance of its own is still the root's.
+    assert_eq!(crate::abi::take_instance(&json!({})), Ok(String::new()));
+}

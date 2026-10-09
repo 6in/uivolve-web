@@ -197,6 +197,7 @@ it("delivers a completion to the component instance the effect named", () => {
     [{}, "Invalid component instance"],
     ["open/", "Invalid component instance"],
     ["zzz", "Unknown component instance: zzz"],
+    ["a".repeat(257), "Component instance path exceeds 256 bytes"],
   ]) {
     expect(raw(JSON.stringify({ ...result, instance }))).toMatchObject({ ok: false, error });
     expect(JSON.stringify(raw(JSON.stringify({ op: "layout", width: 800 })))).toBe(layout);

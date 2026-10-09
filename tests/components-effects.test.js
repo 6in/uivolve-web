@@ -5,8 +5,11 @@ import { ApplicationLoader } from "../src/application-loader.js";
 import { componentScope, instanceTable } from "../src/component-tree.js";
 import { WasmEngine } from "../src/engine.js";
 import { HostEffects } from "../src/host-effects.js";
+import { HttpEffects } from "../src/http-effects.js";
+import { PageEffects } from "../src/page-effects.js";
 import { ResourceClient } from "../src/resource-client.js";
 import { UiRuntime } from "../src/runtime.js";
+import { StorageEffects } from "../src/storage-effects.js";
 import { registry } from "../scripts/rpc-schema.mjs";
 
 // Adapters are verified in-browser. These tests exercise the shared host with real WASM.
@@ -539,5 +542,79 @@ fn answered(s, r) { s.answer = "" + r.data; s }`;
     });
     // The child answered inside the screen's one step.
     expect(result.revision).toBe(dispatched.revision + 1);
+  });
+});
+
+// --- 8: an effect addressed to an unregistered Instance reaches neither WASM nor the outside ---
+
+describe("配送先が未登録の Instance", () => {
+  // The instance path sits between one literal space and の; an empty path therefore reads as two.
+  const GHOST = "コンポーネント ghost の配送先が未登録です";
+  const ROOT = "コンポーネント  の配送先が未登録です";
+
+  it("refuses an HTTP request for an unregistered instance before any fetch", async () => {
+    const text = vi.fn();
+    const complete = vi.fn(() => ({ effects: [] }));
+    const onError = vi.fn();
+    const effects = new HttpEffects({ resources: { text }, complete, onError });
+
+    effects.resetInstances(new Map([["", new URL(BASE)]]));
+    await effects.run([{ id: 1, instance: "ghost", url: "data.json", request: {} }]);
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][0]).toBeInstanceOf(Error);
+    expect(onError.mock.calls[0][0].message).toBe(GHOST);
+    expect(complete).not.toHaveBeenCalled();
+    expect(text).not.toHaveBeenCalled();
+
+    // A root effect carries no instance; an empty table leaves even the root unrouted.
+    effects.resetInstances(new Map());
+    await effects.run([{ id: 2, url: "data.json", request: {} }]);
+    expect(onError).toHaveBeenCalledTimes(2);
+    expect(onError.mock.calls[1][0].message).toBe(ROOT);
+    expect(complete).not.toHaveBeenCalled();
+    expect(text).not.toHaveBeenCalled();
+  });
+
+  it("refuses a storage operation for an unregistered instance before any client call", async () => {
+    const client = { execute: vi.fn() };
+    const complete = vi.fn(() => ({ effects: [] }));
+    const onError = vi.fn();
+    const effects = new StorageEffects({ client, complete, onError });
+
+    effects.resetInstances(new Map([["", "host"]]));
+    await effects.run([
+      { id: 1, instance: "ghost", backend: "opfs", operation: "read", key: "draft" },
+    ]);
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][0]).toBeInstanceOf(Error);
+    expect(onError.mock.calls[0][0].message).toBe(GHOST);
+    expect(complete).not.toHaveBeenCalled();
+    expect(client.execute).not.toHaveBeenCalled();
+
+    effects.resetInstances(new Map());
+    await effects.run([{ id: 2, backend: "opfs", operation: "read", key: "draft" }]);
+    expect(onError).toHaveBeenCalledTimes(2);
+    expect(onError.mock.calls[1][0].message).toBe(ROOT);
+    expect(complete).not.toHaveBeenCalled();
+    expect(client.execute).not.toHaveBeenCalled();
+  });
+
+  it("refuses a navigation for an unregistered instance before calling the loader", async () => {
+    const load = vi.fn();
+    const onError = vi.fn();
+    const effects = new PageEffects({ load, onError });
+
+    effects.resetInstances(new Map([["", new URL(BASE)]]));
+    await effects.run([{ kind: "navigate", instance: "ghost", url: "details.yaml" }]);
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][0]).toBeInstanceOf(Error);
+    expect(onError.mock.calls[0][0].message).toBe(GHOST);
+    expect(load).not.toHaveBeenCalled();
+
+    effects.resetInstances(new Map());
+    await effects.run([{ kind: "navigate", url: "details.yaml" }]);
+    expect(onError).toHaveBeenCalledTimes(2);
+    expect(onError.mock.calls[1][0].message).toBe(ROOT);
+    expect(load).not.toHaveBeenCalled();
   });
 });

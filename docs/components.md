@@ -1,6 +1,6 @@
 # 画面合成（コンポーネント）
 
-状態: 実装済み契約（段階4）。方式の選定理由・却下案・段階計画は[部品化の計画・検討](components-plan.md)にあるが、現行仕様の根拠は本文書とコードとする。
+状態: 実装済み契約（段階5）。方式の選定理由・却下案・段階計画は[部品化の計画・検討](components-plan.md)にあるが、現行仕様の根拠は本文書とコードとする。
 
 画面パッケージは別の画面パッケージを埋め込める。埋め込まれた側はエンジン内で独立したInstance（自分のRhaiエンジン・AST・state・確定UIツリー）になり、Sceneは1つ、確定は1トランザクション。単体の画面の契約は[画面契約](screen-format.md)、Instanceと確定の流れは[アーキテクチャ](architecture.md)を参照。
 
@@ -129,6 +129,7 @@ dialogs / pagesのキューは画面で1本なのでrootの位置に並び、子
 - **子の完了には必須**。`instance`キーの省略がroot宛という意味になる。
 - 受理する形は「1つ以上の空でない要素を`/`で繋いだもの。`:`を含まない」（正規表現なら`^[^/:]+(/[^/:]+)*$`）。rootを空文字列で名乗ることはできず、キーを省略して名乗る。
 - 形から外れた値は`Invalid component instance`。形は合うが存在しないパスは`Unknown component instance: {instance}`。
+- 長さは256バイト（UTF-8）まで。256バイトを超えるパスは形の検査より先に`Component instance path exceeds 256 bytes`で拒否し、**その値を文言に載せない**。
 
 `dialog_result`も同じ規則で名乗る。ダイアログのスタックは画面のものだが、**どのInstanceのhandlerが走るかは「効果を出したInstance」（リクエスト側）が決める**。hostはeffectに載っていた`instance`をそのまま名乗る契約で、違うInstanceを名乗ると他人のダイアログを食べずに拒否される。
 
@@ -155,7 +156,7 @@ Instanceの保存領域scopeは「`<rootパッケージのid>`に、パスの`/`
 - 各要素と連結後のscopeが`[A-Za-z0-9_-]`のみ。連結後は80バイト以内。
 - 同じ子を2か所に置けば`host__a`と`host__b`のように別scopeになる。片方の保存が他方に見えることはない。
 
-**RustとJSの2段構え**になっている。
+**RustとJSの2段**で検査する。
 
 - Rustはload時に検証だけを行う。外れると`Component {path}: storage scope {scope} requires 1–80 ASCII letters, digits, - or _ without "__" in any part`。検証するのは`storage`か`files`を宣言する子だけで、データを持たない子はscope規則の外に置ける`itemId`でもよい。
 - JSは実際にscopeを組んでstorage / filesの呼び出しに使う。検査は子を取得する経路で、Rustと同じく`storage`か`files`を宣言する子だけに掛ける。外れたら`コンポーネント {path} の保存領域 {scope} が不正です（英数字・-・_ で80バイト以内、各要素に __ を含めない）`。
@@ -164,15 +165,23 @@ scope規則の定義は本節が唯一で、他の文書はここを参照する
 
 ## 据え置きの拒否
 
-子に許していないのは次の4つだけ。
+子に許していないのは次の3つだけ。
 
 **子の`webmcp`**。`webmcp`を宣言する子は`webmcp is not available in components (reserved for a later stage)`。画面全体のツール面はrootのもの。
 
 **子uiの`window`**。`window is not available in components (reserved for a later stage)`。画面全体のモーダル層とフォーカスはrootのもの。正規化が`window`へ書き換える`messagebox` / `msgbox`も同じエラーで拒否される。判定はload時に解決済みUIツリーへ掛けるので、`visibleBind`などで条件付きに現れるwindowも通らない。
 
-**配信キャッシュ**。`components`を宣言する画面は`network-first`で取得できず、保存版からの復元もできない。`componentsを持つ画面は配信キャッシュ（network-first）に対応していません`。マニフェストが1パッケージ1本のため。
-
 **エディタの「変更を適用」**。直前の`load`で取得した子をそのまま再利用する。編集した定義の宣言URLが、再利用できる子のURLと一致しなければ`コンポーネント {名前} の本体がありません（URLから読み込んでください）`。子を差し替えたいときは「URLから読み込む」で取り直す。
+
+## 子パッケージのメモリ共有
+
+同じ`UiRuntime`（= 同じ`ApplicationLoader`インスタンス）内で、**子だけ**をページ遷移をまたいでメモリに保持する。rootは共有しない。
+
+- 無効化の契機は3つ。(1)`fetch`の`refresh`（「再読込」）、(2)キャッシュ方式（`mode`）が変わった、(3)認証設定（`getAuthentication()`の値）が変わった。どれかで共有マップを丸ごと捨てる。`mode`と認証は**値で比較する**（`getAuthentication`は毎回新しいオブジェクトを返す）。
+- `network-first`では、共有している子は**マニフェストが約束するsha256がsource・script・descriptor（キー集合と各sha256）のすべてで一致するときだけ**読み直しの代わりに使う。1つでも違えばその版は別のファイルを配信しているので読み直す。
+- `network-only`では比較する相手が無いので、共有している子はそのまま使う。したがって**トークンだけを差し替えた配信は検知しない**。セッション内で子の更新を取り込むには「再読込」（`refresh`）で取り直す。
+- 保存版からの復元（`restore`）では共有を一切使わない。全ファイルを読み直すことが壊れた版の検出そのものだから。
+- 共有マップに入るのは**検査をすべて通った走査の結果だけ**。途中の中断・拒否では何も入らない。
 
 ## エラー文言
 
@@ -181,6 +190,7 @@ scope規則の定義は本節が唯一で、他の文書はここを参照する
 英語（Rust）。
 
 - `Invalid component instance`
+- `Component instance path exceeds 256 bytes`
 - `Unknown component instance: {instance}`
 - `Component {path}: Unknown or completed {HTTP request|storage request|file request|RPC call|host call|dialog request}`
 - `Component {path}: storage scope {scope} requires 1–80 ASCII letters, digits, - or _ without "__" in any part`
@@ -189,9 +199,15 @@ scope規則の定義は本節が唯一で、他の文書はここを参照する
 
 日本語（JS）。
 
-- `コンポーネント {名前} の宣言が不正です（url を文字列で指定してください）`。`components`の宣言の`url`が文字列でないとき、ローダーと`UiRuntime`の両方が出す。
+- `コンポーネント {名前} の宣言が不正です（url を文字列で指定してください）`。`components`の宣言の`url`が文字列でないとき、ローダー・`UiRuntime`・生成スクリプト（`scripts/publish-packages.mjs`）が出す。
 - `コンポーネント {path} の保存領域 {scope} が不正です（英数字・-・_ で80バイト以内、各要素に __ を含めない）`
 - `コンポーネント {instance} の配送先が未登録です`。root由来のeffectだと`{instance}`が空文字になり、文中に空白が2つ並ぶ。
+- `マニフェストのコンポーネント情報が不正です`。version 2の子エントリの形・子の件数・子のファイル情報・絶対化後の重複が外れたとき。`components`自体が無い・`null`・配列・object以外のときは`配信マニフェストが不正です`。括弧付きの派生がある。
+  - `マニフェストのコンポーネント情報が不正です（マニフェストに無い子: {URL}）`。宣言から辿った子がマニフェストに無い（配信・保存の両方、および`save`のとき）。
+  - `マニフェストのコンポーネント情報が不正です（宣言に無い子: {URL}）`。マニフェストにあるのに宣言から辿れない子。
+- `配信ファイルの合計が2 MBを超えています（合計 {総バイト数} バイト。最大の子: {URL} {バイト数} バイト）`。ローダーと生成スクリプト（`scripts/publish-packages.mjs`。`{URL}`の位置は子キー）が同じ文言を使う。
+- `配信ファイルのサイズ・ハッシュが一致しません`。rootのファイルが約束と違うとき。子は`配信ファイルのサイズ・ハッシュが一致しません（{URL}）`で、どのパッケージのファイルが壊れていたかを足した形。
+- `通信に失敗し、利用できる保存版もありません`。通信障害で復元へ落ちたのに、どの保存版も使えなかったとき。版を1つでも試せた場合は`通信に失敗し、利用できる保存版もありません（{最後に試した版の失敗文言}）`で、ポインタが1つも無いときは括弧なしの基本形。
 
 `Component {path}: `の前置は失敗したInstanceを名乗るためのもので、rootの失敗には前置が付かない。2 MB・Instance数・入れ子の深さ・循環参照の文言は「制限」節にある。
 
@@ -199,15 +215,18 @@ scope規則の定義は本節が唯一で、他の文書はここを参照する
 
 Instanceごとの既存上限はそのまま。1画面分の予算を部品が食い潰さないので、既存画面を無改修で部品にできる。
 
-| 対象                      | 上限                                 |
-| ------------------------- | ------------------------------------ |
-| Instance数                | 8（rootを含む）                      |
-| 入れ子の深さ              | 3（rootが1段目）                     |
-| UIノード / 階層           | Instanceごとに200ノード / 20階層     |
-| スクリプト                | Instanceごとに100 KB                 |
-| state                     | InstanceごとにJSONシリアライズ後1 MB |
-| ABIの1リクエスト          | 2 MB（子を同梱した合計。据え置き）   |
-| ABIの`components`エントリ | 8パッケージ                          |
+| 対象                      | 上限                                                                                              |
+| ------------------------- | ------------------------------------------------------------------------------------------------- |
+| Instance数                | 8（rootを含む）                                                                                   |
+| 入れ子の深さ              | 3（rootが1段目）                                                                                  |
+| UIノード / 階層           | Instanceごとに200ノード / 20階層                                                                  |
+| スクリプト                | Instanceごとに100 KB                                                                              |
+| state                     | InstanceごとにJSONシリアライズ後1 MB                                                              |
+| ABIの1リクエスト          | 2 MB（子を同梱した合計。据え置き。配信はマニフェストの`source.size + script.size`合計で前段拒否） |
+| ABIの`components`エントリ | 8パッケージ                                                                                       |
+| 完了opの`instance`        | 256バイト（UTF-8。超過は値を文言に載せずに拒否）                                                  |
+
+`instance`の256バイトは完了opの入口だけに掛かる。接頭辞付きのパスが256バイトを超える子は完了を受け取れないので、`itemId`はこの範囲に収める。
 
 効果の上限は所属が2通りに分かれる。
 
@@ -225,7 +244,17 @@ Instanceごとの既存上限はそのまま。1画面分の予算を部品が�
 - `host_cancel`は**同じInstanceが出した操作だけ**を取り消す。他のInstanceの同名操作には届かない。
 - 超過時のエラーは`At most 8 instances per screen (root included); exceeded at component {path}`、`Component {path}: nesting depth exceeds 3`、`UI exceeds 200 nodes or 20 nesting levels`、`Script exceeds 100 KB`、`State exceeds 1 MB`、`Request exceeds 2 MB`、`At most 8 component packages`。
 - Instance数と同梱パッケージ数は別物。同じURLの子は1回だけ同梱され、置いた回数だけInstanceになる。
-- 2MBはJS側とRust側の2段構え。JS側は子を同梱した後のバイト数を数え、超えたら`リクエストが2 MBを超えています（同梱後 {総バイト数} バイト。最大の子: {URL} {バイト数} バイト）`で、どの子が大きいかまで出す。Rust側は入力長だけを見て`Request exceeds 2 MB`を返す。Instance数・入れ子の深さ・循環参照も同じ2段構えで、JS側は取得中に日本語（`コンポーネントの数が8を超えています（rootを含む）: {URL}`、`コンポーネントの入れ子が3段を超えています: {URL}`、`コンポーネント {名前} の循環参照: {URL}`）、Rust側はload時に英語（上記と`Component {path}: circular reference to {url}`）で拒否する。
+- 2MBは3段構え。段ごとに数えるものと文言が違う。
+
+  | 段               | どこ                                     | 何を数えるか                                                                     | 超過時                                                                                                  |
+  | ---------------- | ---------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+  | マニフェスト段階 | `manifest()`（生成スクリプトも同じ合計） | **生バイト**の`source.size + script.size`のroot + 全子の和。descriptorは含めない | `配信ファイルの合計が2 MBを超えています（合計 {総バイト数} バイト。最大の子: {URL} {バイト数} バイト）` |
+  | 同梱後（JS）     | `load`の直前                             | 子を同梱した**JSON化後**のバイト数                                               | `リクエストが2 MBを超えています（同梱後 {総バイト数} バイト。最大の子: {URL} {バイト数} バイト）`       |
+  | 入力長（Rust）   | load時                                   | 入力長だけ                                                                       | `Request exceeds 2 MB`                                                                                  |
+
+  **マニフェスト段階は生バイトの粗い前段で、`load`時（JSON化後）が正**。descriptorを合計に含めないのは、`load`のリクエストに入るのがpackageとscriptだけでdescriptorはbuffer ABIを通るため。descriptorには1 MB / 8件 / 16 MBの上限が別にある。「最大の子」も同じ`source.size + script.size`の和で選び、同点はキー順。
+
+- Instance数・入れ子の深さ・循環参照はJS側とRust側の2段で、JS側は取得中に日本語（`コンポーネントの数が8を超えています（rootを含む）: {URL}`、`コンポーネントの入れ子が3段を超えています: {URL}`、`コンポーネント {名前} の循環参照: {URL}`）、Rust側はload時に英語（上記と`Component {path}: circular reference to {url}`）で拒否する。この日本語3文言は生成スクリプト（`scripts/publish-packages.mjs`）も出し、そのとき`{URL}`の位置は絶対ファイルパスになる。
 - `itemId`は`/`を予約する。componentノードでも通常のウィジェットでも使えない。接頭辞付きパスとの区別がつかなくなるため。
 - 宣言していないxtypeを置いた、または同梱されていないURLを宣言したときは`Component {path}: {xtype} is not declared`、`Component {path}: package {url} was not bundled`。
 - JSローダーは**宣言単位**で循環・深さを検査し、uiに置かれていない宣言も取得・検査する。Rustは**配置単位**で検査する。したがってraw ABIでは通る「置かれていない自己参照の宣言」は、ローダーでは拒否される。
@@ -240,10 +269,9 @@ Instanceごとの既存上限はそのまま。1画面分の予算を部品が�
 - **handlerの`false`戻り値に意味は無い**。handlerはstateオブジェクトを返す契約で、`false`を返せば`Handler must return a state object`。伝播や既定動作を止める手段としては使えない。
 - **`scope`は無い**。`listeners`は「emit名→同じパッケージ内の関数名」の対応表だけ。実行文脈を差し替える指定は持たない。
 
-## 段階5以降の課題
+## 段階6以降の課題
 
 - 子の`window`。画面全体のモーダル層を親子で共有する方式。
-- 配信キャッシュ。子を含む画面のマニフェストと`network-first` / 復元。
 - WebMCPの合成。子の`webmcp`を画面1登録へまとめる方式。子ノードの`webmcp`は検証されるが登録されない（段階6）。
 - `with_clock`は`ExtensionContext`を画面で1つ共有する前提に乗っている。rootから入った時計が子にも効くのはこの共有によるので、Instanceごとの文脈へ分ける変更は入れない。
 - 計画で置いたemitの連鎖深さ上限4は、入れ子の深さが3の木では使われない。最も深い子からrootまでが2段で、そこで打ち切られる。深さを広げるときに改めて考える。

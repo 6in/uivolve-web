@@ -419,6 +419,7 @@ export class UiRuntime {
       const candidate = await this.applicationLoader.fetch(url, {
         mode: this.cacheMode,
         signal: controller.signal,
+        refresh: refreshEngine,
       });
       const engine = refreshEngine
         ? await WasmEngine.create(this.wasmUrl, {
