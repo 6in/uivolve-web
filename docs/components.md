@@ -283,4 +283,4 @@ Instanceごとの既存上限はそのまま。1画面分の予算を部品が�
 
 ## 検証
 
-合成の挙動は、合成の無いビルドとは応答照合できない。証跡ファイルは`target/engine-compare/composition.json`。probe（`scripts/probe-composition.mjs`）は6列・54ステップで、列IDは`order-dashboard` / `child-effect-written-out` / `child-effect-through-a-pointer` / `child-dialog-carries-its-instance` / `child-webmcp-refused` / `parts-lab`。部品ラボの列が効果の`instance`・完了のルーティング・宛先違い / 2 MB / 再load後の遅延完了の拒否を押さえる。検査の手順と、どの変異が検出されるべきかは[検証基準](testing.md)を参照する。
+合成の挙動は、合成の無いビルドとは応答照合できない。証跡ファイルは`target/engine-compare/composition.json`。probe（`scripts/probe-composition.mjs`）は6列・57ステップで、列IDは`order-dashboard` / `child-effect-written-out` / `child-effect-through-a-pointer` / `child-dialog-carries-its-instance` / `child-webmcp-published` / `parts-lab`。部品ラボの列が効果の`instance`・完了のルーティング・宛先違い / 2 MB / 再load後の遅延完了の拒否を押さえる。検査の手順と、どの変異が検出されるべきかは[検証基準](testing.md)を参照する。

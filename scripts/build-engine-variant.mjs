@@ -62,6 +62,14 @@ export const MUTATIONS = [
     to: "                let target = match true {",
     diff: "parts-lab の http_result:products が Unknown or completed",
   },
+  {
+    name: "components-omitted",
+    probe: "composition",
+    file: "engine/src/lib.rs",
+    from: "components: self.component_summaries()?,",
+    to: "components: Vec::new(),",
+    diff: "child-webmcp-published の layout:800 の data.components",
+  },
 ];
 
 function parseArgs(argv) {
