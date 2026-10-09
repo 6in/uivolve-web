@@ -121,13 +121,20 @@ async function verify(bytes, entry) {
     throw new Error("配信ファイルのサイズ・ハッシュが一致しません");
   return bytes;
 }
-// The delivery cache keeps one manifest per package, so a screen that pulls in children cannot be
-// restored as a whole yet. Both cache paths refuse such screens and report no children.
-function withoutComponents(candidate) {
-  if (Object.keys(candidate.screen.components ?? {}).length)
-    throw new Error("componentsを持つ画面は配信キャッシュ（network-first）に対応していません");
-  candidate.components = Object.create(null);
-  return candidate;
+// One delivered package judged against the files that came with it: the screen parses, its RPC
+// descriptor set matches the delivered descriptors exactly and it names a script URL. The root and
+// every child go through the same gate, so a child reports the same refusals the root does.
+function parsed(url, source, script, descriptors) {
+  const format = packageFormat(url);
+  const screen = parsePackage(decoder.decode(source), format);
+  const wanted = [...new Set(Object.values(screen.rpc ?? {}).map((r) => r.descriptor))];
+  if (
+    wanted.some((key) => typeof key !== "string" || !Object.hasOwn(descriptors, key)) ||
+    Object.keys(descriptors).some((key) => !wanted.includes(key))
+  )
+    throw new Error("RPCのDescriptorと配信ファイルが一致しません");
+  if (typeof screen.script !== "string") throw new Error("script URLがありません");
+  return { screen, format, script: decoder.decode(script), source: decoder.decode(source) };
 }
 export class ApplicationLoader {
   constructor({ resources, storage, locks } = {}) {
@@ -141,19 +148,11 @@ export class ApplicationLoader {
     });
   }
   async #candidate(url, source, script, descriptors = {}, status = "network", metadata) {
-    const format = packageFormat(url);
-    const screen = parsePackage(decoder.decode(source), format);
-    const wanted = [...new Set(Object.values(screen.rpc ?? {}).map((r) => r.descriptor))];
-    if (
-      wanted.some((key) => typeof key !== "string" || !Object.hasOwn(descriptors, key)) ||
-      Object.keys(descriptors).some((key) => !wanted.includes(key))
-    )
-      throw new Error("RPCのDescriptorと配信ファイルが一致しません");
-    if (typeof screen.script !== "string") throw new Error("script URLがありません");
+    const { screen, format, script: text, source: body } = parsed(url, source, script, descriptors);
     return {
       screen,
-      script: decoder.decode(script),
-      source: decoder.decode(source),
+      script: text,
+      source: body,
       format,
       url,
       descriptors,
@@ -180,9 +179,11 @@ export class ApplicationLoader {
     return { source, screen, script, descriptors };
   }
   // Walks the components declarations depth first, rewriting every declared url to the absolute
-  // href it resolves to against the package that declares it. Each href is downloaded once even
-  // when it is placed twice, so the returned map is keyed by href and holds one body per package.
-  async #components(screen, url, signal) {
+  // href it resolves to against the package that declares it. Each href is supplied once even when
+  // it is placed twice, so the returned map is keyed by href and holds one body per package. Where
+  // the bodies come from is the supplier's business: the cycle, depth, count and scope rules are
+  // judged here so every path is held to the same contract.
+  async #walk(screen, url, signal, provide) {
     const packages = Object.create(null);
     if (!Object.keys(screen.components ?? {}).length) return packages;
     const visit = async (parent, base, depth, stack) => {
@@ -198,13 +199,9 @@ export class ApplicationLoader {
         if (depth + 1 > 3)
           throw new Error(`コンポーネントの入れ子が3段を超えています: ${child.href}`);
         if (packages[child.href]) continue;
-        const downloaded = await this.#download(child, signal);
-        packages[child.href] = {
-          screen: downloaded.screen,
-          script: decoder.decode(downloaded.script),
-          descriptors: downloaded.descriptors,
-        };
-        await visit(downloaded.screen, child, depth + 1, [...stack, child.href]);
+        const entry = await provide(child, name);
+        packages[child.href] = entry;
+        await visit(entry.screen, child, depth + 1, [...stack, child.href]);
       }
     };
     await visit(screen, url, 1, [url.href]);
@@ -220,6 +217,86 @@ export class ApplicationLoader {
     }
     return packages;
   }
+  // Supplies a child by downloading it from its own URL, hashing the files once while they are in
+  // hand so a later load can tell this body apart from the one a manifest promises.
+  #fromNetwork(signal) {
+    return async (href) => {
+      const downloaded = await this.#download(href, signal);
+      const hashes = {
+        source: await sha256(downloaded.source),
+        script: await sha256(downloaded.script),
+        descriptors: Object.create(null),
+      };
+      for (const [key, bytes] of Object.entries(downloaded.descriptors))
+        hashes.descriptors[key] = await sha256(bytes);
+      return {
+        screen: downloaded.screen,
+        script: decoder.decode(downloaded.script),
+        descriptors: downloaded.descriptors,
+        sourceBytes: downloaded.source,
+        scriptBytes: downloaded.script,
+        hashes,
+      };
+    };
+  }
+  // The children a version 2 manifest lists, keyed by the href their relative key resolves to.
+  // `manifest()` has already refused duplicate hrefs, so the map holds one entry per child.
+  #childIndex(metadata, base) {
+    const index = Object.create(null);
+    for (const [key, child] of Object.entries(metadata.components ?? {}))
+      index[httpUrl(key, base).href] = child;
+    return index;
+  }
+  // Supplies a child from the files the manifest delivers, each one verified against its entry.
+  // A declaration the manifest says nothing about is refused before any URL is guessed at.
+  #fromManifest(index, base, signal) {
+    return async (href) => {
+      const child = index[href.href];
+      if (!child)
+        throw new Error(
+          `マニフェストのコンポーネント情報が不正です（マニフェストに無い子: ${href.href}）`,
+        );
+      const file = async (entry) => {
+        const bytes = await this.resources.bytes(httpUrl(entry.url, base), { signal });
+        try {
+          return await verify(bytes, entry);
+        } catch {
+          // Which package the damaged file belongs to is the part the root's own wording lacks.
+          throw new Error(`配信ファイルのサイズ・ハッシュが一致しません（${href.href}）`);
+        }
+      };
+      const source = await file(child.source);
+      const script = await file(child.script);
+      const descriptors = Object.create(null);
+      const hashes = {
+        source: child.source.sha256,
+        script: child.script.sha256,
+        descriptors: Object.create(null),
+      };
+      for (const key of Object.keys(child.descriptors ?? {}).sort()) {
+        descriptors[key] = await file(child.descriptors[key]);
+        hashes.descriptors[key] = child.descriptors[key].sha256;
+      }
+      const judged = parsed(href, source, script, descriptors);
+      return {
+        screen: judged.screen,
+        script: judged.script,
+        descriptors,
+        sourceBytes: source,
+        scriptBytes: script,
+        hashes,
+      };
+    };
+  }
+  // Every child the manifest lists must have been reached through a declaration; a key nothing
+  // places would otherwise ride along in the revision without ever being loaded.
+  #matchTree(index, packages) {
+    const extra = Object.keys(index)
+      .filter((href) => !packages[href])
+      .sort();
+    if (extra.length)
+      throw new Error(`マニフェストのコンポーネント情報が不正です（宣言に無い子: ${extra[0]}）`);
+  }
   async fetch(value, { mode = "network-only", signal } = {}) {
     const url = httpUrl(value);
     if (!["network-only", "network-first"].includes(mode))
@@ -227,7 +304,12 @@ export class ApplicationLoader {
     if (mode === "network-only") {
       const { source, script, descriptors } = await this.#download(url, signal);
       const candidate = await this.#candidate(url, source, script, descriptors);
-      candidate.components = await this.#components(candidate.screen, url, signal);
+      candidate.components = await this.#walk(
+        candidate.screen,
+        url,
+        signal,
+        this.#fromNetwork(signal),
+      );
       return candidate;
     }
     if (this.resources.getAuthentication().mode !== "none")
@@ -253,12 +335,27 @@ export class ApplicationLoader {
           await this.resources.bytes(httpUrl(entry.url, sidecar), { signal }),
           entry,
         );
+      const candidate = await this.#candidate(
+        url,
+        source,
+        script,
+        descriptors,
+        "network",
+        metadata,
+      );
+      const index = this.#childIndex(metadata, sidecar);
+      const packages = await this.#walk(
+        candidate.screen,
+        url,
+        signal,
+        this.#fromManifest(index, sidecar, signal),
+      );
+      this.#matchTree(index, packages);
       signal?.throwIfAborted();
       if (this.resources.getAuthentication().mode !== "none")
         throw new Error("認証設定が変更されたためキャッシュを中止しました");
-      return withoutComponents(
-        await this.#candidate(url, source, script, descriptors, "network", metadata),
-      );
+      candidate.components = packages;
+      return candidate;
     } catch (e) {
       signal?.throwIfAborted();
       if (e.code !== "NETWORK" || this.resources.getAuthentication().mode !== "none") throw e;
@@ -359,9 +456,15 @@ export class ApplicationLoader {
           } catch {
             signal?.throwIfAborted();
           }
-          // Refusing a restored screen that declares components is a decision, not a damaged
-          // generation, so it must not fall through to the previous pointer.
-          if (candidate) return withoutComponents(candidate);
+          // Until the stored tree is walked on this path, a saved screen that declares children
+          // cannot be rebuilt. Refusing it is a decision, not a damaged generation, so it must not
+          // fall through to the previous pointer.
+          if (candidate) {
+            if (Object.keys(candidate.screen.components ?? {}).length)
+              throw new Error("マニフェストのコンポーネント情報が不正です");
+            candidate.components = Object.create(null);
+            return candidate;
+          }
         }
         throw new Error("通信に失敗し、利用できる保存版もありません");
       },

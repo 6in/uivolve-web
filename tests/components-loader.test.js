@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import { readFile } from "node:fs/promises";
 import { ApplicationLoader, manifestRevision, sha256 } from "../src/application-loader.js";
-import { componentScope, scopeProblem } from "../src/component-tree.js";
+import { componentScope, instanceTable, scopeProblem } from "../src/component-tree.js";
 import { WasmEngine } from "../src/engine.js";
 import { parsePackage } from "../src/package-format.js";
 import { ResourceClient } from "../src/resource-client.js";
@@ -186,32 +186,6 @@ describe("ApplicationLoader の components 取得", () => {
     const candidate = await f.loader.fetch(href("plain.json"));
     expect(candidate.components).toEqual({});
     expect(Object.keys(candidate.components)).toHaveLength(0);
-  });
-
-  it("refuses a screen with components on the delivery cache path", async () => {
-    const parent = screen("parent", {
-      components: { a: { url: "a.json" } },
-      ui: { xtype: "container", items: [node("a")] },
-    });
-    const url = new URL(href("parent.json"));
-    const sidecar = new URL(url);
-    sidecar.pathname += ".manifest.json";
-    const source = encoder.encode(JSON.stringify(parent));
-    const script = encoder.encode("fn init(s) { s }");
-    const metadata = {
-      version: 1,
-      revision: "a".repeat(64),
-      source: { url: "versions/a/source", sha256: await sha256(source), size: source.length },
-      script: { url: "versions/a/script", sha256: await sha256(script), size: script.length },
-    };
-    metadata.revision = await manifestRevision(metadata);
-    const f = fixture([["a.json", screen("a")]]);
-    f.responses.set(sidecar.href, JSON.stringify(metadata));
-    f.responses.set(new URL(metadata.source.url, sidecar).href, source);
-    f.responses.set(new URL(metadata.script.url, sidecar).href, script);
-    await expect(f.loader.fetch(url, { mode: "network-first" })).rejects.toThrow(
-      "componentsを持つ画面は配信キャッシュ（network-first）に対応していません",
-    );
   });
 
   it("refuses a declaration without a string url before fetching anything", async () => {
@@ -557,6 +531,206 @@ describe("ApplicationLoader の components 取得", () => {
       expect(Object.hasOwn(JSON.parse(raw).components, "__proto__")).toBe(true);
       f.responses.set(t.sidecar.href, raw);
       await expect(f.loader.fetch(t.url, { mode: "network-first" })).rejects.toThrow(MALFORMED);
+    });
+
+    // A parent, its child and the child's own leaf, plus a second child one directory down: the
+    // same shape the network-only tests walk, so both paths can be compared entry by entry.
+    const tree = () => [
+      [
+        "parent.json",
+        screen("parent", {
+          components: { childA: { url: "a.json" }, childB: { url: "parts/b.json" } },
+          ui: { xtype: "container", items: [node("childA"), node("childB")] },
+        }),
+      ],
+      [
+        "a.json",
+        screen("a", {
+          components: { leaf: { url: "./leaf.json" } },
+          ui: { xtype: "container", items: [node("leaf")] },
+        }),
+      ],
+      ["parts/b.json", screen("b")],
+      ["leaf.json", screen("leaf")],
+    ];
+    const table = (candidate) =>
+      [...instanceTable(candidate.screen, candidate.url.href, candidate.components)].map(
+        ([path, entry]) => [path, entry.url, entry.screen.id],
+      );
+    // Replaces the manifest with a mutated copy, the revision recomputed so that the tree checks
+    // are what refuse it rather than the hash comparison.
+    const revised = async (f, t, mutate) => {
+      const metadata = structuredClone(t.metadata);
+      mutate(metadata.components);
+      metadata.revision = await manifestRevision(metadata);
+      f.responses.set(t.sidecar.href, JSON.stringify(metadata));
+      return metadata;
+    };
+
+    it("delivers the whole tree through the manifest just as the network does", async () => {
+      const list = tree();
+      const direct = await fixture(list).loader.fetch(href("parent.json"));
+      const f = fixture(list);
+      const t = await treeManifest(f, list);
+      const candidate = await f.loader.fetch(t.url, { mode: "network-first" });
+      expect(Object.keys(candidate.components).sort()).toEqual(
+        Object.keys(direct.components).sort(),
+      );
+      expect(candidate.screen.components).toEqual(direct.screen.components);
+      expect(candidate.components[href("a.json")].screen.components).toEqual(
+        direct.components[href("a.json")].screen.components,
+      );
+      expect(candidate.components[href("parts/b.json")].script).toBe("fn init(s) { s }");
+      expect(table(candidate)).toEqual(table(direct));
+      for (const child of Object.values(t.metadata.components)) {
+        expect(f.reads.get(new URL(child.source.url, t.sidecar).href)).toBe(1);
+        expect(f.reads.get(new URL(child.script.url, t.sidecar).href)).toBe(1);
+      }
+      // Every byte came from the delivery; the children's own URLs were never touched.
+      expect(f.reads.has(href("a.json"))).toBe(false);
+    });
+
+    it("refuses a manifest and a declaration tree that do not list the same children", async () => {
+      const list = tree();
+      const missing = fixture(list);
+      const mt = await treeManifest(missing, list);
+      await revised(missing, mt, (c) => delete c["leaf.json"]);
+      await expect(missing.loader.fetch(mt.url, { mode: "network-first" })).rejects.toThrow(
+        `${MALFORMED}（マニフェストに無い子: ${href("leaf.json")}）`,
+      );
+      // A key nothing places is refused after the walk, its files left unread.
+      const spare = (c) => ({
+        source: { ...c["parts/b.json"].source, url: "packages/rev/spare-source" },
+        script: { ...c["parts/b.json"].script, url: "packages/rev/spare-script" },
+        descriptors: {},
+      });
+      const extra = fixture(list);
+      const et = await treeManifest(extra, list);
+      await revised(extra, et, (c) => (c["spare.json"] = spare(c)));
+      await expect(extra.loader.fetch(et.url, { mode: "network-first" })).rejects.toThrow(
+        `${MALFORMED}（宣言に無い子: ${href("spare.json")}）`,
+      );
+      expect(extra.reads.has(new URL("packages/rev/spare-source", et.sidecar).href)).toBe(false);
+      // A `__proto__` key is one more undeclared entry, not a write to the prototype.
+      const proto = fixture(list);
+      const pt = await treeManifest(proto, list);
+      await revised(proto, pt, (c) =>
+        Object.defineProperty(c, "__proto__", {
+          value: spare(c),
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        }),
+      );
+      await expect(proto.loader.fetch(pt.url, { mode: "network-first" })).rejects.toThrow(
+        `${MALFORMED}（宣言に無い子: ${href("__proto__")}）`,
+      );
+    });
+
+    it("names the child whose delivered file does not match its entry", async () => {
+      const list = tree();
+      const swapped = encoder.encode("fn init(t) { t }");
+      const child = fixture(list);
+      const ct = await treeManifest(child, list);
+      child.responses.set(
+        new URL(ct.metadata.components["a.json"].script.url, ct.sidecar).href,
+        swapped,
+      );
+      await expect(child.loader.fetch(ct.url, { mode: "network-first" })).rejects.toThrow(
+        `配信ファイルのサイズ・ハッシュが一致しません（${href("a.json")}）`,
+      );
+      // The root keeps the wording it always had: there is no other package it could mean.
+      const root = fixture(list);
+      const rt = await treeManifest(root, list);
+      root.responses.set(new URL(rt.metadata.script.url, rt.sidecar).href, swapped);
+      await expect(root.loader.fetch(rt.url, { mode: "network-first" })).rejects.toThrow(
+        /^配信ファイルのサイズ・ハッシュが一致しません$/,
+      );
+    });
+
+    it("falls back to the stored version when a child cannot be reached", async () => {
+      const list = tree();
+      const f = fixture(list);
+      const fs = memoryOpfs();
+      const loader = new ApplicationLoader({
+        resources: f.resources,
+        storage: fs.storage,
+        locks: null,
+      });
+      const t = await treeManifest(f, list);
+      f.responses.set(
+        new URL(t.metadata.components["a.json"].source.url, t.sidecar).href,
+        new TypeError("offline"),
+      );
+      await expect(loader.fetch(t.url, { mode: "network-first" })).rejects.toThrow(
+        "通信に失敗し、利用できる保存版もありません",
+      );
+    });
+
+    it("judges cycles, depth and scope on the manifest path as well", async () => {
+      const cyclic = [
+        ["parent.json", screen("parent", { components: { a: { url: "a.json" } } })],
+        ["a.json", screen("a", { components: { up: { url: "parent.json" } } })],
+      ];
+      const c = fixture(cyclic);
+      const ct = await treeManifest(c, cyclic);
+      await expect(c.loader.fetch(ct.url, { mode: "network-first" })).rejects.toThrow(
+        `コンポーネント up の循環参照: ${href("parent.json")}`,
+      );
+      const deep = [
+        ["parent.json", screen("parent", { components: { a: { url: "a.json" } } })],
+        ["a.json", screen("a", { components: { b: { url: "b.json" } } })],
+        ["b.json", screen("b", { components: { c: { url: "c.json" } } })],
+        ["c.json", screen("c")],
+      ];
+      const d = fixture(deep);
+      const dt = await treeManifest(d, deep);
+      await expect(d.loader.fetch(dt.url, { mode: "network-first" })).rejects.toThrow(
+        `コンポーネントの入れ子が3段を超えています: ${href("c.json")}`,
+      );
+      const scoped = [
+        [
+          "parent.json",
+          screen("parent", {
+            components: { part: { url: "part.json" } },
+            ui: { xtype: "container", items: [{ xtype: "part", itemId: "a__b" }] },
+          }),
+        ],
+        [
+          "part.json",
+          screen("part", {
+            storage: { draft: { backend: "opfs", key: "draft", handler: "done" } },
+          }),
+        ],
+      ];
+      const s = fixture(scoped);
+      const st = await treeManifest(s, scoped);
+      await expect(s.loader.fetch(st.url, { mode: "network-first" })).rejects.toThrow(
+        "コンポーネント a__b の保存領域 parent__a__b が不正です（英数字・-・_ で80バイト以内、各要素に __ を含めない）",
+      );
+    });
+
+    // `save` and `restore` still hold one package each: the stored tree arrives with T5.
+    it("stores the root alone and refuses to restore a screen that declares children", async () => {
+      const list = tree();
+      const f = fixture(list);
+      const fs = memoryOpfs();
+      const loader = new ApplicationLoader({
+        resources: f.resources,
+        storage: fs.storage,
+        locks: null,
+      });
+      const t = await treeManifest(f, list);
+      const candidate = await loader.fetch(t.url, { mode: "network-first" });
+      const written = [];
+      fs.controls.beforeClose = async (name) => written.push(name);
+      await loader.save(candidate);
+      expect(written).toEqual(["source", "script", "current.json"]);
+      await expect(loader.restore(t.url)).rejects.toThrow(MALFORMED);
+      await loader.clear(t.url);
+      await expect(loader.restore(t.url)).rejects.toThrow(
+        "通信に失敗し、利用できる保存版もありません",
+      );
     });
   });
 });
