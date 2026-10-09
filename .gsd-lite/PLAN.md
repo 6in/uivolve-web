@@ -189,11 +189,11 @@ bun run docs:check                                   # Markdown のローカル�
   - 依存: T7
   - 並列サブ作業: なし
 
-- [ ] F1: 契約文書の 4 か所の言い切り・帰属・欠落を直す（verify round 1 の指摘。文書のみ。コードとテストは触らない）
+- [x] F1: 契約文書の 4 か所の言い切り・帰属・欠落を直す（verify round 1 の指摘。文書のみ。コードとテストは触らない）
   - 完了基準（4 件すべて。行番号は HEAD `844162e` のもの。`git grep -n -F` で引き直す）:
     1. `docs/components.md:181`「マニフェストが約束するsha256 / sizeが…すべてで一致するときだけ」→ `size` を外し「sha256 が source・script・descriptor（キー集合と各 sha256）のすべてで一致するときだけ」にする（根拠: `src/application-loader.js` の `sameHashes` は sha256 だけを比べる。REQUIREMENTS R5 も sha256 だけ）
     2. `docs/components.md:205` と `docs/files-cache-rpc.md:109` の「`components`の形・子の件数・…が外れたとき」→ 「子エントリの形・子の件数・子のファイル情報・絶対化後の重複が外れたとき。`components` 自体が無い・`null`・配列・object 以外のときは `配信マニフェストが不正です`」にする（根拠: `manifest()` の先頭の判定 `application-loader.js:46-52` と `tests/components-loader.test.js:394`）
-    3. `docs/components.md:202`「ローダーと`UiRuntime`の両方が出す」→ 生成スクリプト（`scripts/publish-packages.mjs`）も出すことを足す。同 `:256` の「JS側は取得中に日本語（…）」の 3 文言のうち `コンポーネントの入れ子が3段を超えています: {URL}` と `コンポーネント {名前} の循環参照: {URL}` は生成スクリプトも出し、そのとき `{URL}` の位置は絶対ファイルパスであることを 1 句足す（根拠: `publish-packages.mjs:44,51,52`）
+    3. `docs/components.md:202`「ローダーと`UiRuntime`の両方が出す」→ 生成スクリプト（`scripts/publish-packages.mjs`）も出すことを足す。同 `:256` の「JS側は取得中に日本語（…）」の 3 文言は**3 つとも**生成スクリプトも出し、そのとき `{URL}` の位置は絶対ファイルパスであることを 1 句足す（F1 訂正: `コンポーネントの数が8を超えています（rootを含む）` も生成スクリプトが `instanceTable` 経由で出すので 2 文言ではなく 3 文言。根拠: `publish-packages.mjs:44,51,52` と `:60` が呼ぶ `src/component-tree.js:15`。DECISIONS「plan が決めた細部」15 も 3 文言で書かれている）
     4. `docs/components.md` の「エラー文言」日本語の列挙に `通信に失敗し、利用できる保存版もありません` と括弧付きの派生 `通信に失敗し、利用できる保存版もありません（{最後に試した版の失敗文言}）`（ポインタが 1 つも無いときは括弧なし）を足し、`docs/files-cache-rpc.md:93` の「画面へ復元理由を表示する」の直後にも同じ 2 形を書く（根拠: `application-loader.js:581-585`。DECISIONS「plan が決めた細部」9）
   - 期待結果（`git grep` の条件。文書のみなのでテストは無い）:
 
