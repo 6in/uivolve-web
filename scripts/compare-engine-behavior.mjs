@@ -86,11 +86,13 @@ function request(body) {
 function effectsOf(response) {
   return response?.data?.effects ?? [];
 }
-// `kind` is absent on the base build's HTTP effects (before stage 4), present on every other
-// channel. The candidate tags them `kind: "http"`, but only base responses are read for ids --
-// the candidate just replays the resolved plan -- so this expression stays as it is.
+// `kind` is absent on the HTTP effects of a base built before stage 4 and tagged `http` from
+// stage 4 on, present on every other channel either way. Base responses are the only ones read
+// for ids, so the HTTP lookup accepts both shapes and the base commit can sit on either side.
 function matches(effect, kind) {
-  return kind === "http" ? effect.kind === undefined : effect.kind === kind;
+  return kind === "http"
+    ? effect.kind === undefined || effect.kind === "http"
+    : effect.kind === kind;
 }
 function effectId(response, kind) {
   const hit = effectsOf(response).find((effect) => matches(effect, kind));

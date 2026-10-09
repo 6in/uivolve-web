@@ -18,7 +18,7 @@ bun run docs:check                                   # Markdown のローカル�
 ```
 
 - 環境の初期化（テストの前に毎回）: なし。`bun run build:wasm` は `bun run test` が先頭で回す（`package.json` の `test`）。Vitest の多くが `public/engine.wasm` と `public/screens/*.manifest.json` を読むので、Rust・`scripts/publish-packages.mjs`・`public/screens/` を触ったターンは Vitest の前に `bun run build:wasm` を回す
-- 最終判定（クリーンな状態から全検査。verify と T8 が使う）: `bun scripts/verify-instance-refactor.mjs`（`BASE_CHECKS` 6 本 `verify-instance-refactor.mjs:19-26` = `build:wasm` → `vp test run` → `test:rust` → `check` → `docs:check` → `build` → base `main` の WASM が無ければ自動ビルド `:82-94` → base 照合 差分 0 → 候補のみ probe exit 0 → 変異 7 本（`build-engine-variant.mjs:9` の `MUTATIONS`）が各 exit 1。スクリプト本体は無改修。本マイルストーンの Rust 変更は `engine/src/abi.rs` の `take_instance` だけで、`MUTATIONS` の `from` は全部 `lib.rs`（`build-engine-variant.mjs:13-61`）なので変異は触らない。base 照合は 256 バイト以下の `instance` に差分を作らない（応答が変わるのは 257 バイト以上の拒否だけで、照合の列にそんな値は無い））
+- 最終判定（クリーンな状態から全検査。verify と T8 が使う）: `bun scripts/verify-instance-refactor.mjs`（`BASE_CHECKS` 6 本 `verify-instance-refactor.mjs:19-26` = `build:wasm` → `vp test run` → `test:rust` → `check` → `docs:check` → `build` → base `main` の WASM が無ければ自動ビルド `:82-94` → base 照合 差分 0 → 候補のみ probe exit 0 → 変異 7 本（`build-engine-variant.mjs:9` の `MUTATIONS`）が各 exit 1。`verify-instance-refactor.mjs` 本体は無改修（T8 訂正: `scripts/compare-engine-behavior.mjs` の `matches()` は base が段階 4 になったことで陳腐化していて、HTTP の effect の id を引けず base 側で落ちる。`effect.kind === undefined || effect.kind === "http"` の 1 行に直す。照合そのものは `kind` を正規化で除去しているので差分 0 は変わらない）。本マイルストーンの Rust 変更は `engine/src/abi.rs` の `take_instance` だけで、`MUTATIONS` の `from` は全部 `lib.rs`（`build-engine-variant.mjs:13-61`）なので変異は触らない。base 照合は 256 バイト以下の `instance` に差分を作らない（応答が変わるのは 257 バイト以上の拒否だけで、照合の列にそんな値は無い））
 - このリポジトリの注意: `bunx vp check <Markdown 1 本>` は整形 pass でも lint 対象 0 件で非 0 終了する。Markdown の整形は `bunx vp fmt <path>` の出力で判定し、exit code は `bun run check` で見る。`.gsd-lite/*.md` は整形対象（`vite.config.js:20-29` の `ignorePatterns` に `.gsd-lite/state.json` と `.claude/**` だけ）なので、PLAN / PROGRESS を書いたら `bunx vp fmt .gsd-lite/PLAN.md .gsd-lite/PROGRESS.md` を掛ける
 - Vitest の一時ディレクトリは `tests/distribution.test.js:16` と同じ `mkdtemp(join(tmpdir(), "uivolve-…"))`（Vitest の子プロセスは Bash の allowlist の外で動くので既存テストと同じ形でよい）。impl 自身の一時ファイルは `.gsd-lite/logs/component-loader/scratch/turn-NNN-*.{mjs,txt}`
 
@@ -177,7 +177,7 @@ bun run docs:check                                   # Markdown のローカル�
     - B: `docs/files-cache-rpc.md`、`docs/opfs-cache-rpc-investigation.md`、`docs/testing.md`、`docs/architecture.md`（行 3・4・7・8・9）
     - 親: `docs/ai-development.md`、`README.md`、スキル 2 ファイル（行 10・14）、行 11 の無改修判定、全行の `git grep` 再実行、`vp fmt`、`check`、`docs:check`、コミット
 
-- [ ] T8: 最終判定と受け入れ基準の総点検
+- [x] T8: 最終判定と受け入れ基準の総点検
   - 完了基準:
     - `bun scripts/verify-instance-refactor.mjs` が OK（所要の表を PROGRESS に写す。`BASE_CHECKS` 6 本 → base 照合 差分 0 → probe → 変異 7 本が各 exit 1）
     - 追従先チェックリストの行 1〜14 を**行番号つきで全行**再実行し、PROGRESS に「行 1 … 行 14」の表で書く（表の行数が 14 でなければ未完了）

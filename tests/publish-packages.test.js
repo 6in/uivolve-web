@@ -261,6 +261,20 @@ describe("配信用パッケージの公開", () => {
     await untouched(output);
   });
 
+  // The sum names the largest child unconditionally, which holds because the body cap stops a
+  // childless screen long before two megabytes: the root alone tops out at 1 MB plus 100 KB.
+  it("refuses an oversized body before the sum is taken, so the root alone never reaches the limit", async () => {
+    const root = await workspace({
+      "screens/root.json": padded(screen("root"), 2_000_001),
+      "screens/root.rhai": "",
+    });
+    const output = join(root, "out");
+    await expect(publishPackage(join(root, "screens/root.json"), output)).rejects.toThrow(
+      "画面定義が1 MBを超えています",
+    );
+    await untouched(output);
+  });
+
   it("refuses a child url that is not a local relative path", async () => {
     for (const url of ["https://cdn.test/x.json", "/abs.json"]) {
       const root = await workspace({

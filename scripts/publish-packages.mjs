@@ -71,6 +71,8 @@ export async function publishPackage(sourcePath, output = dirname(sourcePath)) {
   const weight = (read) => read.source.length + read.script.length;
   const total = children.reduce((sum, [, read]) => sum + weight(read), weight(root));
   if (total > 2_000_000) {
+    // `parsePackage` refuses a body over 1 MB and `readPackage` a script over 100 KB, so the root
+    // alone tops out at 1.1 MB and cannot reach the limit: a child is always there to be named.
     const [key, bytes] = children
       .map(([key, read]) => [key, weight(read)])
       .sort((a, b) => b[1] - a[1] || byKey(a, b))[0];
