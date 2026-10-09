@@ -136,7 +136,23 @@ function parsed(url, source, script, descriptors) {
   if (typeof screen.script !== "string") throw new Error("script URLがありません");
   return { screen, format, script: decoder.decode(script), source: decoder.decode(source) };
 }
+// True when a shared package was built from exactly the files a manifest entry names. A token
+// swapped behind the same hashes is not detected here; a changed file always is.
+function sameHashes(hashes, child) {
+  const own = child.descriptors ?? {};
+  const keys = Object.keys(own);
+  return (
+    hashes.source === child.source.sha256 &&
+    hashes.script === child.script.sha256 &&
+    keys.length === Object.keys(hashes.descriptors).length &&
+    keys.every((key) => hashes.descriptors[key] === own[key].sha256)
+  );
+}
 export class ApplicationLoader {
+  // The children of the screens this runtime has loaded, keyed by href, so moving between two
+  // screens that place the same part does not fetch it twice. Only the root is always taken fresh.
+  #share = new Map();
+  #shareKey = { mode: undefined, auth: undefined };
   constructor({ resources, storage, locks } = {}) {
     this.resources = resources;
     this.storage = storage;
@@ -221,6 +237,9 @@ export class ApplicationLoader {
   // hand so a later load can tell this body apart from the one a manifest promises.
   #fromNetwork(signal) {
     return async (href) => {
+      // network-only has nothing to compare a body against, so a shared child is taken as it is.
+      const shared = this.#share.get(href.href);
+      if (shared) return shared;
       const downloaded = await this.#download(href, signal);
       const hashes = {
         source: await sha256(downloaded.source),
@@ -256,6 +275,10 @@ export class ApplicationLoader {
         throw new Error(
           `マニフェストのコンポーネント情報が不正です（マニフェストに無い子: ${href.href}）`,
         );
+      // A shared body stands in only while the manifest promises the very files it was built from:
+      // one differing hash, a descriptor's included, means this version delivers something else.
+      const shared = this.#share.get(href.href);
+      if (shared && sameHashes(shared.hashes, child)) return shared;
       const file = async (entry) => {
         const bytes = await this.resources.bytes(httpUrl(entry.url, base), { signal });
         try {
@@ -297,10 +320,21 @@ export class ApplicationLoader {
     if (extra.length)
       throw new Error(`マニフェストのコンポーネント情報が不正です（宣言に無い子: ${extra[0]}）`);
   }
-  async fetch(value, { mode = "network-only", signal } = {}) {
+  // Keeps the children of a walk that completed every check. An abort or a refusal partway leaves
+  // the map untouched, so no later load inherits a package that was never judged whole.
+  #remember(packages) {
+    for (const [href, entry] of Object.entries(packages)) this.#share.set(href, entry);
+  }
+  async fetch(value, { mode = "network-only", signal, refresh = false } = {}) {
     const url = httpUrl(value);
     if (!["network-only", "network-first"].includes(mode))
       throw new Error("未対応のキャッシュ方式です");
+    // Both keys are compared by value: `getAuthentication` builds a new object on every call and
+    // the host assigns the cache mode on every load, so an unchanged setting must keep the tree.
+    const auth = JSON.stringify(this.resources.getAuthentication());
+    if (refresh || mode !== this.#shareKey.mode || auth !== this.#shareKey.auth)
+      this.#share.clear();
+    this.#shareKey = { mode, auth };
     if (mode === "network-only") {
       const { source, script, descriptors } = await this.#download(url, signal);
       const candidate = await this.#candidate(url, source, script, descriptors);
@@ -310,6 +344,7 @@ export class ApplicationLoader {
         signal,
         this.#fromNetwork(signal),
       );
+      this.#remember(candidate.components);
       return candidate;
     }
     if (this.resources.getAuthentication().mode !== "none")
@@ -355,6 +390,7 @@ export class ApplicationLoader {
       if (this.resources.getAuthentication().mode !== "none")
         throw new Error("認証設定が変更されたためキャッシュを中止しました");
       candidate.components = packages;
+      this.#remember(packages);
       return candidate;
     } catch (e) {
       signal?.throwIfAborted();

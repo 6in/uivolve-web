@@ -294,4 +294,23 @@ describe("UiRuntime 経由の部品ラボ", () => {
     expect(widget(runtime, "approval/result").text).toBe("承認");
     expect(errors).toEqual([]);
   });
+
+  it("keeps the parts of the lab across a detour to another screen", async () => {
+    const { runtime, fetch, errors } = await host();
+    // `screens/http-grid.json` is both a part of the lab and a screen of its own: it shows the
+    // difference between a child, which is shared, and a root, which is always taken again.
+    const count = (path) => fetch.mock.calls.filter(([url]) => String(url) === href(path)).length;
+    await runtime.load(PARENT);
+    await runtime.whenIdle();
+    await runtime.load("screens/http-grid.json");
+    await runtime.whenIdle();
+    await runtime.load(PARENT);
+    await runtime.whenIdle();
+    expect(runtime.screen.id).toBe("parts-lab");
+    expect(count("screens/parts/note-pad.json")).toBe(1);
+    expect(count("screens/parts/approval.json")).toBe(1);
+    expect(count("screens/http-grid.json")).toBe(2);
+    expect(count(PARENT)).toBe(2);
+    expect(errors).toEqual([]);
+  });
 });

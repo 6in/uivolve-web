@@ -66,6 +66,47 @@ describe("ApplicationLoader の components 取得", () => {
     const resources = new ResourceClient({ baseUrl: base, fetch: fetcher });
     return { responses, reads, fetcher, resources, loader: new ApplicationLoader({ resources }) };
   }
+  // Publishes a version 2 manifest for `list` on the fixture: `list` has the shape `fixture` takes,
+  // the first entry being the root, and `descriptors` maps a package path to the descriptor bytes
+  // it delivers. Calling it again on the same fixture republishes under the same file names.
+  async function treeManifest(f, list, { descriptors = {} } = {}) {
+    const url = new URL(href(list[0][0]));
+    const sidecar = new URL(url);
+    sidecar.pathname += ".manifest.json";
+    const publish = async (name, bytes) => {
+      const entry = {
+        url: `packages/rev/${name}`,
+        sha256: await sha256(bytes),
+        size: bytes.length,
+      };
+      f.responses.set(new URL(entry.url, sidecar).href, bytes);
+      return entry;
+    };
+    const pkg = async (prefix, [path, value, script = "fn init(s) { s }"]) => {
+      const own = {};
+      const keys = Object.keys(descriptors[path] ?? {}).sort();
+      for (let n = 0; n < keys.length; n++)
+        own[keys[n]] = await publish(`${prefix}descriptor-${n}`, descriptors[path][keys[n]]);
+      return {
+        source: await publish(`${prefix}source`, encoder.encode(JSON.stringify(value))),
+        script: await publish(`${prefix}script`, encoder.encode(script)),
+        descriptors: own,
+      };
+    };
+    const metadata = {
+      version: 2,
+      revision: "a".repeat(64),
+      ...(await pkg("", list[0])),
+      components: {},
+    };
+    const children = list.slice(1);
+    const order = children.map(([path]) => path).sort();
+    for (const child of children)
+      metadata.components[child[0]] = await pkg(`component-${order.indexOf(child[0])}-`, child);
+    metadata.revision = await manifestRevision(metadata);
+    f.responses.set(sidecar.href, JSON.stringify(metadata));
+    return { url, sidecar, metadata };
+  }
 
   it("fetches children and grandchildren once each and rewrites every declared url", async () => {
     const f = fixture([
@@ -321,46 +362,6 @@ describe("ApplicationLoader の components 取得", () => {
   // with the names `publish-packages.mjs` gives them, the child index taken from the sorted keys.
   describe("ApplicationLoader の木のマニフェスト", () => {
     const MALFORMED = "マニフェストのコンポーネント情報が不正です";
-    // `list` has the shape `fixture` takes, the first entry being the root; `descriptors` maps a
-    // package path to the descriptor bytes it delivers.
-    async function treeManifest(f, list, { descriptors = {} } = {}) {
-      const url = new URL(href(list[0][0]));
-      const sidecar = new URL(url);
-      sidecar.pathname += ".manifest.json";
-      const publish = async (name, bytes) => {
-        const entry = {
-          url: `packages/rev/${name}`,
-          sha256: await sha256(bytes),
-          size: bytes.length,
-        };
-        f.responses.set(new URL(entry.url, sidecar).href, bytes);
-        return entry;
-      };
-      const pkg = async (prefix, [path, value, script = "fn init(s) { s }"]) => {
-        const own = {};
-        const keys = Object.keys(descriptors[path] ?? {}).sort();
-        for (let n = 0; n < keys.length; n++)
-          own[keys[n]] = await publish(`${prefix}descriptor-${n}`, descriptors[path][keys[n]]);
-        return {
-          source: await publish(`${prefix}source`, encoder.encode(JSON.stringify(value))),
-          script: await publish(`${prefix}script`, encoder.encode(script)),
-          descriptors: own,
-        };
-      };
-      const metadata = {
-        version: 2,
-        revision: "a".repeat(64),
-        ...(await pkg("", list[0])),
-        components: {},
-      };
-      const children = list.slice(1);
-      const order = children.map(([path]) => path).sort();
-      for (const child of children)
-        metadata.components[child[0]] = await pkg(`component-${order.indexOf(child[0])}-`, child);
-      metadata.revision = await manifestRevision(metadata);
-      f.responses.set(sidecar.href, JSON.stringify(metadata));
-      return { url, sidecar, metadata };
-    }
     const parentWithChild = () => [
       ["parent.json", screen("parent", { components: { a: { url: "a.json" } } })],
       ["a.json", screen("a")],
@@ -733,6 +734,182 @@ describe("ApplicationLoader の components 取得", () => {
       );
     });
   });
+
+  // Children outlive the screen that pulled them in: one loader belongs to one UiRuntime, so a
+  // navigation between two screens placing the same part reuses the part it already holds. Only a
+  // refresh, a cache mode change or different authentication metadata empties the shared map.
+  describe("子パッケージのメモリ共有", () => {
+    // Two roots over the same child, and the child carries a leaf of its own: a shared entry has
+    // to bring the subtree it was walked with.
+    const twoRoots = () => [
+      [
+        "A.json",
+        screen("A", {
+          components: { part: { url: "a.json" } },
+          ui: { xtype: "container", items: [node("part")] },
+        }),
+      ],
+      [
+        "a.json",
+        screen("a", {
+          components: { leaf: { url: "leaf.json" } },
+          ui: { xtype: "container", items: [node("leaf")] },
+        }),
+      ],
+      ["leaf.json", screen("leaf")],
+      [
+        "B.json",
+        screen("B", {
+          components: { part: { url: "a.json" } },
+          ui: { xtype: "container", items: [node("part")] },
+        }),
+      ],
+    ];
+
+    it("fetches a child once across two screens that place it", async () => {
+      const f = fixture(twoRoots());
+      const first = await f.loader.fetch(href("A.json"));
+      const walked = structuredClone(first.components[href("a.json")].screen);
+      const second = await f.loader.fetch(href("B.json"));
+      for (const path of ["a.json", "a.rhai", "leaf.json", "leaf.rhai"])
+        expect(f.reads.get(href(path)), path).toBe(1);
+      // The very entries the first load walked, not copies: the runtime clones before it compiles.
+      expect(second.components[href("a.json")]).toBe(first.components[href("a.json")]);
+      expect(second.components[href("leaf.json")]).toBe(first.components[href("leaf.json")]);
+      // Rewriting a declaration to the href it already holds leaves the shared screen unchanged.
+      expect(second.components[href("a.json")].screen).toEqual(walked);
+      expect(second.screen.components.part.url).toBe(href("a.json"));
+    });
+
+    it("takes the child again on an explicit refresh but not on the load after it", async () => {
+      const f = fixture(twoRoots());
+      await f.loader.fetch(href("A.json"));
+      await f.loader.fetch(href("B.json"), { refresh: true });
+      expect(f.reads.get(href("a.json"))).toBe(2);
+      await f.loader.fetch(href("B.json"));
+      expect(f.reads.get(href("a.json"))).toBe(2);
+    });
+
+    it("empties the shared map only when the authentication metadata differs", async () => {
+      const f = fixture(twoRoots());
+      await f.loader.fetch(href("A.json"));
+      // A fresh policy object holding the same metadata: `mode: "none"` keeps no origins at all,
+      // so re-applying it must not cost a fetch.
+      f.resources.setAuthentication({ mode: "none", allowedOrigins: ["https://parts.test"] });
+      await f.loader.fetch(href("B.json"));
+      expect(f.reads.get(href("a.json"))).toBe(1);
+      f.resources.setAuthentication({
+        mode: "jwt",
+        token: "x",
+        allowedOrigins: ["https://parts.test"],
+      });
+      await f.loader.fetch(href("B.json"));
+      expect(f.reads.get(href("a.json"))).toBe(2);
+      f.resources.setAuthentication({
+        mode: "jwt",
+        token: "x",
+        allowedOrigins: ["https://parts.test", "https://other.test"],
+      });
+      await f.loader.fetch(href("B.json"));
+      expect(f.reads.get(href("a.json"))).toBe(3);
+    });
+
+    it("reuses a delivered child while the manifest promises the same files", async () => {
+      const rpc = {
+        echo: {
+          url: "https://rpc.test/uivolve.demo.EchoService/Echo",
+          descriptor: "d.pb",
+          service: "uivolve.demo.EchoService",
+          method: "Echo",
+          protocol: "connect",
+          handler: "echoDone",
+        },
+      };
+      const list = () => [
+        ["A.json", screen("A", { components: { part: { url: "a.json" } } })],
+        ["a.json", screen("a", { rpc }), "fn init(s) { s } fn echoDone(s, r) { s }"],
+      ];
+      const descriptors = { "a.json": { "d.pb": encoder.encode("one") } };
+      const f = fixture(list());
+      const t = await treeManifest(f, list(), { descriptors });
+      const child = t.metadata.components["a.json"];
+      const files = [child.source.url, child.script.url, child.descriptors["d.pb"].url].map(
+        (url) => new URL(url, t.sidecar).href,
+      );
+      const taken = () => files.map((url) => f.reads.get(url) ?? 0);
+      await f.loader.fetch(t.url, { mode: "network-first" });
+      expect(taken()).toEqual([1, 1, 1]);
+      await f.loader.fetch(t.url, { mode: "network-first" });
+      expect(taken()).toEqual([1, 1, 1]);
+      // A new script for the same child: the promised hash differs, so the child is taken again.
+      const changed = list();
+      changed[1][2] = "fn init(s) { s } fn echoDone(s, r) { s } // v2";
+      await treeManifest(f, changed, { descriptors });
+      const second = await f.loader.fetch(t.url, { mode: "network-first" });
+      expect(second.components[href("a.json")].script).toBe(changed[1][2]);
+      expect(taken()).toEqual([2, 2, 2]);
+      // This time only the descriptor bytes differ; the body and the script are untouched.
+      const other = { "a.json": { "d.pb": encoder.encode("two") } };
+      await treeManifest(f, changed, { descriptors: other });
+      const third = await f.loader.fetch(t.url, { mode: "network-first" });
+      expect(third.components[href("a.json")].descriptors["d.pb"]).toEqual(other["a.json"]["d.pb"]);
+      expect(taken()).toEqual([3, 3, 3]);
+    });
+
+    it("empties the shared map when the cache mode changes, either way round", async () => {
+      const list = [
+        ["parent.json", screen("parent", { components: { a: { url: "a.json" } } })],
+        ["a.json", screen("a")],
+      ];
+      const delivered = (t) => new URL(t.metadata.components["a.json"].source.url, t.sidecar).href;
+      // The delivered body is byte for byte the one the child's own URL serves, so the hashes
+      // would match: it is the mode change that has to drop the entry.
+      const first = fixture(list);
+      const ft = await treeManifest(first, list);
+      await first.loader.fetch(ft.url);
+      await first.loader.fetch(ft.url, { mode: "network-first" });
+      expect(first.reads.get(href("a.json"))).toBe(1);
+      expect(first.reads.get(delivered(ft))).toBe(1);
+      const second = fixture(list);
+      const st = await treeManifest(second, list);
+      await second.loader.fetch(st.url, { mode: "network-first" });
+      await second.loader.fetch(st.url);
+      expect(second.reads.get(delivered(st))).toBe(1);
+      expect(second.reads.get(href("a.json"))).toBe(1);
+    });
+
+    it("walks into the declarations of a shared child as well", async () => {
+      const f = fixture([
+        ["A.json", screen("A", { components: { mid: { url: "mid.json" } } })],
+        ["mid.json", screen("mid", { components: { leaf: { url: "leaf.json" } } })],
+        ["leaf.json", screen("leaf")],
+        ["B.json", screen("B", { components: { wrap: { url: "wrap.json" } } })],
+        ["wrap.json", screen("wrap", { components: { mid: { url: "mid.json" } } })],
+      ]);
+      await f.loader.fetch(href("A.json"));
+      expect(f.reads.get(href("mid.json"))).toBe(1);
+      // `mid` sits one level deeper under B, so its own leaf is the fourth level and refused.
+      await expect(f.loader.fetch(href("B.json"))).rejects.toThrow(
+        `コンポーネントの入れ子が3段を超えています: ${href("leaf.json")}`,
+      );
+      expect(f.reads.get(href("mid.json"))).toBe(1);
+    });
+
+    it("shares nothing from a walk that failed partway", async () => {
+      const f = fixture(twoRoots());
+      f.responses.delete(href("leaf.rhai"));
+      await expect(f.loader.fetch(href("A.json"))).rejects.toThrow("HTTP 404");
+      f.responses.set(href("leaf.rhai"), "fn init(s) { s }");
+      const candidate = await f.loader.fetch(href("B.json"));
+      // `a.json` had been walked successfully before the leaf failed, and is taken again all the
+      // same: a tree enters the shared map whole or not at all.
+      expect(f.reads.get(href("a.json"))).toBe(2);
+      expect(f.reads.get(href("leaf.json"))).toBe(2);
+      expect(Object.keys(candidate.components).sort()).toEqual(
+        [href("a.json"), href("leaf.json")].sort(),
+      );
+    });
+  });
 });
 
 describe("WasmEngine / UiRuntime の components", () => {
@@ -946,5 +1123,21 @@ describe("WasmEngine / UiRuntime の components", () => {
     expect(() => runtime.compile(parent("other.json"), ROOT_SCRIPT, SOURCE)).toThrow(
       "コンポーネント card の本体がありません",
     );
+  });
+
+  // Rebuilding the engine is the host's way of saying "take it all again", so the same gesture
+  // empties the loader's shared children.
+  it("passes the engine refresh on to the loader as the refresh of the shared children", async () => {
+    const runtime = await host({ clockProvider: fixedClock });
+    const fetch = vi.spyOn(runtime.applicationLoader, "fetch");
+    await runtime.load(SOURCE);
+    expect(fetch.mock.calls.at(-1)[1]).toMatchObject({ refresh: false });
+    const real = runtime.resources.fetch.bind(runtime.resources);
+    runtime.resources.fetch = (url, options) =>
+      url.pathname.endsWith(".wasm") ? Promise.resolve(new Response(bytes)) : real(url, options);
+    await runtime.load(SOURCE, { refreshEngine: true });
+    expect(fetch.mock.calls.at(-1)[1]).toMatchObject({ refresh: true });
+    await runtime.load(SOURCE);
+    expect(fetch.mock.calls.at(-1)[1]).toMatchObject({ refresh: false });
   });
 });

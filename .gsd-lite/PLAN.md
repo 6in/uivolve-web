@@ -102,7 +102,7 @@ bun run docs:check                                   # Markdown のローカル�
   - 依存: T2
   - 並列サブ作業: なし（走査の書き換えとテストは同じ構造に依存する）
 
-- [ ] T4: ページ遷移をまたぐ子のメモリ共有（R5）と無効化の 3 契機
+- [x] T4: ページ遷移をまたぐ子のメモリ共有（R5）と無効化の 3 契機
   - 完了基準:
     - `ApplicationLoader` に `#share = new Map()`（href → T3 の provide の戻りの形）と `#shareKey = { mode: undefined, auth: undefined }` を持つ（`UiRuntime` ごとに 1 つ `runtime.js:83`）。`fetch(value, { mode, signal, refresh = false })` の冒頭で `auth = JSON.stringify(this.resources.getAuthentication())`（P12）を取り、`refresh || mode !== this.#shareKey.mode || auth !== this.#shareKey.auth` なら `#share.clear()`、その後 `#shareKey = { mode, auth }`（P11: 値比較）。`UiRuntime.load`（`runtime.js:419-422`）が `refresh: refreshEngine` を渡す
     - 供給元の共有参照: `#fromNetwork` は `#share.get(href)` があれば取得せずに返す（network-only は一致確認なし）。`#fromManifest` は `#share.get(href)` の `hashes` が索引のエントリと**すべて一致**（`source` / `script` の sha256、`descriptors` のキー集合と各 sha256）したときだけ返し、違えば取得して置き換える。root は共有しない（`#share` に入れるのは `#walk` が集めた `packages` だけ）
@@ -112,7 +112,7 @@ bun run docs:check                                   # Markdown のローカル�
     - テスト（`tests/components-loader.test.js` に `describe("子パッケージのメモリ共有")`。`fixture()` の `reads` で回数を数える）:
       - (a) 同じ loader で parent A（子 a・孫 leaf）→ parent B（子 a）を network-only で順に取得 → `reads.get(a.json)` と `a.rhai` と `leaf.json` が 1、B の `candidate.components[a]` と A のものが**同じオブジェクト**（`toBe`）、A の取得後と B の取得後で共有エントリの `screen` が `toEqual`（P5）
       - (b) `fetch(B, { refresh: true })` → 2 回目の取得。同じ `mode` で `refresh` 無しの 3 回目 → 増えない（P11）
-      - (c) `resources.setAuthentication({ mode: "none", allowedOrigins: [同じ] })` を再設定して取得 → 増えない。`allowedOrigins` を変える → 増える。`{ mode: "jwt", token: "x", allowedOrigins: [...] }` にして network-only で取得 → 増える（P12。network-only は認証ありでも取得できる）
+      - (c) `resources.setAuthentication({ mode: "none", allowedOrigins: [同じ] })` を再設定して取得 → 増えない（`mode: "none"` は `allowedOrigins` を必ず `[]` にするので metadata が同じ。P12）。`{ mode: "jwt", token: "x", allowedOrigins: [base の origin] }` にして network-only で取得 → 増える（network-only は認証ありでも取得できる）。`allowedOrigins` をもう 1 つ足した `jwt` に変える → 増える
       - (d) network-first: A の木のマニフェストで取得（子ファイル `component-0-source` 等の `reads` が 1）→ もう 1 度 network-first → 子ファイルの `reads` は 1 のまま（共有を使った）→ 子の script を変えたマニフェスト（sha256 違い）→ 子ファイルを再取得（`reads` が 2）し `candidate.components[a].script` が新しい値。descriptor の sha256 だけ違う場合も再取得
       - (e) `network-only` で取得 → `network-first` で取得（`mode` 変更）→ 子ファイルをマニフェスト経由で取得する（共有が消えている）。逆順も同じ
       - (f) 共有から来た子でも走査が降りる（P4。深さのみ。循環は共有経由では構成できない: 共有に入った子の部分木は検証済みで、別 root からの循環は「その子が root を宣言する」ことになり最初の load で落ちる）: A（depth 2 で `mid` を共有。`mid` → `leaf`）→ B（`wrap` → `mid` → `leaf` = depth 4）→ `コンポーネントの入れ子が3段を超えています: {leaf の href}`、`mid` のファイルは再取得していない
