@@ -4,7 +4,7 @@
 - 対象: `git diff main...HEAD`（main `52ec888` → HEAD `49ef038`。コード・文書・デモは 25 ファイル / +1,134 / −92。`.gsd-lite/` と `.claude/skills/` を含めると 40 ファイル）。round 1 の HEAD `790d32b` からの差分は F1（`engine/src/lib.rs` 5 行 + `engine/src/composition_tests.rs` 1 本 + `tests/components-demo.test.js` の `find` → `filter` + `docs/components.md` / `docs/webmcp.md` の 3 断言）だけ
 - 実行エンジン: Claude Code（Claude Fable 5.1）。round 2 はサブエージェントなし（round 1 の格子の再確認 + F1 の回帰だけで、新しいクラスの探索はしない）
 - 判定: **合格**。受け入れ基準 1〜9（6b 含む）を満たし、round 1 の指摘 F1 は完了基準どおりに直っている。リモートは github.com なので push + PR 作成（ローカルマージはしない）
-- PR: （作成後に追記）
+- PR: https://github.com/6in/uivolve-web/pull/5（`gsd-lite/component-webmcp` → `main`。マージは人間 / CI）
 
 ## round 2 で確認したこと
 
