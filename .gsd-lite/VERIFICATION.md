@@ -4,7 +4,7 @@
 - 対象: `git diff main...HEAD`（main `aa79bd1` → HEAD `308eb0a`。39 ファイル / +4,209 / −1,216）。round 1 の HEAD `844162e` からの差分は F1（`docs/components.md` / `docs/files-cache-rpc.md`）と F2（`src/application-loader.js` 1 行 + `tests/components-loader.test.js` 1 本 + `docs/files-cache-rpc.md` 1 句）だけ
 - 実行エンジン: Claude Code（Claude Fable 5.1）。round 2 はサブエージェントなし（round 1 の格子の再確認 + F1 / F2 の回帰だけで、新しいクラスの探索はしない）
 - 判定: **合格**。受け入れ基準 1〜9 を満たし、round 1 の指摘 F1 / F2 は完了基準どおりに直っている。リモートは github.com なので push + PR 作成（ローカルマージはしない）
-- PR: （この行は PR 作成後に追記）
+- PR: https://github.com/6in/uivolve-web/pull/4（`gsd-lite/component-loader` → `main`。マージは人間 / CI）
 
 ## round 2 で確認したこと
 
