@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "id": "parts-lab",
+  "title": "部品ラボ",
+  "script": "parts-lab.rhai",
+  "components": {
+    "products": { "url": "http-grid.json" },
+    "note": { "url": "parts/note-pad.json" },
+    "approval": { "url": "parts/approval.json" }
+  },
+  "state": {
+    "notice": "各部品のボタンを押してください。"
+  },
+  "ui": {
+    "xtype": "container",
+    "layout": "vbox",
+    "items": [
+      { "xtype": "label", "itemId": "notice", "bind": "notice", "variant": "muted" },
+      { "xtype": "products", "itemId": "products" },
+      {
+        "xtype": "note",
+        "itemId": "note",
+        "listeners": { "saved": "onSaved" }
+      },
+      {
+        "xtype": "approval",
+        "itemId": "approval",
+        "listeners": { "answered": "onAnswered" }
+      }
+    ]
+  }
+}

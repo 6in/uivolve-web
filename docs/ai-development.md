@@ -23,7 +23,7 @@
 ## 実装済みの境界
 
 - 共通UI WASMはstate・型・部品・layout・イベントを確定し、ブラウザimportを持たない。Rhaiは同期。通信・保存はホストへ依頼し、完了handlerで最新stateへ反映する。
-- 画面合成（`components`）は同期のみ。子の非同期効果・`window`・配信キャッシュ・WebMCPの合成は段階4以降の将来設計で、子に通信・保存・ダイアログを書くコードを生成しない。
+- 画面合成（`components`）は子も非同期効果を出せる。子のeffectには`instance`が付き、完了opの`instance`で同じInstanceへ返る。子の`window`・配信キャッシュ・WebMCPの合成は段階5以降の将来設計で、子に`webmcp`宣言と`window`を書くコードを生成しない。
 - host_call、HostEffects、HTTPアダプター、WebWorkerの宣言的モックAPIは実装済み。WebSocket、カメラ/マイク、Bluetooth、PGlite/DuckDBアダプター、host_event、host_closeは将来設計。ブラウザ自体のAPIが存在することと、この製品のDSLで使えることを区別する。
 - 日付・時計、10進文字列の金額、Unicodeの正規化・書記素処理は登録済み。専用かな変換・文字種検査は後続。日時をJSのDateオブジェクト、金額をFLOATとして扱うコードを生成しない。
 - 比較デモの画面一覧はsrc/screen-catalog.jsから生成する。外部アプリはapp.jsonのpagesを使う。画面追加のためだけにデモindex.htmlの選択肢を手動追加しない。

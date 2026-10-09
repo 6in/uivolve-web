@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import { readFile } from "node:fs/promises";
 import { ApplicationLoader, manifestRevision, sha256 } from "../src/application-loader.js";
+import { componentScope, scopeProblem } from "../src/component-tree.js";
 import { WasmEngine } from "../src/engine.js";
 import { parsePackage } from "../src/package-format.js";
 import { ResourceClient } from "../src/resource-client.js";
@@ -231,6 +232,113 @@ describe("ApplicationLoader の components 取得", () => {
     await expect(f.loader.fetch(href("parent.json"))).rejects.toThrow(
       "Rhaiは100 KB以内にしてください",
     );
+  });
+
+  // The same table the engine reads, so both sides compose and refuse the same scopes.
+  it("composes and judges every row of the shared scope table", async () => {
+    const rows = JSON.parse(
+      await readFile(new URL("./helpers/component-scope-cases.json", import.meta.url), "utf8"),
+    );
+    expect(rows.length).toBeGreaterThan(11);
+    for (const { rootId, path, scope } of rows) {
+      if (scope === null) {
+        expect(scopeProblem(rootId, path)).toBe(
+          `コンポーネント ${path} の保存領域 ${componentScope(rootId, path)} が不正です（英数字・-・_ で80バイト以内、各要素に __ を含めない）`,
+        );
+      } else {
+        expect(componentScope(rootId, path)).toBe(scope);
+        expect(scopeProblem(rootId, path)).toBe(null);
+      }
+    }
+  });
+
+  // `mid` keeps no data of its own, so only the `part` placement below it is checked.
+  const placed = (items) =>
+    fixture([
+      [
+        "parent.json",
+        screen("parent", {
+          components: { part: { url: "part.json" }, mid: { url: "mid.json" } },
+          ui: { xtype: "container", items },
+        }),
+      ],
+      [
+        "mid.json",
+        screen("mid", {
+          components: { part: { url: "part.json" } },
+          ui: { xtype: "container", items: [{ xtype: "part", itemId: "b" }] },
+        }),
+      ],
+      [
+        "part.json",
+        screen("part", {
+          storage: { draft: { backend: "opfs", key: "draft", handler: "done" } },
+        }),
+      ],
+    ]);
+
+  it("refuses an itemId carrying __ for a child that declares storage", async () => {
+    const flat = placed([{ xtype: "part", itemId: "a__b" }]);
+    await expect(flat.loader.fetch(href("parent.json"))).rejects.toThrow(
+      "コンポーネント a__b の保存領域 parent__a__b が不正です（英数字・-・_ で80バイト以内、各要素に __ を含めない）",
+    );
+    // The same child one level down composes the same scope out of two sound parts.
+    const nested = placed([{ xtype: "mid", itemId: "a" }]);
+    const candidate = await nested.loader.fetch(href("parent.json"));
+    expect(Object.keys(candidate.components).sort()).toEqual(
+      [href("mid.json"), href("part.json")].sort(),
+    );
+  });
+
+  // A child resolves its RPC descriptor against its own URL, so the bytes travel with its entry.
+  it("keeps the descriptors a child downloaded on its entry of the components map", async () => {
+    const bytes = new Uint8Array(
+      await readFile(new URL("../public/screens/rpc-demo.pb", import.meta.url)),
+    );
+    const f = fixture([
+      [
+        "parent.json",
+        screen("parent", {
+          components: { part: { url: "part.json" } },
+          ui: { xtype: "container", items: [node("part")] },
+        }),
+      ],
+      [
+        "part.json",
+        screen("part", {
+          rpc: {
+            echo: {
+              url: "https://rpc.test/uivolve.demo.EchoService/Echo",
+              descriptor: "rpc-demo.pb",
+              service: "uivolve.demo.EchoService",
+              method: "Echo",
+              protocol: "connect",
+              handler: "echoDone",
+            },
+          },
+        }),
+        "fn init(s) { s } fn echoDone(s, r) { s }",
+      ],
+    ]);
+    f.responses.set(href("rpc-demo.pb"), bytes);
+    const candidate = await f.loader.fetch(href("parent.json"));
+    expect(candidate.components[href("part.json")].descriptors).toEqual({ "rpc-demo.pb": bytes });
+    expect(f.reads.get(href("rpc-demo.pb"))).toBe(1);
+  });
+
+  it("leaves the scope rules to a child that declares neither storage nor files", async () => {
+    const f = fixture([
+      [
+        "parent.json",
+        screen("parent", {
+          components: { part: { url: "part.json" } },
+          ui: { xtype: "container", items: [{ xtype: "part", itemId: "a__b" }] },
+        }),
+      ],
+      ["part.json", screen("part")],
+    ]);
+    const candidate = await f.loader.fetch(href("parent.json"));
+    expect(Object.keys(candidate.components)).toEqual([href("part.json")]);
   });
 });
 

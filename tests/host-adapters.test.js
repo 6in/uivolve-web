@@ -538,8 +538,8 @@ it("cancels reserved progress on reset and isolates reused ids from the old tran
     pending[1].context.progress({ transferred: 7, total: 9 });
     await vi.advanceTimersByTimeAsync(1);
     expect(current.progress.mock.calls).toEqual([
-      [1, { operation: "receive", transferred: 1, total: null }],
-      [1, { operation: "receive", transferred: 7, total: 9 }],
+      [1, { operation: "receive", transferred: 1, total: null }, undefined],
+      [1, { operation: "receive", transferred: 7, total: 9 }, undefined],
     ]);
     pending[0].context.progress({ transferred: 3, total: null });
     pending[0].resolve({ generation: "old" });
@@ -548,7 +548,7 @@ it("cancels reserved progress on reset and isolates reused ids from the old tran
     expect(pending[1].context.signal.aborted).toBe(false);
     pending[1].resolve({ generation: "new" });
     await fresh;
-    expect(current.complete.mock.calls).toEqual([[1, ok({ generation: "new" })]]);
+    expect(current.complete.mock.calls).toEqual([[1, ok({ generation: "new" }), undefined]]);
     await vi.advanceTimersByTimeAsync(100);
     expect(current.progress).toHaveBeenCalledTimes(2);
   } finally {

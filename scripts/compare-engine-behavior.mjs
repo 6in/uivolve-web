@@ -1,6 +1,8 @@
 // Behavior parity harness: replays one fixed request plan against two engine WASM builds and
 // counts response diffs. The verdict comes only from response JSON string equality -- the WASM
-// files themselves are never hashed or byte-compared.
+// files themselves are never hashed or byte-compared. One shape difference is normalized away
+// before that comparison: the `kind: "http"` key on HTTP effects, which stage 4 adds and earlier
+// builds leave out (see `normalize`). Nothing else is normalized.
 // usage: bun scripts/compare-engine-behavior.mjs --base <wasm> --candidate <wasm> [--evidence <json>]
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -84,7 +86,9 @@ function request(body) {
 function effectsOf(response) {
   return response?.data?.effects ?? [];
 }
-// `kind` is absent on HTTP effects (engine/src/http.rs), present on every other channel.
+// `kind` is absent on the base build's HTTP effects (before stage 4), present on every other
+// channel. The candidate tags them `kind: "http"`, but only base responses are read for ids --
+// the candidate just replays the resolved plan -- so this expression stays as it is.
 function matches(effect, kind) {
   return kind === "http" ? effect.kind === undefined : effect.kind === kind;
 }
@@ -743,6 +747,18 @@ function parse(text) {
 
 // ---------------------------------------------------------------- diffing
 
+// The one tolerated shape difference between builds: stage 4 tags HTTP effects with
+// `kind: "http"` (engine/src/http.rs) while the base leaves the key out. Only that key, only on
+// `data.effects[*]` entries whose kind is `"http"`. Unparseable responses stay raw text.
+const NORMALIZED = 'effects[*].kind === "http" → kind を除去';
+function normalize(text) {
+  const parsed = parse(text);
+  if (parsed === null) return text;
+  for (const effect of parsed?.data?.effects ?? [])
+    if (isPlainObject(effect) && effect.kind === "http") delete effect.kind;
+  return JSON.stringify(parsed);
+}
+
 // First differing JSON path, e.g. `data.widgets[3].x`. null when the values are deep-equal.
 function firstDiffPath(a, b, path = "") {
   if (Array.isArray(a) && Array.isArray(b)) {
@@ -793,16 +809,18 @@ const records = [];
 for (let i = 0; i < base.length; i++) {
   const left = base[i];
   const right = candidate[i];
-  const same = left.response === right.response;
+  const leftText = normalize(left.response);
+  const rightText = normalize(right.response);
+  const same = leftText === rightText;
   const parsed = parse(left.response);
   if (parsed?.ok) okResponses++;
   else errorResponses++;
   if (!same) {
     diffs++;
-    const path = firstDiffPath(parsed, parse(right.response)) ?? "(raw-text)";
+    const path = firstDiffPath(parse(leftText), parse(rightText)) ?? "(raw-text)";
     console.log(`DIFF ${left.sequence} ${left.label} ${path}`);
-    console.log(`  base:      ${valueAt(left.response, path)}`);
-    console.log(`  candidate: ${valueAt(right.response, path)}`);
+    console.log(`  base:      ${valueAt(leftText, path)}`);
+    console.log(`  candidate: ${valueAt(rightText, path)}`);
   }
   records.push({
     sequence: left.sequence,
@@ -817,6 +835,7 @@ for (let i = 0; i < base.length; i++) {
 const summary = {
   steps: base.length,
   diffs,
+  normalized: NORMALIZED,
   okResponses,
   errorResponses,
   sequences: plan.length,

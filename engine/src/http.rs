@@ -11,6 +11,7 @@ pub struct Request {
 
 #[derive(Serialize)]
 pub struct Effect {
+    pub kind: &'static str,
     pub id: u64,
     pub request: String,
     pub url: String,
@@ -65,6 +66,7 @@ impl Requests {
         for name in names {
             self.sequence += 1;
             self.ready.push(Effect {
+                kind: "http",
                 id: self.sequence,
                 request: name.clone(),
                 url: definitions[&name].url.clone(),

@@ -97,7 +97,8 @@ slug=<slug>
      MR/PR の URL は前回の VERIFICATION.md / PROGRESS.md から引き継いで記録する
    - origin の URL からホストを判別し、ホスト別の手順で作成する:
      - **github.com**: `git push -u origin gsd-lite/<slug>` →
-       `gh pr create --base <branch.base> --title "<milestone の要約>" --body "..."`
+       `gh pr create --base <branch.base> --head gsd-lite/<slug> --title "<milestone の要約>" --body-file <file>`
+       （`--head` が無いと `gh` がリモートブランチを見つけられず abort する。本文は scratch のファイルに書く）
        （`gh` が必須。不在・未認証なら push まで行って BLOCKED）
      - **gitlab を含む**: `glab` が使えるなら `git push -u origin gsd-lite/<slug>` →
        `glab mr create --target-branch <branch.base> --title "..." --description "..."`。
@@ -181,5 +182,8 @@ slug=<slug>
 - コミットメッセージは一時ファイルに書いて `git commit -F <file>` で渡す（`-m "$(...)"` は使わない）
 - 一時ファイルは `.gsd-lite/logs/<slug>/scratch/` に置き、名前に turn 番号を入れる
   （例 `turn-012-commit-msg.txt`。前のターンや前のマイルストーンのファイルを使い回さない）。
-  `mktemp -d` で作ったディレクトリはそのターン内で消す
+  `mktemp -d` で作ったディレクトリはそのターン内で消す。**`.gsd-lite/logs/<slug>/scratch/` は消さない**
+  （gitignore 済み。PLAN / PROGRESS / reflect が根拠として参照する）。`rm -rf` は使わない
+- native `Read` が「unchanged since your last Read」を返して本文を出さないとき（サブエージェント起動後に
+  起きやすい）は、`git show HEAD:<path>` または `cat <path>` で読む
 - 作業ディレクトリの外へは書かない（証跡は `.gsd-lite/` 配下に置く）

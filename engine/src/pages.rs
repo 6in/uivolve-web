@@ -11,7 +11,9 @@ pub struct Definition {
 
 #[derive(Default)]
 pub struct Requests {
-    queue: Rc<RefCell<Vec<String>>>,
+    /// Queued navigations as (page name, origin): the instance that asked, the empty path being
+    /// the root. One navigation per handler stays a screen-wide rule.
+    queue: Rc<RefCell<Vec<(String, String)>>>,
     ready: Vec<Value>,
 }
 
@@ -32,8 +34,9 @@ impl Requests {
         Ok(())
     }
 
-    pub fn register(&self, engine: &mut Engine) {
+    pub fn register(&self, engine: &mut Engine, origin: &str) {
         let queue = self.queue.clone();
+        let from = origin.to_owned();
         engine.register_fn(
             "navigate",
             move |name: ImmutableString| -> Result<(), Box<EvalAltResult>> {
@@ -41,7 +44,7 @@ impl Requests {
                 if !queue.is_empty() {
                     return Err("At most one navigation per handler".into());
                 }
-                queue.push(name.to_string());
+                queue.push((name.to_string(), from.clone()));
                 Ok(())
             },
         );
@@ -51,18 +54,28 @@ impl Requests {
         self.queue.borrow_mut().clear();
     }
 
-    pub fn prepare(&self, definitions: &HashMap<String, Definition>) -> Result<Vec<Value>, String> {
+    /// `pages_of` resolves the `pages` an origin declared: a child navigates through its own
+    /// definitions, not through the ones the root happens to carry.
+    pub fn prepare<'a>(
+        &self,
+        pages_of: &dyn Fn(&str) -> Option<&'a HashMap<String, Definition>>,
+    ) -> Result<Vec<Value>, crate::composition::Blame> {
         let names = std::mem::take(&mut *self.queue.borrow_mut());
         if self.ready.len() + names.len() > 8 {
-            return Err("At most 8 undelivered navigations".into());
+            // Screen-wide: one undelivered queue for the whole screen.
+            return Err((String::new(), "At most 8 undelivered navigations".into()));
         }
         names
             .into_iter()
-            .map(|name| {
-                let page = definitions
-                    .get(&name)
-                    .ok_or_else(|| format!("Unknown page: {name}"))?;
-                Ok(json!({"kind":"navigate", "page":name, "url":page.url}))
+            .map(|(name, origin)| {
+                let page = pages_of(&origin)
+                    .and_then(|definitions| definitions.get(&name))
+                    .ok_or_else(|| (origin.clone(), format!("Unknown page: {name}")))?;
+                let mut effect = json!({"kind":"navigate", "page":name, "url":page.url});
+                if !origin.is_empty() {
+                    effect["instance"] = json!(origin);
+                }
+                Ok(effect)
             })
             .collect()
     }

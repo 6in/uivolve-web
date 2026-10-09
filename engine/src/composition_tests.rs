@@ -32,17 +32,18 @@ fn load(package: Package, script: &str) -> Result<instance::Instance, String> {
     load_in(
         package,
         script,
-        true,
+        "",
         &extensions::ExtensionContext::default(),
     )
 }
 
-/// Load a package the way a parent loads a component: no host effects, `emit` instead.
+/// Load a package the way a parent loads a component: `emit` on top of the host effects, and
+/// the screen-wide queues tagged with the path the parent placed it at.
 fn load_child(package: Package, script: &str) -> Result<instance::Instance, String> {
     load_in(
         package,
         script,
-        false,
+        "a",
         &extensions::ExtensionContext::default(),
     )
 }
@@ -56,18 +57,29 @@ fn child_error(package: Package, script: &str) -> String {
 fn load_in(
     package: Package,
     script: &str,
-    effects: bool,
+    path: &str,
     context: &extensions::ExtensionContext,
+) -> Result<instance::Instance, String> {
+    load_with(package, script, path, context, HashMap::new())
+}
+
+/// `load_in` for a package whose `rpc` definitions need descriptors of their own.
+fn load_with(
+    package: Package,
+    script: &str,
+    path: &str,
+    context: &extensions::ExtensionContext,
+    descriptors: HashMap<String, Vec<u8>>,
 ) -> Result<instance::Instance, String> {
     let mut dialogs = dialogs::Requests::default();
     let pages = pages::Requests::default();
     instance::Instance::load(
         package,
         script,
-        HashMap::new(),
+        descriptors,
         context,
         None,
-        effects,
+        path,
         |_| {},
         &mut dialogs,
         &pages,
@@ -75,15 +87,18 @@ fn load_in(
 }
 
 /// The smallest child package: one button whose `run` handler each effect test fills in.
-fn child() -> Package {
-    serde_json::from_value(json!({
+fn child_json() -> Value {
+    json!({
         "version": 1, "id": "child", "title": "Child", "script": "child.rhai",
         "state": {"value": 0},
         "ui": {"xtype": "container", "items": [
             {"xtype": "button", "itemId": "run", "handler": "run"},
         ]},
-    }))
-    .expect("test child package")
+    })
+}
+
+fn child() -> Package {
+    serde_json::from_value(child_json()).expect("test child package")
 }
 
 /// Run a child handler the way `dispatch` will once the instance tree exists (T4), and return
@@ -343,135 +358,248 @@ fn a_declared_component_node_loads_and_waits_for_its_package() {
 
 // --- the instance environment of a child ---
 
-/// `"a", "b", ...`: a stub takes `Dynamic` arguments, so only the count has to match.
-fn arguments(arity: usize) -> String {
-    (0..arity)
-        .map(|i| format!("\"{}\"", (b'a' + i as u8) as char))
-        .collect::<Vec<_>>()
-        .join(", ")
+/// Descriptors for a child that declares `rpc`, the same set `rpc-lab` ships with.
+const DESCRIPTOR: &[u8] = include_bytes!("../../public/screens/rpc-demo.pb");
+
+fn descriptor_set() -> HashMap<String, Vec<u8>> {
+    HashMap::from([("rpc-demo.pb".to_owned(), DESCRIPTOR.to_vec())])
 }
 
-#[test]
-fn effect_functions_written_out_in_a_child_script_are_rejected_at_load() {
-    for (name, arities) in composition::STUBS {
-        for arity in arities {
-            let script = format!(
-                "fn init(s) {{ s }} fn run(s, e) {{ {name}({}); s }}",
-                arguments(*arity)
-            );
-            let error = child_error(child(), &script);
-            assert!(
-                error.contains(name) && error.contains("is not available in components"),
-                "{name}/{arity}: {error}"
-            );
-            assert!(
-                error.contains("line 1, position "),
-                "{name}/{arity}: {error}"
-            );
-        }
-    }
+/// The `rpc` declaration of the child fixtures: one unary Connect call.
+fn rpc_declaration() -> Value {
+    json!({"echo": {
+        "url": "http://127.0.0.1:4180/uivolve.demo.EchoService/Echo",
+        "descriptor": "rpc-demo.pb", "service": "uivolve.demo.EchoService",
+        "method": "Echo", "protocol": "connect", "handler": "done",
+    }})
 }
 
-#[test]
-fn effect_functions_reached_through_a_function_pointer_are_rejected_when_the_handler_runs() {
-    for (name, arities) in composition::STUBS {
-        for arity in arities {
-            // `Fn("navigate")` hides the name from the load-time walk; the stub answers instead.
-            let script = format!(
-                "fn init(s) {{ s }} fn run(s, e) {{ let f = Fn(\"{name}\"); f.call({}); s.value = 1; s }}",
-                arguments(*arity)
-            );
-            let instance = load_child(child(), &script)
-                .unwrap_or_else(|e| panic!("{name}/{arity} should load: {e}"));
-            let before = instance.state_json().expect("child state");
-            let error = run_child(&instance, "run").expect_err("the stub must refuse");
-            assert!(
-                error.contains(name) && error.contains("is not available in components"),
-                "{name}/{arity}: {error}"
-            );
-            assert_eq!(instance.state_json().expect("child state"), before);
-        }
-    }
-}
-
-#[test]
-fn every_effect_function_the_host_registers_has_a_stub() {
-    // Each call below resolves against a root engine, so no table entry is a dead name. The
-    // argument types are the real signatures, unlike the `Dynamic` stubs.
-    let calls: [(&str, &str); 24] = [
-        ("alert", "\"m\""),
-        ("alert", "\"m\", #{}"),
-        ("alert", "\"m\", \"onDone\", #{}"),
-        ("confirm", "\"m\", \"onDone\""),
-        ("confirm", "\"m\", \"onDone\", #{}"),
-        ("file_list", "\"vol\", \"f\""),
-        ("file_mkdir", "\"vol\", \"f\""),
-        ("file_read_bytes", "\"vol\", \"f\""),
-        ("file_read_text", "\"vol\", \"f\""),
-        ("file_remove", "\"vol\", \"f\""),
-        ("file_stat", "\"vol\", \"f\""),
-        ("file_write_bytes", "\"vol\", \"f\", file_bytes(\"x\")"),
-        ("file_write_text", "\"vol\", \"f\", \"text\""),
-        ("host_call", "\"op\", #{}"),
-        ("host_cancel", "\"op\""),
-        ("http_get", "\"req\""),
-        ("navigate", "\"page\""),
-        ("prompt", "\"m\", \"onDone\""),
-        ("prompt", "\"m\", \"default\", \"onDone\""),
-        ("prompt", "\"m\", \"default\", \"onDone\", #{}"),
-        ("rpc_call", "\"call\", #{}"),
-        ("storage_read", "\"key\""),
-        ("storage_remove", "\"key\""),
-        ("storage_write", "\"key\", #{}"),
-    ];
-    let mut table: BTreeSet<(&str, usize)> = BTreeSet::new();
-    for (name, arities) in composition::STUBS {
-        for arity in arities {
-            table.insert((name, *arity));
-        }
-    }
-    let mut resolved: BTreeSet<(&str, usize)> = BTreeSet::new();
-    let root = load(child(), "fn init(s) { s } fn run(s, e) { s }").expect("root instance");
-    for (name, args) in calls {
-        let script = format!("fn probe(s, e) {{ {name}({args}); s }}");
-        let ast = root.engine.compile(&script).expect(&script);
-        let error = root
-            .engine
-            .call_fn::<Dynamic>(
-                &mut Scope::new(),
-                &ast,
-                "probe",
-                (root.state.clone(), Dynamic::from(rhai::Map::new())),
-            )
-            .err()
-            .map(|e| e.to_string())
-            .unwrap_or_default();
-        assert!(
-            !error.contains("Function not found"),
-            "{script} does not resolve on a root engine: {error}"
-        );
-        resolved.insert((name, args.split(',').count()));
-    }
-    assert_eq!(resolved, table);
-
-    // A new effect function must be added to `STUBS`, so the registration count is pinned.
-    // Four of these register values rather than effects: `len` and three `file_bytes`.
-    let sites: usize = [
-        include_str!("dialogs.rs"),
-        include_str!("files.rs"),
-        include_str!("host.rs"),
-        include_str!("http.rs"),
-        include_str!("pages.rs"),
-        include_str!("rpc.rs"),
-        include_str!("storage.rs"),
+/// One effect kind a child may queue: the declaration it needs, the call that queues it, and
+/// how many effects each channel of that instance makes ready — `(http, storage, files, rpc,
+/// host)`. A child registers the same effect functions a root does, so each call is the real one.
+fn effect_cases() -> Vec<(&'static str, Value, &'static str, [usize; 5])> {
+    let files = json!({"vol": {"backend": "opfs", "access": "readwrite", "handler": "done"}});
+    vec![
+        (
+            "http_get",
+            json!({"requests": {"load": {"url": "d.json", "handler": "done"}}}),
+            "http_get(\"load\")",
+            [1, 0, 0, 0, 0],
+        ),
+        (
+            "storage_write",
+            json!({"storage": {"draft": {"backend": "opfs", "key": "draft", "handler": "done"}}}),
+            "storage_write(\"draft\", #{\"a\": 1})",
+            [0, 1, 0, 0, 0],
+        ),
+        (
+            "file_write_text",
+            json!({"files": files.clone()}),
+            "file_write_text(\"vol\", \"f.txt\", \"text\")",
+            [0, 0, 1, 0, 0],
+        ),
+        // `file_bytes` builds the binary value a write takes, so both halves of R1 are a child's.
+        (
+            "file_write_bytes",
+            json!({"files": files}),
+            "file_write_bytes(\"vol\", \"f.bin\", file_bytes(\"x\"))",
+            [0, 0, 1, 0, 0],
+        ),
+        (
+            "rpc_call",
+            json!({"rpc": rpc_declaration()}),
+            "rpc_call(\"echo\", #{\"name\": \"太郎\"})",
+            [0, 0, 0, 1, 0],
+        ),
+        (
+            "host_call",
+            json!({"operations": {"op": {"connection": "c", "action": "a", "handler": "done"}}}),
+            "host_call(\"op\", #{})",
+            [0, 0, 0, 0, 1],
+        ),
     ]
-    .iter()
-    .map(|source| source.matches("register_fn(").count())
-    .sum();
-    assert_eq!(
-        sites, 21,
-        "an effect module gained or lost a register_fn: check composition::STUBS"
+}
+
+/// Prepare and commit what a handler of this instance queued, the way `commit_all` does it for
+/// every instance of a screen, and report how many effects each channel made ready.
+fn commit_effects(instance: &mut instance::Instance) -> Result<[usize; 5], String> {
+    let queued = instance.prepare_effects()?;
+    instance.commit_effects(queued);
+    Ok([
+        instance.http.take().len(),
+        instance.storage.take().len(),
+        instance.files.take().len(),
+        instance.rpc.take().len(),
+        instance.host.take().len(),
+    ])
+}
+
+#[test]
+fn a_child_queues_the_host_effects_it_declares_into_its_own_channels() {
+    for (label, declaration, call, expected) in effect_cases() {
+        let mut package = child_json();
+        let mut descriptors = HashMap::new();
+        for (key, value) in declaration.as_object().expect("a declaration object") {
+            if key == "rpc" {
+                descriptors = descriptor_set();
+            }
+            package[key] = value.clone();
+        }
+        let package: Package =
+            serde_json::from_value(package).unwrap_or_else(|e| panic!("{label}: {e}"));
+        let script =
+            format!("fn init(s) {{ s }} fn done(s, r) {{ s }} fn run(s, e) {{ {call}; s }}");
+        let mut instance = load_with(
+            package,
+            &script,
+            "a",
+            &extensions::ExtensionContext::default(),
+            descriptors,
+        )
+        .unwrap_or_else(|e| panic!("{label} should load as a child: {e}"));
+        let _ = run_child(&instance, "run").unwrap_or_else(|e| panic!("{label}: {e}"));
+        assert_eq!(
+            commit_effects(&mut instance).unwrap_or_else(|e| panic!("{label}: {e}")),
+            expected,
+            "{label}"
+        );
+    }
+}
+
+/// A child declaring `rpc` without the descriptors its definitions name, and the same child
+/// once `load_with_bundle` carries them.
+#[test]
+fn a_child_declaring_rpc_needs_its_own_descriptors_bundled() {
+    let root = part(
+        "parent",
+        json!({}),
+        json!({"part": {"url": "part.json"}}),
+        json!([component("part", "a", json!({}))]),
     );
+    let mut package = child_json();
+    package["rpc"] = rpc_declaration();
+    let package: Package = serde_json::from_value(package).expect("an rpc child package");
+    let script = "fn init(s) { s } fn done(s, r) { s } fn run(s, e) { rpc_call(\"echo\", #{}); s }";
+    assert_eq!(
+        compose_error(
+            root.clone(),
+            bundle(vec![("part.json", package.clone(), script)])
+        ),
+        "Component a: RPC descriptors do not match definitions"
+    );
+    let bundled = HashMap::from([(
+        "part.json".to_owned(),
+        Bundle {
+            package,
+            script: script.to_owned(),
+            descriptors: descriptor_set(),
+        },
+    )]);
+    Runtime::load_with_bundle(root, SCRIPT, HashMap::new(), None, bundled, |_| {})
+        .expect("a child whose descriptors are bundled with it");
+}
+
+/// A root placing one child, for the screen-wide queues the two of them share. The child
+/// declares a page of its own, so `navigate` resolves there rather than on the root.
+fn sharing(child_script: &str) -> Result<Runtime, String> {
+    let mut child = child_json();
+    child["pages"] = json!({"next": {"url": "next.json"}});
+    child["ui"] = json!({"xtype": "container", "items": [
+        {"xtype": "button", "itemId": "fire", "handler": "fire"},
+    ]});
+    let child: Package = serde_json::from_value(child).expect("the shared child package");
+    compose_script(
+        part(
+            "parent",
+            json!({"query": ""}),
+            json!({"part": {"url": "part.json"}}),
+            json!([component("part", "a", json!({}))]),
+        ),
+        SCRIPT,
+        bundle(vec![("part.json", child, child_script)]),
+    )
+}
+
+#[test]
+fn a_dialog_a_child_asked_for_carries_the_path_of_that_child() {
+    // The `init` of the child, which is where P4 says the tag has to be there already.
+    let mut runtime = sharing("fn init(s) { alert(\"hi\"); s } fn fire(s, e) { s }")
+        .expect("a child that alerts from init");
+    let effects = runtime.dialogs.take();
+    assert_eq!(effects.len(), 1);
+    assert_eq!(effects[0]["kind"], json!("dialog"));
+    assert_eq!(effects[0]["instance"], json!("a"));
+
+    // An event of the child, and a root dialog next to it: only the child's effect is tagged.
+    let mut runtime = sharing(
+        "fn init(s) { s } fn fire(s, e) { confirm(\"m\", \"done\"); s } fn done(s, r) { s }",
+    )
+    .expect("a child that confirms from a handler");
+    runtime
+        .dispatch("a/fire", json!({}))
+        .expect("the child button");
+    let effects = runtime.dialogs.take();
+    assert_eq!(effects.len(), 1);
+    assert_eq!(effects[0]["instance"], json!("a"));
+    assert_eq!(effects[0]["operation"], json!("confirm"));
+}
+
+#[test]
+fn a_navigation_a_child_asked_for_resolves_and_is_tagged_in_that_child() {
+    // The page name is looked up in the `pages` of the child, which the root does not declare.
+    let mut runtime = sharing("fn init(s) { s } fn fire(s, e) { navigate(\"next\"); s }")
+        .expect("a child that navigates from a handler");
+    runtime
+        .dispatch("a/fire", json!({}))
+        .expect("the child button");
+    let effects = runtime.pages.take();
+    assert_eq!(effects.len(), 1);
+    assert_eq!(effects[0]["kind"], json!("navigate"));
+    assert_eq!(effects[0]["page"], json!("next"));
+    assert_eq!(effects[0]["instance"], json!("a"));
+
+    // A page neither the child nor the root declares names the child that asked for it.
+    let mut runtime = sharing("fn init(s) { s } fn fire(s, e) { navigate(\"nope\"); s }")
+        .expect("a child that navigates to nothing");
+    assert_eq!(
+        dispatch_error(&mut runtime, "a/fire", json!({})),
+        "Component a: Unknown page: nope"
+    );
+    assert_eq!(runtime.revision, 0);
+}
+
+#[test]
+fn a_child_cannot_navigate_from_init_and_names_itself_when_it_does() {
+    let error = sharing("fn init(s) { navigate(\"next\"); s } fn fire(s, e) { s }")
+        .err()
+        .expect("a child that navigates from init");
+    assert_eq!(
+        error,
+        "Component a: navigate is only available in event handlers, not init"
+    );
+}
+
+#[test]
+fn a_dialog_handler_of_a_child_is_looked_up_in_the_script_of_that_child() {
+    // The root script knows no `done`; the child does, so the dialog is accepted.
+    let mut runtime = sharing(
+        "fn init(s) { s } fn fire(s, e) { confirm(\"m\", \"done\"); s } fn done(s, r) { s }",
+    )
+    .expect("a child whose script defines the handler");
+    assert!(!SCRIPT.contains("done"), "the root must not define it");
+    runtime
+        .dispatch("a/fire", json!({}))
+        .expect("the child button");
+    assert_eq!(runtime.dialogs.take().len(), 1);
+
+    // Without it the child is named, rather than the root being searched instead.
+    let mut runtime = sharing("fn init(s) { s } fn fire(s, e) { confirm(\"m\", \"done\"); s }")
+        .expect("a child without the handler");
+    assert_eq!(
+        dispatch_error(&mut runtime, "a/fire", json!({})),
+        "Component a: Dialog: undefined handler done(state, response)"
+    );
+    assert_eq!(runtime.revision, 0);
 }
 
 #[test]
@@ -550,7 +678,7 @@ fn a_child_cannot_own_a_window_at_any_depth() {
 }
 
 #[test]
-fn a_child_cannot_declare_host_effects_or_metadata() {
+fn a_child_may_declare_host_effects_but_not_the_tool_surface() {
     let declarations = [
         (
             "requests",
@@ -569,30 +697,25 @@ fn a_child_cannot_declare_host_effects_or_metadata() {
             "files",
             json!({"vol": {"backend": "opfs", "access": "read", "handler": "run"}}),
         ),
-        (
-            "rpc",
-            json!({"echo": {
-                "url": "https://x/y", "descriptor": "d", "service": "s", "method": "m",
-                "protocol": "connect", "handler": "run",
-            }}),
-        ),
-        ("webmcp", json!({"description": "child"})),
     ];
+    // `rpc` needs descriptors of its own, which
+    // `a_child_declaring_rpc_needs_its_own_descriptors_bundled` covers.
     for (key, value) in declarations {
-        let mut package = json!({
-            "version": 1, "id": "child", "title": "Child", "script": "child.rhai",
-            "state": {}, "ui": {"xtype": "container", "items": []},
-        });
+        let mut package = child_json();
         package[key] = value;
         let package: Package =
             serde_json::from_value(package).unwrap_or_else(|e| panic!("{key}: {e}"));
-        let error = child_error(package, SCRIPT);
-        assert_eq!(
-            error,
-            "requests, operations, storage, files, rpc, pages and webmcp are not available in components (reserved for a later stage)",
-            "{key}"
-        );
+        load_child(package, "fn init(s) { s } fn run(s, e) { s }")
+            .unwrap_or_else(|e| panic!("{key} should load on a child: {e}"));
     }
+    // The tool surface stays screen-wide: a child publishing one would speak for the root.
+    let mut package = child_json();
+    package["webmcp"] = json!({"description": "child"});
+    let package: Package = serde_json::from_value(package).expect("a child with webmcp");
+    assert_eq!(
+        child_error(package, "fn init(s) { s } fn run(s, e) { s }"),
+        "webmcp is not available in components (reserved for a later stage)"
+    );
 }
 
 #[test]
@@ -608,7 +731,7 @@ fn a_child_reads_the_clock_its_parent_is_holding() {
     let instance = load_in(
         child(),
         "fn init(s) { s.today = date_today(); s } fn run(s, e) { s }",
-        false,
+        "a",
         &context,
     )
     .expect("child with a clock");
@@ -872,6 +995,121 @@ fn the_per_instance_limits_of_a_child_name_the_component_that_broke_them() {
     );
 }
 
+// --- the storage scope of an instance ---
+
+/// One row of `tests/helpers/component-scope-cases.json`, the table the JS side reads as well.
+/// A `scope` of `null` is a pair the rule has to refuse.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ScopeCase {
+    root_id: String,
+    path: String,
+    scope: Option<String>,
+}
+
+const STORING_SCRIPT: &str = "fn init(s) { s } fn landed(s, r) { s }";
+
+/// A child package keying a storage request of its own, so its placement needs a scope. With
+/// `json!({})` it declares neither storage nor files and the rule leaves it alone.
+fn storing(declarations: Value) -> Package {
+    serde_json::from_value(json!({
+        "version": 1, "id": "part", "title": "part", "script": "part.rhai",
+        "state": {"value": 0},
+        "storage": declarations,
+        "ui": {"xtype": "container", "items": [
+            {"xtype": "metric", "text": "件数", "bind": "value"},
+        ]},
+    }))
+    .expect("the storing child package")
+}
+
+fn stored() -> Value {
+    json!({"draft": {"backend": "opfs", "key": "draft", "handler": "landed"}})
+}
+
+/// A screen whose id (`orders`) heads the scope of every instance below it. One itemId places
+/// the child on the root; two place it under a middle instance, at the path they spell.
+fn scoped(item_ids: &[&str], declarations: Value) -> Result<Runtime, String> {
+    let (deepest, above) = item_ids.split_last().expect("at least one itemId");
+    let placement = json!([component("part", deepest, json!({}))]);
+    let mut parts = vec![("part.json", storing(declarations), STORING_SCRIPT)];
+    let (url, items) = match above {
+        [] => ("part.json", placement),
+        [item_id] => {
+            parts.push((
+                "mid.json",
+                part(
+                    "mid",
+                    json!({}),
+                    json!({"part": {"url": "part.json"}}),
+                    placement,
+                ),
+                CHILD_SCRIPT,
+            ));
+            ("mid.json", json!([component("part", item_id, json!({}))]))
+        }
+        _ => panic!("at most two levels"),
+    };
+    compose(
+        part("orders", json!({}), json!({"part": {"url": url}}), items),
+        bundle(parts),
+    )
+}
+
+#[test]
+fn the_storage_scope_of_an_instance_is_the_root_id_joined_with_its_path() {
+    let cases: Vec<ScopeCase> = serde_json::from_str(include_str!(
+        "../../tests/helpers/component-scope-cases.json"
+    ))
+    .expect("the component scope cases");
+    assert!(!cases.is_empty(), "the table has rows");
+    for case in cases {
+        let scope = composition::component_scope(&case.root_id, &case.path);
+        let named = format!("{} + {}", case.root_id, case.path);
+        match case.scope {
+            Some(expected) => assert_eq!(scope, Ok(expected), "{named}"),
+            None => assert!(scope.is_err(), "{named}: {scope:?}"),
+        }
+    }
+}
+
+#[test]
+fn a_child_keying_storage_cannot_be_placed_at_an_item_id_carrying_the_scope_separator() {
+    assert_eq!(
+        scoped(&["a__b"], stored())
+            .err()
+            .expect("expected a load error"),
+        "Component a__b: storage scope orders__a__b requires \
+         1–80 ASCII letters, digits, - or _ without \"__\" in any part"
+    );
+    // The same child reached through two levels composes the same scope legibly.
+    let runtime = scoped(&["a", "b"], stored()).expect("a composed screen");
+    assert_eq!(runtime.components.keys().collect::<Vec<_>>(), ["a", "a/b"]);
+}
+
+#[test]
+fn a_child_keying_nothing_is_placed_at_any_item_id_the_template_allows() {
+    let runtime = scoped(&["a__b"], json!({})).expect("a composed screen");
+    assert_eq!(runtime.components.keys().collect::<Vec<_>>(), ["a__b"]);
+}
+
+#[test]
+fn a_composed_storage_scope_stops_at_eighty_bytes() {
+    // `orders__` leaves 72 bytes for the itemId of the placement.
+    let fits = "p".repeat(72);
+    assert!(scoped(&[&fits], stored()).is_ok(), "80 bytes");
+    let overflows = "p".repeat(73);
+    assert_eq!(
+        scoped(&[&overflows], stored())
+            .err()
+            .expect("expected a load error"),
+        format!(
+            "Component {overflows}: storage scope orders__{overflows} requires \
+             1–80 ASCII letters, digits, - or _ without \"__\" in any part"
+        )
+    );
+}
+
 // --- laying out an instance tree ---
 
 /// `list.json` — a child tall enough to move what follows it, holding an itemId (`search`) its
@@ -923,7 +1161,9 @@ fn list_bundle() -> HashMap<String, (Package, String)> {
 fn set_state(instance: &mut instance::Instance, key: &str, value: Value) {
     let mut state = instance.state_json().expect("an instance state");
     state[key] = value;
-    instance.state = rhai::serde::to_dynamic(state).expect("a state map");
+    let next = rhai::serde::to_dynamic(state).expect("a state map");
+    let ui = instance.ui.clone();
+    instance.apply(next, ui);
 }
 
 fn keys(scene: &Scene) -> Vec<String> {
@@ -1146,6 +1386,92 @@ fn a_composed_screen_lays_out_at_every_viewport_width() {
     }
     // The scope of a finished layout is closed, so no instance tree outlives its pass.
     assert!(composition::with_component("b", |_, _| ()).is_none());
+}
+
+/// The ui and state a layout pass last snapshotted for one instance, or `None` while no pass
+/// has serialized it yet. Identity is the point: the `Rc` tells reuse from re-serialization.
+fn snapshot_of(runtime: &Runtime, path: &str) -> Option<Rc<(Node, Value)>> {
+    runtime.components[path].snapshot.borrow().clone()
+}
+
+#[test]
+fn two_layout_passes_over_the_same_state_reuse_the_snapshot_of_every_child() {
+    let runtime = reporting_screen(json!([
+        filter_field(),
+        component("report", "bound", json!({"query": {"bind": "query"}})),
+        component("report", "fixed", json!({"status": "受注"})),
+    ]));
+    // Loading serializes nothing for the layout: the first pass is what fills the cache.
+    assert!(snapshot_of(&runtime, "bound").is_none());
+    assert!(snapshot_of(&runtime, "fixed").is_none());
+    runtime.layout(800.0).expect("a scene");
+    let bound = snapshot_of(&runtime, "bound").expect("bound after one pass");
+    let fixed = snapshot_of(&runtime, "fixed").expect("fixed after one pass");
+    runtime.layout(640.0).expect("a scene");
+    for (path, before) in [("bound", &bound), ("fixed", &fixed)] {
+        let after = snapshot_of(&runtime, path).expect(path);
+        assert!(Rc::ptr_eq(before, &after), "{path} was serialized again");
+    }
+}
+
+#[test]
+fn a_dispatch_drops_the_snapshot_of_the_instances_it_moved_and_leaves_the_rest() {
+    let mut runtime = reporting_screen(json!([
+        filter_field(),
+        component("report", "bound", json!({"query": {"bind": "query"}})),
+        component("report", "fixed", json!({"status": "受注"})),
+    ]));
+    runtime.layout(800.0).expect("a scene");
+    let bound = snapshot_of(&runtime, "bound").expect("bound after one pass");
+    let fixed = snapshot_of(&runtime, "fixed").expect("fixed after one pass");
+    // An event inside one child moves that child only.
+    runtime
+        .dispatch("bound/orders", json!({"id": 2}))
+        .expect("the grid event of the child");
+    assert!(snapshot_of(&runtime, "bound").is_none());
+    assert!(Rc::ptr_eq(
+        &fixed,
+        &snapshot_of(&runtime, "fixed").expect("fixed")
+    ));
+    runtime.layout(800.0).expect("a scene");
+    let moved = snapshot_of(&runtime, "bound").expect("bound after the event");
+    assert!(!Rc::ptr_eq(&bound, &moved));
+    // Moving the root reconfigures the child bound to what changed, and only that one.
+    runtime
+        .dispatch("filter", json!({"value": "山田"}))
+        .expect("the root textfield");
+    assert!(snapshot_of(&runtime, "bound").is_none());
+    assert!(Rc::ptr_eq(
+        &fixed,
+        &snapshot_of(&runtime, "fixed").expect("fixed")
+    ));
+    // The pass after the event sees the moved state, not the one it cached before it.
+    runtime.layout(800.0).expect("a scene");
+    let reconfigured = snapshot_of(&runtime, "bound").expect("bound after the root moved");
+    assert!(!Rc::ptr_eq(&moved, &reconfigured));
+    assert_eq!(reconfigured.1["config"], json!({"query": "山田"}));
+    assert_eq!(reconfigured.1["picked"], json!(2));
+}
+
+#[test]
+fn a_rejected_layout_leaves_no_scope_behind_for_the_next_one() {
+    let runtime = reporting_screen(json!([component("report", "a", json!({}))]));
+    // `Scene` is not `Debug`, so the rejection goes through `err` instead of `expect_err`.
+    assert_eq!(
+        runtime
+            .layout(100.0)
+            .err()
+            .expect("a width below the floor"),
+        "Viewport width must be between 240 and 4096"
+    );
+    assert!(composition::with_component("a", |_, _| ()).is_none());
+    let scene = runtime.layout(800.0).expect("a scene");
+    assert!(
+        keys(&scene).iter().any(|key| key.starts_with("a/")),
+        "{:?}",
+        keys(&scene)
+    );
+    assert!(composition::with_component("a", |_, _| ()).is_none());
 }
 
 // --- routing an event to the instance that owns it ---
@@ -1630,8 +1956,8 @@ fn a_child_that_refuses_a_configuration_leaves_the_whole_screen_where_it_was() {
     assert_eq!(runtime.revision, 0);
 }
 
-/// The same child, announcing something and then failing: one variant throws, the other is
-/// refused by the stub of an effect function. Either way the announcement has no event left.
+/// The same child, announcing something and then failing: one variant throws, the other walks
+/// into an undefined variable. Either way the announcement has no event left.
 const STALE_SCRIPTS: [(&str, &str); 2] = [
     (
         "throw",
@@ -1641,11 +1967,11 @@ fn select(s, e) { s }
 fn whisper(s, e) { emit(\"unheard\", #{\"id\": 0}); throw \"the child refused\"; }",
     ),
     (
-        "stub",
+        "error",
         "fn init(s) { s }
 fn config(s, e) { s.configs += 1; s.seen = e.config.query; s }
 fn select(s, e) { s }
-fn whisper(s, e) { emit(\"unheard\", #{\"id\": 0}); Fn(\"http_get\").call(\"x\"); s }",
+fn whisper(s, e) { emit(\"unheard\", #{\"id\": 0}); nope.x; s }",
     ),
 ];
 
@@ -1770,4 +2096,1133 @@ fn a_child_cannot_announce_anything_while_it_is_being_reconfigured() {
         json!({"query": "", "notice": ""})
     );
     assert_eq!(runtime.revision, 0);
+}
+
+// --- the routing of completions ---
+
+/// The `rpc` declaration of the fixtures, pointed at a handler of the caller's choosing.
+fn rpc_for(handler: &str) -> Value {
+    let mut declaration = rpc_declaration();
+    declaration["echo"]["handler"] = json!(handler);
+    declaration
+}
+
+/// One button per effect kind, the two metrics the completion handlers write, and whatever
+/// component node the instance places below them.
+fn effecting_items(extra: Value) -> Value {
+    let mut items: Vec<Value> = [
+        "fire_http",
+        "fire_storage",
+        "fire_file",
+        "fire_file_read",
+        "fire_rpc",
+        "fire_host",
+        "fire_dialog",
+        "fire_named",
+        "fire_two",
+        "fire_fail",
+        "arm",
+    ]
+    .iter()
+    .map(|name| json!({"xtype": "button", "itemId": name, "handler": name}))
+    .collect();
+    items.push(json!({"xtype": "metric", "text": "最後", "bind": "last"}));
+    items.push(json!({"xtype": "metric", "text": "通知", "bind": "notice"}));
+    items.extend(extra.as_array().expect("the extra items").iter().cloned());
+    Value::Array(items)
+}
+
+/// An instance of the routing fixtures: one declaration of every kind, so a completion of every
+/// kind can be addressed to it. The eight HTTP requests are the per-instance maximum, which is
+/// what lets a test queue a ninth one and be refused.
+fn effecting(id: &str, components: Value, items: Value) -> Package {
+    let requests: serde_json::Map<String, Value> = (1..=8)
+        .map(|n| {
+            (
+                format!("r{n}"),
+                json!({"url": format!("r{n}.json"), "handler": "done_http"}),
+            )
+        })
+        .collect();
+    serde_json::from_value(json!({
+        "version": 1, "id": id, "title": id, "script": format!("{id}.rhai"),
+        "state": {"last": "", "notice": "", "fail": "", "fat": []},
+        "components": components,
+        "requests": requests,
+        "storage": {"draft": {"backend": "opfs", "key": "draft", "handler": "done_storage"}},
+        "files": {"vol": {"backend": "opfs", "access": "readwrite", "handler": "done_file"}},
+        "rpc": rpc_for("done_rpc"),
+        "operations": {"op": {
+            "connection": "c", "action": "a", "handler": "done_host",
+            "options": {"progressHandler": "on_progress"},
+        }},
+        "pages": {"next": {"url": "next.json"}},
+        "ui": {"xtype": "container", "items": effecting_items(items)},
+    }))
+    .unwrap_or_else(|e| panic!("{id}: {e}"))
+}
+
+/// The script every instance of the routing fixtures runs. A child announces each completion to
+/// its parent, which is the whole path R3 asks for: host → instance → handler → parent.
+fn effecting_script(announce: bool) -> String {
+    let announcement = match announce {
+        true => "emit(\"done\", #{\"kind\": k});",
+        false => "",
+    };
+    let announce_two = match announce {
+        true => "emit(\"done\", #{\"kind\": \"two\"});",
+        false => "",
+    };
+    format!(
+        "fn init(s) {{ s }}
+fn fatten() {{
+    let one = \"x\";
+    while one.len() < 60000 {{ one += one; }}
+    let rows = [];
+    for i in 0..20 {{ rows.push(one); }}
+    rows
+}}
+fn land(s, k) {{
+    if s.fail == \"before\" {{ throw \"the handler refused\"; }}
+    if s.fail == \"fat\" {{ s.fat = fatten(); }}
+    s.last = k;
+    {announcement}
+    if s.fail == \"after\" {{ throw \"the handler refused\"; }}
+    s
+}}
+fn arm(s, e) {{ s.fail = e.value; s }}
+fn fire_fail(s, e) {{ throw \"the handler refused\"; }}
+fn fire_http(s, e) {{ http_get(\"r1\"); s }}
+fn fire_storage(s, e) {{ storage_write(\"draft\", #{{\"a\": 1}}); s }}
+fn fire_file(s, e) {{ file_write_text(\"vol\", \"f.txt\", \"text\"); s }}
+fn fire_file_read(s, e) {{ file_read_bytes(\"vol\", \"f.txt\"); s }}
+fn fire_rpc(s, e) {{ rpc_call(\"echo\", #{{\"name\": \"太郎\"}}); s }}
+fn fire_host(s, e) {{ host_call(\"op\", #{{}}); s }}
+fn fire_dialog(s, e) {{ confirm(\"m\", \"done_dialog\"); s }}
+fn fire_named(s, e) {{ http_get(e.value); s }}
+fn fire_two(s, e) {{ http_get(\"r1\"); http_get(\"r2\"); {announce_two} s }}
+fn done_http(s, r) {{ land(s, \"http\") }}
+fn done_storage(s, r) {{ land(s, \"storage\") }}
+fn done_file(s, r) {{ land(s, \"file\") }}
+fn done_rpc(s, r) {{ land(s, \"rpc\") }}
+fn done_host(s, r) {{ land(s, \"host\") }}
+fn on_progress(s, r) {{ land(s, \"progress\") }}
+fn done_dialog(s, r) {{ land(s, \"dialog\") }}
+fn on_done(s, e) {{ s.notice = e.target + \":\" + e.value.kind; s }}
+fn refuse(s, e) {{ throw \"the parent refused\"; }}
+fn flee(s, e) {{ navigate(\"next\"); s }}"
+    )
+}
+
+/// A root, a child `a` and a grandchild `a/c`, each declaring one effect of every kind. The
+/// listener the root answers the announcements of `a` with is the test's choice: `on_done`
+/// records what arrived, `refuse` throws, `flee` navigates.
+fn routing(listener: &str) -> Runtime {
+    let leaf = effecting("leaf", json!({}), json!([]));
+    let middle = effecting(
+        "middle",
+        json!({"part": {"url": "leaf.json"}}),
+        json!([listening(
+            "part",
+            "c",
+            json!({}),
+            json!({"done": "on_done"})
+        )]),
+    );
+    let root = effecting(
+        "parent",
+        json!({"part": {"url": "middle.json"}}),
+        json!([listening("part", "a", json!({}), json!({"done": listener}))]),
+    );
+    let child_script = effecting_script(true);
+    let bundled = HashMap::from([
+        (
+            "middle.json".to_owned(),
+            Bundle {
+                package: middle,
+                script: child_script.clone(),
+                descriptors: descriptor_set(),
+            },
+        ),
+        (
+            "leaf.json".to_owned(),
+            Bundle {
+                package: leaf,
+                script: child_script,
+                descriptors: descriptor_set(),
+            },
+        ),
+    ]);
+    Runtime::load_with_bundle(
+        root,
+        &effecting_script(false),
+        descriptor_set(),
+        None,
+        bundled,
+        |_| {},
+    )
+    .expect("the routing screen")
+}
+
+/// The error a completion fails with. `Runtime` is not `Debug`, so rejections go through here.
+fn complete_error(runtime: &mut Runtime, instance: &str, completion: Completion) -> String {
+    runtime
+        .complete(instance, completion)
+        .err()
+        .expect("expected a failed completion")
+}
+
+/// The `(instance, kind)` of every effect the host is handed, in the order it is handed them.
+fn effect_order(runtime: &mut Runtime) -> Vec<(String, String)> {
+    runtime
+        .take_effects()
+        .iter()
+        .map(|effect| {
+            (
+                effect["instance"].as_str().unwrap_or("").to_owned(),
+                effect["kind"].as_str().expect("an effect kind").to_owned(),
+            )
+        })
+        .collect()
+}
+
+/// An HTTP response that succeeds, the shape every channel of these fixtures accepts.
+fn answered() -> Value {
+    json!({"ok": true, "data": {}, "error": ""})
+}
+
+#[test]
+fn the_effect_of_a_child_names_the_instance_the_response_has_to_come_back_to() {
+    let mut runtime = routing("on_done");
+    runtime
+        .dispatch("a/fire_http", json!({}))
+        .expect("the child button");
+    let effects = runtime.take_effects();
+    assert_eq!(effects.len(), 1);
+    assert_eq!(
+        effects[0]
+            .as_object()
+            .expect("an effect object")
+            .keys()
+            .collect::<Vec<_>>(),
+        ["id", "instance", "kind", "request", "url"]
+    );
+    assert_eq!(effects[0]["instance"], json!("a"));
+    assert_eq!(effects[0]["kind"], json!("http"));
+    assert_eq!(effects[0]["request"], json!("r1"));
+    assert_eq!(effects[0]["url"], json!("r1.json"));
+
+    // The root answers for itself, so its own effects carry no instance at all.
+    runtime
+        .dispatch("fire_http", json!({}))
+        .expect("the root button");
+    let effects = runtime.take_effects();
+    assert_eq!(effects.len(), 1);
+    assert_eq!(
+        effects[0]
+            .as_object()
+            .expect("an effect object")
+            .keys()
+            .collect::<Vec<_>>(),
+        ["id", "kind", "request", "url"]
+    );
+}
+
+#[test]
+fn two_instances_number_their_requests_apart_and_are_told_apart_by_the_instance() {
+    let mut runtime = routing("on_done");
+    runtime
+        .dispatch("fire_http", json!({}))
+        .expect("the root button");
+    runtime
+        .dispatch("a/fire_http", json!({}))
+        .expect("the child button");
+    let effects = runtime.take_effects();
+    assert_eq!(effects.len(), 2);
+    // Each channel counts for itself, so the first request of every instance is id 1.
+    assert_eq!(effects[0]["id"], json!(1));
+    assert_eq!(effects[1]["id"], json!(1));
+    assert!(effects[0].get("instance").is_none(), "{:?}", effects[0]);
+    assert_eq!(effects[1]["instance"], json!("a"));
+}
+
+#[test]
+fn a_completion_of_a_child_travels_up_to_the_listeners_of_the_root() {
+    let mut runtime = routing("on_done");
+    runtime
+        .dispatch("a/fire_http", json!({}))
+        .expect("the child button");
+    let revision = runtime.revision;
+    runtime
+        .complete(
+            "a",
+            Completion::Http {
+                id: 1,
+                response: answered(),
+            },
+        )
+        .expect("the completion of the child");
+    assert_eq!(child_state(&runtime, "a")["last"], json!("http"));
+    assert_eq!(
+        runtime.state_json().expect("root state")["notice"],
+        json!("a:http")
+    );
+    // The response moved two instances; the screen still counts one step.
+    assert_eq!(runtime.revision, revision + 1);
+}
+
+#[test]
+fn a_listener_that_refuses_a_completion_rolls_the_screen_back_but_not_the_request() {
+    let mut runtime = routing("refuse");
+    runtime
+        .dispatch("a/fire_http", json!({}))
+        .expect("the child button");
+    let before = runtime.state_json().expect("root state");
+    let child_before = child_state(&runtime, "a");
+    let revision = runtime.revision;
+    let error = complete_error(
+        &mut runtime,
+        "a",
+        Completion::Http {
+            id: 1,
+            response: answered(),
+        },
+    );
+    assert!(error.contains("the parent refused"), "{error}");
+    assert_eq!(runtime.state_json().expect("root state"), before);
+    assert_eq!(child_state(&runtime, "a"), child_before);
+    assert_eq!(runtime.revision, revision);
+    // The response was delivered once: the request is gone whether the screen moved or not.
+    assert_eq!(
+        complete_error(
+            &mut runtime,
+            "a",
+            Completion::Http {
+                id: 1,
+                response: answered()
+            }
+        ),
+        "Component a: Unknown or completed HTTP request"
+    );
+}
+
+/// One row of the completion grid: the button that queues an effect of that channel, the
+/// response the host sends back, what the handler of that kind writes into `last`, and the two
+/// things that differ per channel — the message a request that is no longer pending is refused
+/// with, and whether the host may send the same response twice.
+struct Channel {
+    button: &'static str,
+    make: fn(u64) -> Completion,
+    landed: &'static str,
+    unknown: &'static str,
+    /// Every channel but `host_progress` consumes the request when the response arrives, a
+    /// failed handler included: the host is never asked to send that one again.
+    consuming: bool,
+    /// Every channel but the dialogs numbers its requests per instance, so two instances can
+    /// hold the same id. The dialog queue belongs to the screen, and its ids are unique in it.
+    per_instance_ids: bool,
+}
+
+/// The rows of the grid: one per kind of completion the host can deliver.
+fn completion_cases() -> Vec<Channel> {
+    vec![
+        Channel {
+            button: "fire_http",
+            make: |id| Completion::Http {
+                id,
+                response: answered(),
+            },
+            landed: "http",
+            unknown: "Unknown or completed HTTP request",
+            consuming: true,
+            per_instance_ids: true,
+        },
+        Channel {
+            button: "fire_storage",
+            make: |id| Completion::Storage {
+                id,
+                response: answered(),
+            },
+            landed: "storage",
+            unknown: "Unknown or completed storage request",
+            consuming: true,
+            per_instance_ids: true,
+        },
+        Channel {
+            button: "fire_file",
+            make: |id| Completion::File {
+                id,
+                response: answered(),
+                buffer: None,
+            },
+            landed: "file",
+            unknown: "Unknown or completed file request",
+            consuming: true,
+            per_instance_ids: true,
+        },
+        // A failed call is the one RPC completion that needs no encoded response message; the
+        // successful one carries a buffer and has a cell of its own below.
+        Channel {
+            button: "fire_rpc",
+            make: |id| Completion::Rpc {
+                id,
+                response: json!({"ok": false, "data": null, "error": "no"}),
+                buffer: None,
+            },
+            landed: "rpc",
+            unknown: "Unknown or completed RPC call",
+            consuming: true,
+            per_instance_ids: true,
+        },
+        Channel {
+            button: "fire_host",
+            make: |id| Completion::Host {
+                id,
+                response: json!({"ok": true, "data": null, "error": null}),
+            },
+            landed: "host",
+            unknown: "Unknown or completed host call",
+            consuming: true,
+            per_instance_ids: true,
+        },
+        Channel {
+            button: "fire_host",
+            make: |id| Completion::HostProgress {
+                id,
+                data: json!({"operation": "op", "transferred": 0, "total": null}),
+            },
+            landed: "progress",
+            unknown: "Unknown or completed host call",
+            consuming: false,
+            per_instance_ids: true,
+        },
+        Channel {
+            button: "fire_dialog",
+            make: |id| Completion::Dialog {
+                id,
+                response: json!({"ok": true, "data": true, "error": ""}),
+            },
+            landed: "dialog",
+            unknown: "Unknown or completed dialog request",
+            consuming: true,
+            per_instance_ids: false,
+        },
+    ]
+}
+
+#[test]
+fn every_kind_of_completion_reaches_a_child_and_a_grandchild() {
+    for path in ["a", "a/c"] {
+        for channel in completion_cases() {
+            let mut runtime = routing("on_done");
+            let id = queue_effect(&mut runtime, path, &channel);
+            runtime
+                .complete(path, (channel.make)(id))
+                .unwrap_or_else(|e| panic!("{path} {}: {e}", channel.landed));
+            assert_eq!(
+                child_state(&runtime, path)["last"],
+                json!(channel.landed),
+                "{path} {}",
+                channel.landed
+            );
+        }
+    }
+}
+
+#[test]
+fn a_dialog_of_a_child_is_answered_through_the_screen_as_well_as_through_the_instance() {
+    for path in ["a", "a/c"] {
+        let mut runtime = routing("on_done");
+        runtime
+            .dispatch(&format!("{path}/fire_dialog"), json!({}))
+            .expect("the dialog button");
+        let id = runtime.take_effects()[0]["id"]
+            .as_u64()
+            .expect("a dialog id");
+        // The screen-wide route: the modal of the active dialog, which names no instance.
+        runtime
+            .dispatch(&format!(":dialog:{id}:ok"), json!({}))
+            .unwrap_or_else(|e| panic!("{path}: {e}"));
+        assert_eq!(
+            child_state(&runtime, path)["last"],
+            json!("dialog"),
+            "{path}"
+        );
+    }
+}
+
+#[test]
+fn the_root_keeps_the_ids_of_its_own_requests_apart_from_the_ones_of_a_child() {
+    // The id of the child, sent back without an instance, is nothing the root ever handed out.
+    let mut runtime = routing("on_done");
+    runtime
+        .dispatch("a/fire_http", json!({}))
+        .expect("the child button");
+    let id = runtime.take_effects()[0]["id"]
+        .as_u64()
+        .expect("an effect id");
+    assert_eq!(
+        complete_error(
+            &mut runtime,
+            "",
+            Completion::Http {
+                id,
+                response: answered()
+            }
+        ),
+        "Unknown or completed HTTP request"
+    );
+
+    // Once the root has a request of its own with that id, the same answer is its own.
+    runtime
+        .dispatch("fire_http", json!({}))
+        .expect("the root button");
+    assert_eq!(runtime.take_effects()[0]["id"].as_u64(), Some(id));
+    runtime
+        .complete(
+            "",
+            Completion::Http {
+                id,
+                response: answered(),
+            },
+        )
+        .expect("the completion of the root");
+    assert_eq!(
+        runtime.state_json().expect("root state")["last"],
+        json!("http")
+    );
+    // The request of the child is still waiting for an answer addressed to it.
+    assert_eq!(child_state(&runtime, "a")["last"], json!(""));
+}
+
+#[test]
+fn naming_the_wrong_instance_reaches_nothing_and_swallows_nothing() {
+    let mut runtime = routing("on_done");
+    assert_eq!(
+        complete_error(
+            &mut runtime,
+            "nope",
+            Completion::Http {
+                id: 1,
+                response: answered()
+            }
+        ),
+        "Unknown component instance: nope"
+    );
+
+    // A dialog of the root, claimed by a child: the request stays pending for its real owner.
+    runtime
+        .dispatch("fire_dialog", json!({}))
+        .expect("the root dialog button");
+    let id = runtime.take_effects()[0]["id"]
+        .as_u64()
+        .expect("a dialog id");
+    let response = json!({"ok": true, "data": true, "error": ""});
+    assert_eq!(
+        complete_error(
+            &mut runtime,
+            "a",
+            Completion::Dialog {
+                id,
+                response: response.clone()
+            }
+        ),
+        "Component a: Unknown or completed dialog request"
+    );
+    assert_eq!(child_state(&runtime, "a")["last"], json!(""));
+    runtime
+        .complete("", Completion::Dialog { id, response })
+        .expect("the owner of the dialog");
+    assert_eq!(
+        runtime.state_json().expect("root state")["last"],
+        json!("dialog")
+    );
+}
+
+#[test]
+fn a_navigation_of_the_root_cannot_be_combined_with_the_effects_of_a_child() {
+    // The handler of the child queues two requests and announces; the listener of the root
+    // answers by navigating. The exclusion counts the effects of every instance together.
+    let mut runtime = routing("flee");
+    assert_eq!(
+        dispatch_error(&mut runtime, "a/fire_two", json!({})),
+        "Navigation cannot be combined with other effects in the same handler"
+    );
+    assert_eq!(runtime.revision, 0);
+    assert_eq!(child_state(&runtime, "a")["last"], json!(""));
+    assert_eq!(
+        runtime.state_json().expect("root state")["notice"],
+        json!("")
+    );
+    assert!(runtime.take_effects().is_empty());
+    // Nothing of what the failed handler queued became pending, in either instance.
+    let mut runtime = routing("on_done");
+    runtime
+        .dispatch("a/fire_two", json!({}))
+        .expect("the child button");
+    assert_eq!(runtime.take_effects().len(), 2);
+}
+
+#[test]
+fn the_pending_requests_of_a_child_are_counted_in_that_child_alone() {
+    let mut runtime = routing("on_done");
+    for n in 1..=8 {
+        runtime
+            .dispatch("a/fire_named", json!({"value": format!("r{n}")}))
+            .unwrap_or_else(|e| panic!("r{n}: {e}"));
+    }
+    assert_eq!(runtime.take_effects().len(), 8);
+    assert_eq!(
+        dispatch_error(&mut runtime, "a/fire_named", json!({"value": "r1"})),
+        "Component a: At most 8 pending HTTP requests"
+    );
+    // The root counts its own, so it still has all eight of them left.
+    for n in 1..=8 {
+        runtime
+            .dispatch("fire_named", json!({"value": format!("r{n}")}))
+            .unwrap_or_else(|e| panic!("r{n}: {e}"));
+    }
+    assert_eq!(runtime.take_effects().len(), 8);
+    assert_eq!(
+        dispatch_error(&mut runtime, "fire_named", json!({"value": "r1"})),
+        "At most 8 pending HTTP requests"
+    );
+}
+
+#[test]
+fn the_effects_of_the_root_come_first_and_the_children_follow_in_path_order() {
+    let mut runtime = routing("on_done");
+    for target in [
+        "a/c/fire_host",
+        "a/c/fire_http",
+        "a/fire_host",
+        "a/fire_http",
+        "fire_host",
+        "fire_http",
+    ] {
+        runtime
+            .dispatch(target, json!({}))
+            .unwrap_or_else(|e| panic!("{target}: {e}"));
+    }
+    // Within an instance the channels report in a fixed order, and the instances follow the
+    // keys of the tree — not the order the handlers happened to run in.
+    assert_eq!(
+        effect_order(&mut runtime),
+        [
+            ("", "http"),
+            ("", "host"),
+            ("a", "http"),
+            ("a", "host"),
+            ("a/c", "http"),
+            ("a/c", "host"),
+        ]
+        .map(|(instance, kind)| (instance.to_owned(), kind.to_owned()))
+    );
+}
+
+#[test]
+fn an_instance_path_the_host_sends_back_has_to_be_a_path() {
+    for path in ["a", "a/b", "a/b/c", "open"] {
+        assert!(composition::valid_instance_path(path), "{path}");
+    }
+    for path in ["", "/a", "a/", "a//b", "a:b", ":dialog:1:ok", "/"] {
+        assert!(!composition::valid_instance_path(path), "{path}");
+    }
+}
+
+// --- the grid of entrances, results and instances ---
+//
+// Every cell below runs the whole screen, so a wrong route shows up as a state that moved, a
+// revision that counted or a request that was swallowed — not as a panic. None of these tests
+// is `should_panic`: a panic anywhere in the grid fails the suite.
+
+/// The target of an event or a button of `path`, the root being the unprefixed one.
+fn target_of(path: &str, item_id: &str) -> String {
+    match path.is_empty() {
+        true => item_id.to_owned(),
+        false => format!("{path}/{item_id}"),
+    }
+}
+
+/// The message `instance` is refused with: the instance that failed names itself, the root does
+/// not have to.
+fn blamed(instance: &str, message: &str) -> String {
+    match instance.is_empty() {
+        true => message.to_owned(),
+        false => format!("Component {instance}: {message}"),
+    }
+}
+
+fn instance_state(runtime: &Runtime, path: &str) -> Value {
+    match path.is_empty() {
+        true => runtime.state_json().expect("root state"),
+        false => child_state(runtime, path),
+    }
+}
+
+/// The state of every instance of the screen, root first: what a refused completion may not move.
+fn screen_states(runtime: &Runtime) -> Vec<Value> {
+    let mut states = vec![runtime.state_json().expect("root state")];
+    states.extend(
+        runtime
+            .components
+            .values()
+            .map(|instance| instance.state_json().expect("a child state")),
+    );
+    states
+}
+
+/// Tell the completion handlers of `path` to fail: `before` throws on arrival, `after` throws
+/// once it has already written and announced, `fat` grows the state past a megabyte.
+fn arm_failure(runtime: &mut Runtime, path: &str, how: &str) {
+    runtime
+        .dispatch(&target_of(path, "arm"), json!({"value": how}))
+        .unwrap_or_else(|e| panic!("arming {path} with {how}: {e}"));
+}
+
+/// Queue one effect of `channel` in `path` and return the id the host has to answer with. The
+/// effect names the instance it has to come back to, and the root's names none.
+fn queue_effect(runtime: &mut Runtime, path: &str, channel: &Channel) -> u64 {
+    runtime
+        .dispatch(&target_of(path, channel.button), json!({}))
+        .unwrap_or_else(|e| panic!("{path} {}: {e}", channel.landed));
+    let effects = runtime.take_effects();
+    assert_eq!(effects.len(), 1, "{path} {}", channel.landed);
+    assert_eq!(
+        effects[0].get("instance").and_then(Value::as_str),
+        (!path.is_empty()).then_some(path),
+        "{path} {}",
+        channel.landed
+    );
+    effects[0]["id"].as_u64().expect("an effect id")
+}
+
+/// 正常: the response reaches the instance that asked, the screen counts one step, and the only
+/// other instance that moves is the parent the child announced to.
+fn grid_normal(channel: &Channel) {
+    for path in ["", "a", "a/c"] {
+        let label = format!("{path} {}", channel.landed);
+        let mut runtime = routing("on_done");
+        let id = queue_effect(&mut runtime, path, channel);
+        let revision = runtime.revision;
+        runtime
+            .complete(path, (channel.make)(id))
+            .unwrap_or_else(|e| panic!("{label}: {e}"));
+        assert_eq!(
+            instance_state(&runtime, path)["last"],
+            json!(channel.landed),
+            "{label}"
+        );
+        assert_eq!(runtime.revision, revision + 1, "{label}");
+        // A child announces what arrived to the parent holding it; nobody else is told.
+        let heard = match path {
+            "" => json!(""),
+            "a" => json!(format!("a:{}", channel.landed)),
+            _ => json!(format!("c:{}", channel.landed)),
+        };
+        let parent = match path {
+            "a/c" => "a",
+            _ => "",
+        };
+        assert_eq!(instance_state(&runtime, parent)["notice"], heard, "{label}");
+        for other in ["", "a", "a/c"].iter().filter(|other| **other != path) {
+            assert_eq!(
+                instance_state(&runtime, other)["last"],
+                json!(""),
+                "{label}"
+            );
+        }
+    }
+}
+
+/// handler 失敗: the instance that threw names itself, no instance moves, and the request is
+/// gone all the same — except on the one channel that does not consume it.
+fn grid_handler_failure(channel: &Channel) {
+    for path in ["", "a", "a/c"] {
+        let label = format!("{path} {}", channel.landed);
+        let mut runtime = routing("on_done");
+        arm_failure(&mut runtime, path, "before");
+        let id = queue_effect(&mut runtime, path, channel);
+        let before = screen_states(&runtime);
+        let revision = runtime.revision;
+        let error = complete_error(&mut runtime, path, (channel.make)(id));
+        assert!(error.starts_with(&blamed(path, "")), "{label}: {error}");
+        assert!(error.contains("the handler refused"), "{label}: {error}");
+        assert_eq!(screen_states(&runtime), before, "{label}");
+        assert_eq!(runtime.revision, revision, "{label}");
+        let again = complete_error(&mut runtime, path, (channel.make)(id));
+        match channel.consuming {
+            true => assert_eq!(again, blamed(path, channel.unknown), "{label}"),
+            // Progress reports leave the request pending, so this one arrives again — and is
+            // refused by the handler, not by the channel.
+            false => assert!(again.contains("the handler refused"), "{label}: {again}"),
+        }
+    }
+}
+
+/// 不正な `instance`: a path that names no instance of this screen reaches nothing and swallows
+/// nothing. `a//c` is a path no instance can have, `zzz` one no instance has here.
+fn grid_bad_instance(channel: &Channel) {
+    let label = channel.landed;
+    let mut runtime = routing("on_done");
+    let id = queue_effect(&mut runtime, "a", channel);
+    let before = screen_states(&runtime);
+    let revision = runtime.revision;
+    for bad in ["zzz", "a//c"] {
+        assert_eq!(
+            complete_error(&mut runtime, bad, (channel.make)(id)),
+            format!("Unknown component instance: {bad}"),
+            "{label} {bad}"
+        );
+    }
+    assert_eq!(screen_states(&runtime), before, "{label}");
+    assert_eq!(runtime.revision, revision, "{label}");
+    runtime
+        .complete("a", (channel.make)(id))
+        .unwrap_or_else(|e| panic!("{label} after the bad paths: {e}"));
+    assert_eq!(child_state(&runtime, "a")["last"], json!(label), "{label}");
+}
+
+/// 他 Instance の id: the id of one instance, addressed to another. The other has nothing with
+/// that id, and the one that asked still gets its answer.
+fn grid_foreign_id(channel: &Channel) {
+    let label = channel.landed;
+    let mut runtime = routing("on_done");
+    let id = queue_effect(&mut runtime, "a", channel);
+    let before = screen_states(&runtime);
+    let revision = runtime.revision;
+    for other in ["", "a/c"] {
+        assert_eq!(
+            complete_error(&mut runtime, other, (channel.make)(id)),
+            blamed(other, channel.unknown),
+            "{label} {other}"
+        );
+    }
+    assert_eq!(screen_states(&runtime), before, "{label}");
+    assert_eq!(runtime.revision, revision, "{label}");
+    runtime
+        .complete("a", (channel.make)(id))
+        .unwrap_or_else(|e| panic!("{label} after the foreign ids: {e}"));
+    assert_eq!(child_state(&runtime, "a")["last"], json!(label), "{label}");
+}
+
+/// 重複: the same response, twice. The second one is refused on every channel that consumed the
+/// request, and delivered again on the one that did not.
+fn grid_repeated(channel: &Channel) {
+    let label = channel.landed;
+    let mut runtime = routing("on_done");
+    let id = queue_effect(&mut runtime, "a", channel);
+    runtime
+        .complete("a", (channel.make)(id))
+        .unwrap_or_else(|e| panic!("{label}: {e}"));
+    let revision = runtime.revision;
+    match channel.consuming {
+        true => {
+            assert_eq!(
+                complete_error(&mut runtime, "a", (channel.make)(id)),
+                blamed("a", channel.unknown),
+                "{label}"
+            );
+            assert_eq!(runtime.revision, revision, "{label}");
+        }
+        false => {
+            runtime
+                .complete("a", (channel.make)(id))
+                .unwrap_or_else(|e| panic!("{label} twice: {e}"));
+            assert_eq!(runtime.revision, revision + 1, "{label}");
+        }
+    }
+}
+
+/// `instance` 省略: the id of a child, sent back to nobody. The root answers for itself, so it
+/// looks the id up among its own requests — and finds nothing, unless it queued one of its own.
+fn grid_without_an_instance(channel: &Channel) {
+    let label = channel.landed;
+    let mut runtime = routing("on_done");
+    let id = queue_effect(&mut runtime, "a", channel);
+    assert_eq!(
+        complete_error(&mut runtime, "", (channel.make)(id)),
+        channel.unknown,
+        "{label}"
+    );
+    if !channel.per_instance_ids {
+        return;
+    }
+    // The root numbers its own requests from one as well, so the same id is its own here.
+    let own = queue_effect(&mut runtime, "", channel);
+    assert_eq!(own, id, "{label}");
+    runtime
+        .complete("", (channel.make)(own))
+        .unwrap_or_else(|e| panic!("{label} of the root: {e}"));
+    assert_eq!(
+        runtime.state_json().expect("root state")["last"],
+        json!(label),
+        "{label}"
+    );
+    // The request of the child is still waiting for an answer addressed to it.
+    assert_eq!(child_state(&runtime, "a")["last"], json!(""), "{label}");
+}
+
+#[test]
+fn completion_grid() {
+    for channel in completion_cases() {
+        grid_normal(&channel);
+        grid_handler_failure(&channel);
+        grid_bad_instance(&channel);
+        grid_foreign_id(&channel);
+        grid_repeated(&channel);
+        grid_without_an_instance(&channel);
+    }
+}
+
+#[test]
+fn the_dispatch_entrance_of_the_grid_names_its_instance_in_the_item_id() {
+    // An event carries no instance: the prefix of the itemId is the whole of the addressing.
+    let http = &completion_cases()[0];
+    for path in ["", "a", "a/c"] {
+        let mut runtime = routing("on_done");
+        queue_effect(&mut runtime, path, http);
+        assert_eq!(runtime.revision, 1, "{path}");
+
+        let mut runtime = routing("on_done");
+        let before = screen_states(&runtime);
+        let error = dispatch_error(&mut runtime, &target_of(path, "fire_fail"), json!({}));
+        assert!(error.starts_with(&blamed(path, "")), "{path}: {error}");
+        assert!(error.contains("the handler refused"), "{path}: {error}");
+        assert_eq!(screen_states(&runtime), before, "{path}");
+        assert_eq!(runtime.revision, 0, "{path}");
+        assert!(runtime.take_effects().is_empty(), "{path}");
+    }
+    // A prefix that names no instance is an itemId that does not exist, not an instance error.
+    let mut runtime = routing("on_done");
+    for target in ["zzz/fire_http", "a//c/fire_http"] {
+        assert_eq!(
+            dispatch_error(&mut runtime, target, json!({})),
+            format!("Unknown itemId: {target}")
+        );
+    }
+    assert_eq!(runtime.revision, 0);
+}
+
+/// `EchoResponse { name: "太郎", sequence_id: 7, payload: [1, 2, 3] }` — the 15 bytes a
+/// successful RPC completion has to carry: field 1 as a six-byte string, field 2 as a varint,
+/// field 3 as three bytes. The same message `scripts/compare-engine-behavior.mjs` encodes.
+const ECHO_RESPONSE: [u8; 15] = [
+    0x0a, 0x06, 0xe5, 0xa4, 0xaa, 0xe9, 0x83, 0x8e, 0x10, 0x07, 0x1a, 0x03, 0x01, 0x02, 0x03,
+];
+
+#[test]
+fn a_completion_that_carries_a_binary_buffer_reaches_the_instance_that_asked() {
+    for path in ["", "a", "a/c"] {
+        let mut runtime = routing("on_done");
+        // The decodable response message: the one RPC completion that reaches a handler.
+        runtime
+            .dispatch(&target_of(path, "fire_rpc"), json!({}))
+            .unwrap_or_else(|e| panic!("{path} rpc: {e}"));
+        let id = runtime.take_effects()[0]["id"]
+            .as_u64()
+            .expect("an effect id");
+        let buffer = buffers::put(ECHO_RESPONSE.to_vec()).expect("a response buffer");
+        runtime
+            .complete(
+                path,
+                Completion::Rpc {
+                    id,
+                    response: answered(),
+                    buffer: Some(buffer),
+                },
+            )
+            .unwrap_or_else(|e| panic!("{path} rpc: {e}"));
+        assert_eq!(
+            instance_state(&runtime, path)["last"],
+            json!("rpc"),
+            "{path}"
+        );
+
+        // `read_bytes` is the file completion that hands the handler the bytes it read.
+        runtime
+            .dispatch(&target_of(path, "fire_file_read"), json!({}))
+            .unwrap_or_else(|e| panic!("{path} read_bytes: {e}"));
+        let id = runtime.take_effects()[0]["id"]
+            .as_u64()
+            .expect("an effect id");
+        let buffer = buffers::put(vec![1, 2, 3]).expect("a file buffer");
+        runtime
+            .complete(
+                path,
+                Completion::File {
+                    id,
+                    response: answered(),
+                    buffer: Some(buffer),
+                },
+            )
+            .unwrap_or_else(|e| panic!("{path} read_bytes: {e}"));
+        assert_eq!(
+            instance_state(&runtime, path)["last"],
+            json!("file"),
+            "{path}"
+        );
+    }
+}
+
+#[test]
+fn a_response_that_arrives_after_the_screen_was_rebuilt_reaches_nothing() {
+    let mut runtime = routing("on_done");
+    runtime
+        .dispatch("a/fire_http", json!({}))
+        .expect("the child button");
+    let id = runtime.take_effects()[0]["id"]
+        .as_u64()
+        .expect("an effect id");
+    drop(runtime);
+
+    // The host still holds the id the old screen handed out; the new one never did.
+    let mut runtime = routing("on_done");
+    let before = screen_states(&runtime);
+    assert_eq!(
+        complete_error(
+            &mut runtime,
+            "a",
+            Completion::Http {
+                id,
+                response: answered()
+            }
+        ),
+        "Component a: Unknown or completed HTTP request"
+    );
+    assert_eq!(screen_states(&runtime), before);
+    assert_eq!(runtime.revision, 0);
+}
+
+#[test]
+fn a_completion_that_fails_after_it_announced_leaves_no_trace_in_its_parent() {
+    let mut runtime = routing("on_done");
+    arm_failure(&mut runtime, "a", "after");
+    runtime
+        .dispatch("a/fire_http", json!({}))
+        .expect("the child button");
+    let id = runtime.take_effects()[0]["id"]
+        .as_u64()
+        .expect("an effect id");
+    let before = screen_states(&runtime);
+    let revision = runtime.revision;
+    let error = complete_error(
+        &mut runtime,
+        "a",
+        Completion::Http {
+            id,
+            response: answered(),
+        },
+    );
+    assert!(error.contains("the handler refused"), "{error}");
+    // The announcement reached the listener of the root before the handler threw; neither the
+    // instance nor its parent kept any of it.
+    assert_eq!(screen_states(&runtime), before);
+    assert_eq!(runtime.revision, revision);
+
+    // Nothing is poisoned: the next response of another channel lands and is announced.
+    arm_failure(&mut runtime, "a", "");
+    runtime
+        .dispatch("a/fire_host", json!({}))
+        .expect("the child button");
+    let id = runtime.take_effects()[0]["id"]
+        .as_u64()
+        .expect("an effect id");
+    runtime
+        .complete(
+            "a",
+            Completion::Host {
+                id,
+                response: json!({"ok": true, "data": null, "error": null}),
+            },
+        )
+        .expect("the next completion of the child");
+    assert_eq!(child_state(&runtime, "a")["last"], json!("host"));
+    assert_eq!(
+        runtime.state_json().expect("root state")["notice"],
+        json!("a:host")
+    );
+}
+
+/// The routing root again, holding `loud.json` as `a`: a child that announces from `config`,
+/// bound to the key the completion handlers of the root write.
+fn routing_into_a_loud_child() -> Runtime {
+    let root = effecting(
+        "parent",
+        json!({"loud": {"url": "loud.json"}}),
+        json!([component("loud", "a", json!({"query": {"bind": "last"}}))]),
+    );
+    Runtime::load_with_bundle(
+        root,
+        &effecting_script(false),
+        descriptor_set(),
+        None,
+        HashMap::from([(
+            "loud.json".to_owned(),
+            Bundle {
+                package: emitting("loud"),
+                script: LOUD_SCRIPT.to_owned(),
+                descriptors: HashMap::new(),
+            },
+        )]),
+        |_| {},
+    )
+    .expect("the screen holding a loud child")
+}
+
+#[test]
+fn a_completion_that_reconfigures_a_child_cannot_make_it_announce() {
+    let mut runtime = routing_into_a_loud_child();
+    runtime
+        .dispatch("fire_http", json!({}))
+        .expect("the root button");
+    let id = runtime.take_effects()[0]["id"]
+        .as_u64()
+        .expect("an effect id");
+    let before = screen_states(&runtime);
+    let revision = runtime.revision;
+    assert_eq!(
+        complete_error(
+            &mut runtime,
+            "",
+            Completion::Http {
+                id,
+                response: answered()
+            }
+        ),
+        "Component a: emit is not available in config"
+    );
+    assert_eq!(screen_states(&runtime), before);
+    assert_eq!(runtime.revision, revision);
+}
+
+/// Rhai counts the strings of a value together, so `set_max_string_size(100_000)`
+/// (`instance.rs:114`) refuses a state this big before `check_state` ever sees it: the megabyte
+/// guard of `lib.rs` is the second line of defence, not the first. Either way the completion of
+/// a child that grows without bound is refused in that child's name and moves no instance.
+#[test]
+fn a_completion_that_grows_the_state_without_bound_moves_no_instance() {
+    let mut runtime = routing("on_done");
+    arm_failure(&mut runtime, "a", "fat");
+    runtime
+        .dispatch("a/fire_http", json!({}))
+        .expect("the child button");
+    let id = runtime.take_effects()[0]["id"]
+        .as_u64()
+        .expect("an effect id");
+    let before = screen_states(&runtime);
+    let revision = runtime.revision;
+    assert_eq!(
+        complete_error(
+            &mut runtime,
+            "a",
+            Completion::Http {
+                id,
+                response: answered()
+            }
+        ),
+        "Component a: middle.rhai / HTTP r1 / done_http: Length of string too large"
+    );
+    assert_eq!(screen_states(&runtime), before);
+    assert_eq!(runtime.revision, revision);
 }

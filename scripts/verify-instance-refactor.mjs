@@ -2,7 +2,7 @@
 //
 // component-instance-refactor の最終判定。既存の全検査を順に回したあと、base コミットの
 // WASM と作業ツリーの WASM の応答を照合して差分 0 を要求し、components を宣言する画面を
-// 候補のみの probe で確かめ、続けて変異 5 本をビルドして検査が差分を見つける（exit 1）ことを
+// 候補のみの probe で確かめ、続けて変異 7 本をビルドして検査が差分を見つける（exit 1）ことを
 // 要求する。変異で exit 0 になった場合は検査に歯が無いとして失敗にする。変異に `probe` が
 // 付いていれば照合ではなくその probe で検査する（base には合成が無いため照合では見えない）。
 // --skip-mutations は開発中の短縮用で最終判定では付けない。
@@ -224,7 +224,9 @@ export async function runInstanceRefactorVerification({
       }
     }
     log(formatReport(results, Date.now() - started));
-    log("\nOK すべての手順が期待どおり（照合は差分 0、probe は期待どおり、変異 5 本は検出された）");
+    log(
+      `\nOK すべての手順が期待どおり（照合は差分 0、probe は期待どおり、変異 ${MUTATIONS.length} 本は検出された）`,
+    );
     return 0;
   } finally {
     signalTarget.removeListener("SIGINT", onInterrupt);

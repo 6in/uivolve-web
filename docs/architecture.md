@@ -59,7 +59,7 @@ flowchart TD
 
 Runtimeのroot Instanceは読み込んだDSLのテンプレートと、確定した実際のUIツリーを分けて保持する。`engine/src/dynamic_ui.rs`がtabpanelのitemsBindをstateの部品定義から展開し、新しい部品の既定値と部品固有の状態を確認してから、ツリーとstateを同時に確定する。入力・イベント検索・レイアウト・window収集・WebMCPに渡すSceneは同じ確定済みツリーを使う。layoutのたびに展開や初期化は行わない。ページごとの部品定義やRhai関数をRustへ組み込む必要はない。`components`を宣言した画面では、Runtimeはroot Instanceに加えてcomponentノードごとの子Instanceを持ち、接頭辞付きitemId（`list`、`list/detail`）で引く。
 
-`load`はJSONを解析・正規化・構造検証し、既定状態を補完してからRhaiをコンパイルする。参照されたhandlerの存在を確認し、`init(state)`の結果、部品固有の状態制約、状態サイズを確認する。root Instanceのloadが成功したRuntimeだけをABIのスロットへ入れる。以前の画面は候補が失敗しても残る。子Instanceはrootの`init`が終わってからノードの出現順にloadし、親の確定stateから`config`を評価して子の`state.config`へ入れ、その子が宣言した孫へ降りる。子Instanceは効果関数を持たず、HTTP取得・保存・ファイル・RPC・ダイアログ・遷移の依頼はrootだけが出す。Instance木の上限と`emit`の契約は[部品化の契約](components.md)を参照する。
+`load`はJSONを解析・正規化・構造検証し、既定状態を補完してからRhaiをコンパイルする。参照されたhandlerの存在を確認し、`init(state)`の結果、部品固有の状態制約、状態サイズを確認する。root Instanceのloadが成功したRuntimeだけをABIのスロットへ入れる。以前の画面は候補が失敗しても残る。子Instanceはrootの`init`が終わってからノードの出現順にloadし、親の確定stateから`config`を評価して子の`state.config`へ入れ、その子が宣言した孫へ降りる。子InstanceもHTTP取得・保存・ファイル・RPC・ダイアログ・遷移の依頼を出せる。子が出したeffectには接頭辞付きitemIdの`instance`が付き、ホストが返す完了は同じ`instance`で元のInstanceへ届く。Instance木の上限と`emit`の契約は[部品化の契約](components.md)を参照する。
 
 イベントは対象までのパスを探し、disabled、非表示のタブ/Card/window、折りたたみ、モーダル背後などを共通エンジンで判定する。対象外なら状態・revisionを更新しない。受け付けたイベントは状態のコピーへ組み込みの変更を適用してからRhaiを実行する。結果をオブジェクトへ戻し、Grid・ナビゲーション・追加部品・Cardの状態制約とサイズを確認してから確定し、revisionを進める。componentノードを含む画面では、1つのイベントで動いた親と子を同じ確定で扱う。すべての検証が通ってから親子のstateを代入し、revisionは1つだけ進める。どこかが失敗すれば画面全体が動かない。
 
@@ -81,7 +81,7 @@ DOMはkeyを使って既存要素を更新し、Canvasは面全体を再描画�
 
 制御用の公開関数は`input_alloc(len)`、`input_free(ptr,len)`、`request(ptr,len)`、`response_len()`。JSは入力を確保してUTF-8 JSONを書き込み、requestが返す応答のポインターと長さを読む。入力はfinallyで解放する。応答はエンジン所有で、次のrequestまで有効。次の呼び出しより前にJSONへ読み取る。メモリが拡張され得るため、呼び出し後はその時点の`memory.buffer`を使う。バイナリには`buffer_store / buffer_ptr / buffer_len / buffer_free`を追加した。[所有権・上限の契約](files-cache-rpc.md)に従う。
 
-操作は`load / event / host_result / host_progress / http_result / storage_result / file_result / rpc_result / dialog_result / layout / theme`。`load`は画面パッケージとRhaiのほかに、`components`が宣言した子パッケージを`request.components`で受け取る。成功は`{ "ok": true, "data": ... }`、失敗は`{ "ok": false, "error": "..." }`。入力の上限は2,000,000バイト。現在のWASMはブラウザのimportを要求しない。HTTP取得・保存・描画APIはホストが担当する。各操作の詳細は[画面形式](screen-format.md)、[HTTP取得](tutorial-http-grid.md)、[保存・型](platform-features.md)、[ファイル・RPC](files-cache-rpc.md)、[独自ダイアログ](dialogs.md)、[レイアウト](layouts.md)、[テーマ](theme-format.md)を参照する。
+操作は`load / event / host_result / host_progress / http_result / storage_result / file_result / rpc_result / dialog_result / layout / theme`。`load`は画面パッケージとRhaiのほかに、`components`が宣言した子パッケージを`request.components`で受け取る。`components[url]`には子のRPC descriptor（`{名前: bufferId}`）を任意で添えられる。完了の7操作（`http_result` / `storage_result` / `file_result` / `rpc_result` / `dialog_result` / `host_result` / `host_progress`）は宛先の`instance`を受け取り、子宛では必須、省略はroot宛を意味する。成功は`{ "ok": true, "data": ... }`、失敗は`{ "ok": false, "error": "..." }`。入力の上限は2,000,000バイト。現在のWASMはブラウザのimportを要求しない。HTTP取得・保存・描画APIはホストが担当する。各操作の詳細は[画面形式](screen-format.md)、[HTTP取得](tutorial-http-grid.md)、[保存・型](platform-features.md)、[ファイル・RPC](files-cache-rpc.md)、[独自ダイアログ](dialogs.md)、[レイアウト](layouts.md)、[テーマ](theme-format.md)を参照する。
 
 Rhaiの`http_get(name)`は要求を一時キューへ置く。stateとUIの検証後に要求を確定し、結果へ`effects`を添える。ホストは画面JSONを基準にURLを解決し、ResourceClientでJSONを取得してid付きの`http_result`を送る。Runtimeは進行中のidだけを受け入れ、最新stateと応答を受け取りhandlerへ渡す。通常のイベントと同じ確定処理を通し、完了でもrevisionが進む。画面置換の成功時にホストが進行中の取得を中止し、世代番号でも遅延応答を破棄する。
 
@@ -95,7 +95,7 @@ HTTP認証はホストのResourceClientへ置く。画面・Rhai・テーマは�
 
 WebMCPも人の入力と同じWASMイベントを実行する。ツールの登録機構とUI処理は独立し、WebMCP未対応でも通常UIは動く。ツールの変更要求はscreen token・revision・可視性を検査するが、クライアント内のUI検証はサーバーの認可を代替しない。
 
-Rhaiは同期実行で、操作数などの制限を持つ。非同期HTTP GET・Unary RPC・ブラウザ保存・ファイル操作・ダイアログは依頼・完了handlerの契約で扱う。HTTP・JSON保存・ファイル・RPC・ダイアログすべての準備とバッファ容量の確認が通ってからstateとeffectsを確定する。HTTPは従来のkind省略、追加操作はkind=storage/file/rpcでホストへ振り分ける。kind=dialogは発行通知で、表示はSceneの構成を両レンダラーが描画する。完了handlerもstateSchemaの検証を通る。タイマー・GPU描画・サーバー同期は未対応。現段階の制限は[README](../README.md)と部品別の契約に記載する。
+Rhaiは同期実行で、操作数などの制限を持つ。非同期HTTP GET・Unary RPC・ブラウザ保存・ファイル操作・ダイアログは依頼・完了handlerの契約で扱う。HTTP・JSON保存・ファイル・RPC・ダイアログすべての準備とバッファ容量の確認が通ってからstateとeffectsを確定する。effectはすべて`kind`を持ち、HTTPは`kind: "http"`、追加操作はkind=storage/file/rpcでホストへ振り分ける。kind=dialogは発行通知で、表示はSceneの構成を両レンダラーが描画する。完了handlerもstateSchemaの検証を通る。タイマー・GPU描画・サーバー同期は未対応。現段階の制限は[README](../README.md)と部品別の契約に記載する。
 
 `alert / confirm / prompt`はWASMがFIFO・入力下書き・回答・レイアウトを管理し、既存windowと同じmodal層の部品としてSceneへ構成する。DOMは領域内のDOM、CanvasはCanvasへ描画する。両側は同じ1件の依頼を共有し、回答は通常のeventから最新stateの完了handlerへ届く。WebMCPも表示中の入力・ボタンを通常のui_dispatchで操作でき、背景はBLOCKEDになる。独自ホスト用のdialog_result ABIも維持する。
 

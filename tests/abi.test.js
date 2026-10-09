@@ -94,6 +94,122 @@ it("loads a screen with its component packages bundled and caps how many may be 
   expect(raw(JSON.stringify({ op: "event", target: "add", payload: {} })).data.state.count).toBe(2);
 });
 
+it("loads a component package with RPC descriptors of its own", async () => {
+  const descriptorBytes = new Uint8Array(
+    await readFile(new URL("../public/screens/rpc-demo.pb", import.meta.url)),
+  );
+  const child = {
+    version: 1,
+    id: "part",
+    title: "部品",
+    script: "part.rhai",
+    state: { value: 0 },
+    rpc: {
+      echo: {
+        url: "http://127.0.0.1:4180/uivolve.demo.EchoService/Echo",
+        descriptor: "rpc-demo.pb",
+        service: "uivolve.demo.EchoService",
+        method: "Echo",
+        protocol: "connect",
+        handler: "done",
+      },
+    },
+    ui: { xtype: "container", items: [{ xtype: "metric", text: "件数", bind: "value" }] },
+  };
+  const parent = {
+    ...screen,
+    components: { part: { url: "https://example.com/part.json" } },
+    ui: {
+      xtype: "container",
+      items: [...screen.ui.items, { xtype: "part", itemId: "open", config: {} }],
+    },
+  };
+  const childScript = 'fn init(s){s} fn done(s,r){s} fn run(s,e){rpc_call("echo", #{});s}';
+  const entry = { package: child, script: childScript };
+  // Without descriptors of its own the child cannot resolve the method it declares.
+  const refused = raw(
+    JSON.stringify({
+      op: "load",
+      package: parent,
+      script,
+      components: { "https://example.com/part.json": entry },
+    }),
+  );
+  expect(refused).toMatchObject({
+    ok: false,
+    error: "Component open: RPC descriptors do not match definitions",
+  });
+  const id = engine.storeBuffer(descriptorBytes);
+  const loaded = raw(
+    JSON.stringify({
+      op: "load",
+      package: parent,
+      script,
+      components: {
+        "https://example.com/part.json": { ...entry, descriptors: { "rpc-demo.pb": id } },
+      },
+    }),
+  );
+  expect(loaded).toMatchObject({ ok: true, data: { state: { count: 0 }, revision: 0 } });
+});
+
+it("delivers a completion to the component instance the effect named", () => {
+  const child = {
+    version: 1,
+    id: "part",
+    title: "部品",
+    script: "part.rhai",
+    state: { last: "" },
+    requests: { load: { url: "d.json", handler: "done" } },
+    ui: {
+      xtype: "container",
+      items: [
+        { xtype: "metric", text: "最後", bind: "last" },
+        { xtype: "button", itemId: "fire", text: "取得", handler: "fire" },
+      ],
+    },
+  };
+  const parent = {
+    ...screen,
+    components: { part: { url: "https://example.com/part.json" } },
+    ui: {
+      xtype: "container",
+      items: [...screen.ui.items, { xtype: "part", itemId: "open", config: {} }],
+    },
+  };
+  const childScript =
+    'fn init(s){s} fn fire(s,e){http_get("load");s} fn done(s,r){s.last = "done";s}';
+  const components = {
+    "https://example.com/part.json": { package: child, script: childScript },
+  };
+  expect(raw(JSON.stringify({ op: "load", package: parent, script, components })).ok).toBe(true);
+  const fired = raw(JSON.stringify({ op: "event", target: "open/fire", payload: {} }));
+  expect(fired.data.effects).toEqual([
+    { kind: "http", id: 1, request: "load", url: "d.json", instance: "open" },
+  ]);
+  const layout = JSON.stringify(raw(JSON.stringify({ op: "layout", width: 800 })));
+  const result = { op: "http_result", id: 1, ok: true, data: {}, error: "" };
+  // A path that is not a path at all, and an instance nobody placed: both are refused, and
+  // neither of them touches the screen the host is already showing.
+  for (const [instance, error] of [
+    [null, "Invalid component instance"],
+    ["", "Invalid component instance"],
+    [{}, "Invalid component instance"],
+    ["open/", "Invalid component instance"],
+    ["zzz", "Unknown component instance: zzz"],
+  ]) {
+    expect(raw(JSON.stringify({ ...result, instance }))).toMatchObject({ ok: false, error });
+    expect(JSON.stringify(raw(JSON.stringify({ op: "layout", width: 800 })))).toBe(layout);
+  }
+  // The root never handed out this id, so the answer is nobody's until it is addressed.
+  expect(raw(JSON.stringify(result))).toMatchObject({
+    ok: false,
+    error: "Unknown or completed HTTP request",
+  });
+  expect(raw(JSON.stringify({ ...result, instance: "open" }))).toMatchObject({ ok: true });
+  expect(JSON.stringify(raw(JSON.stringify({ op: "layout", width: 800 })))).not.toBe(layout);
+});
+
 it("exports the existing raw ABI without requiring browser imports", () => {
   expect(WebAssembly.Module.imports(module_)).toEqual([]);
   for (const name of ["input_alloc", "input_free", "request", "response_len"])

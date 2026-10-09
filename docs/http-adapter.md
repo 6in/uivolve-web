@@ -125,7 +125,7 @@ fn updated(state, response) {
 
 authorization/cookie/host/sec-*は画面指定不可。set-cookie/authorizationは応答ヘッダー公開不可。JWTやCookieはホストの認証設定に従う。別オリジンのPATCHなどではサーバーが使用メソッドとContent-TypeをCORSで許可する必要がある。
 
-成功は`{ok:true, data:{status, headers, body}, error:null}`。失敗は`{ok:false, data:null, error:{code, message, retryable:false, outcome}}`。非2xxはHTTP_404などのcodeで失敗し、失敗本文は返さない。outcomeはnot-started、failed、committed、unknown。更新成功後に応答解析が失敗した場合はcommitted、通信失敗など結果不明はunknownとなる。
+成功は`{ok:true, data:{status, headers, body}, error:null}`。失敗は`{ok:false, data:null, error:{code, message, retryable:false, outcome}}`。非2xxはHTTP_404などのcodeで失敗し、失敗本文は返さない。outcomeはnot-started、failed、committed、unknown。更新成功後に応答解析が失敗した場合はcommitted、通信失敗など結果不明はunknownとなる。子Instanceが出した`kind: "host"`のeffectには`instance`が付き、ホストは`host_result`と`host_progress`へ同じ`instance`を添えて返す（省略はroot宛。[部品化の契約](components.md)を参照）。`host_cancel`は同じInstanceが出した操作だけを取り消す。
 
 通常のRhai/状態検証失敗では未確定の依頼を開始しない。動的なpath/query/bodyのHTTP検証はstate確定後にホストで行い、不正値は完了handlerへ失敗として返す。try/catchだけで通信失敗を受け取ろうとしない。完了handlerが失敗しても外部の更新は巻き戻せず、そのidは消費される。ホストのonErrorにはexternalResultが付く。自動再送を前提にしない。認証の401後の更新・再送はGET/HEADだけで、POST/PUT/PATCH/DELETEは行わない。
 

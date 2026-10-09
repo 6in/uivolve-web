@@ -1,0 +1,77 @@
+[
+  {
+    "rootId": "orders",
+    "path": "",
+    "scope": "orders"
+  },
+  {
+    "rootId": "orders",
+    "path": "a",
+    "scope": "orders__a"
+  },
+  {
+    "rootId": "orders",
+    "path": "a/b",
+    "scope": "orders__a__b"
+  },
+  {
+    "rootId": "orders",
+    "path": "a/b/c",
+    "scope": "orders__a__b__c"
+  },
+  {
+    "rootId": "order-list",
+    "path": "grid_1/row-2",
+    "scope": "order-list__grid_1__row-2"
+  },
+  {
+    "rootId": "orders",
+    "path": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+    "scope": "orders__pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp"
+  },
+  {
+    "rootId": "orders",
+    "path": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+    "scope": "orders__pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp"
+  },
+  {
+    "rootId": "orders",
+    "path": "a__b",
+    "scope": null
+  },
+  {
+    "rootId": "ord__ers",
+    "path": "a",
+    "scope": null
+  },
+  {
+    "rootId": "",
+    "path": "a",
+    "scope": null
+  },
+  {
+    "rootId": "orders",
+    "path": "ppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+    "scope": null
+  },
+  {
+    "rootId": "orders",
+    "path": "注文",
+    "scope": null
+  },
+  {
+    "rootId": "orders",
+    "path": "a b",
+    "scope": null
+  },
+  {
+    "rootId": "orders",
+    "path": "a.b",
+    "scope": null
+  },
+  {
+    "rootId": "orders",
+    "path": "a//b",
+    "scope": null
+  }
+]

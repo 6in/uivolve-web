@@ -181,5 +181,8 @@ slug=<slug>
 - コミットメッセージは一時ファイルに書いて `git commit -F <file>` で渡す（`-m "$(...)"` は使わない）
 - 一時ファイルは `.gsd-lite/logs/<slug>/scratch/` に置き、名前に turn 番号を入れる
   （例 `turn-012-commit-msg.txt`。前のターンや前のマイルストーンのファイルを使い回さない）。
-  `mktemp -d` で作ったディレクトリはそのターン内で消す
+  `mktemp -d` で作ったディレクトリはそのターン内で消す。**`.gsd-lite/logs/<slug>/scratch/` は消さない**
+  （gitignore 済み。PLAN / PROGRESS / reflect が根拠として参照する）。`rm -rf` は使わない
+- native `Read` が「unchanged since your last Read」を返して本文を出さないとき（サブエージェント起動後に
+  起きやすい）は、`git show HEAD:<path>` または `cat <path>` で読む
 - 作業ディレクトリの外へは書かない（証跡は `.gsd-lite/` 配下に置く）

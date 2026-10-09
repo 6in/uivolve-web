@@ -142,7 +142,7 @@ it("uses current state after an asynchronous response while a dialog remains ope
     'fn init(s){s} fn start(s,e){http_get("api");confirm("x","done");s} fn received(s,r){s.name=r.data;s} fn done(s,r){s.notice=s.name;s}',
   );
   const effects = engine.dispatch("go").effects;
-  engine.completeHttp(effects.find((e) => !e.kind).id, ok("花子"));
+  engine.completeHttp(effects.find((e) => e.kind === "http").id, ok("花子"));
   expect(answer().state.notice).toBe("花子");
 });
 it("drops dialogs on screen replacement and ignores stale scene controls", () => {

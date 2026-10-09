@@ -1,118 +1,103 @@
-# VERIFICATION — component-composition
+# VERIFICATION — component-effects
 
-- 実施: 2026-10-08 / gsd-lite-verify（turn 18、verify_round 2）。round 1（turn 15）の記録は末尾に残す
-- 対象: `git diff main...HEAD`（base `main` = `ef582d5`、HEAD = `4d56497`）。round 2 の回帰確認の中心は修正ラウンドの差分 `4177ca1...HEAD`（`engine/src/lib.rs` の `clear_queues` 化（27 行の変更）、`engine/src/composition_tests.rs` +125、`src/application-loader.js` / `src/runtime.js` の宣言ガード、`tests/components-loader.test.js` +27、`tests/components-demo.test.js` +14、`docs/components.md` +4 文）
-- 判定: **合格**（指摘 0 件。残留リスク 9 件を下に記す。F1 / F2 は完了基準どおり）
-- 進め方: round 2 は申し送りどおり「round 1 の格子の再確認 + F1 / F2 の差分の回帰」だけを行い、新しいクラスの探索はしていない。修正差分が小さい（Rust 27 行・JS 10 行）ためサブエージェントは使わず親が前景で読んだ。本文書の数値はすべて本ターンに自分で実行して得た値で、「要確認」の項目は 1 件（F1 の新テストが修正前に落ちることは impl の報告。親は ABI プローブで同じ事実を独立に確認した）
+- 実施: 2026-10-09 / gsd-lite-verify（round 1 = turn 14 で差し戻し、round 2 = turn 16 で**合格**）
+- 対象: `git diff main...HEAD`（base `main` = `49c8183`。round 1 は HEAD = `0eb8a20`、round 2 は HEAD = `7a83d13`。68 ファイル、+6331 / −1530。コードは `engine/src/{lib,abi,composition,composition_tests,dialogs,instance,pages,http}.rs` と `engine/Cargo.toml`、JS は `src/{engine,runtime,application-loader,component-tree,host-effects,http-effects,storage-effects,page-effects,screen-catalog}.js`、スクリプト 4 本、デモ 6 ファイル、Vitest 新規 2 本 + 追記 6 本、文書 11 ファイル、`vite.config.js`）
+- 判定: **合格（round 2）**。round 1 の指摘 2 件（文書のみ）は F1 で解消。round 2 は「round 1 の格子の再確認 + F1 の差分の回帰」だけを行い、新しいクラスの探索はしていない
+- 進め方（round 1）: コードレビューとセキュリティチェックを読み取り専用のサブエージェント 2 本に並行させ、親が最終判定スクリプト・ABI の堅牢性格子・文書の照合・受け入れ基準の突き合わせを前景で行った。サブエージェントの指摘は親が実物で再確認したものだけを採った（MAJOR-1 は親が先に `git grep` で独立に見つけた同じ指摘。MINOR-1 は `engine/src/host.rs:151-173` で再確認）
+- 進め方（round 2）: サブエージェントなし。F1 の差分が小さい（文書 1 ファイル 2 行）ので親が前景で全部行った
 
-## round 2 で確認したこと
+## round 2（turn 16）で確認したこと
+
+### F1 の差分の回帰
+
+- `git diff 0eb8a20..HEAD --stat` は `docs/components.md`（+2 / −1）と `.gsd-lite/` の 4 ファイルだけ。`engine/**` / `src/**` / `tests/**` / `scripts/**` に変更なし（F1 の「対象」どおり）
+- 指摘 1: `git grep -n -F '宣言が不正です' -- src docs` が `docs/components.md:192` / `src/application-loader.js:128` / `src/runtime.js:51` の 3 件。文書の文言は実装の文字列（`${name}` を `{名前}` に置き換えた形）と一致。「日本語（JS）」の列挙は 3 文言になり、残り 2 文言も `src/component-tree.js:42` / `src/{http,storage,page}-effects.js` の実物と一致
+- 指摘 2: `docs/components.md:139` の追記「`host_progress` は例外で、progress は pending を消費しない」を `engine/src/host.rs:151-173` で再確認（`progress` は `pending.get` のみ、`consume` `:175-179` が `pending.remove`）。格子 `composition_tests.rs:2490-2496` の `HostProgress` 行は `consuming: false` で、`:2854` / `:2919` の分岐が「失敗後も同 id で再完了できる」ことを固定している
+- 追従先チェックリストの条件を再実行（全部成立）: `kind` 省略系 0 件 / `19個|宣言7種|効果関数19|拒否2本|internals|not available in components` は `docs/components.md:169,171,187` の `webmcp` / `window` 文言 3 件だけ / `STUBS|23画面|変異5本|M1〜M5|rejection of effect|rejectSequences` 0 件 / `instance` は components 13・dialogs 1・files-cache-rpc 2・http-adapter 1・platform-features 1・tutorial-http-grid 1 / `docs/testing.md` の新テスト 2 行 / `区切り文字` は `components-plan.md:99` の完了文脈 1 件のみ / `components.md` の `__` 7 件
+- `bun run docs:check` → 499 targets・59 files OK
+
+### 最終判定（クリーンな作業ツリーから再実行）
+
+`bun scripts/verify-instance-refactor.mjs` が exit 0（72.8 秒。ログ `.gsd-lite/logs/component-effects/scratch/turn-016-verify.log`）。`BASE_CHECKS` 6 本 green（Vitest 34 files・672 passed / cargo test 90 passed / check / docs:check / build）→ `compare candidate` 370 steps・diffs 0 → `probe composition` 54 steps・problems 0 → 変異 7 本すべて exit 1（`layout-x-offset` 171 / `dialog-draft-revision` 2 / `unknown-item-message` 1 / `emit-skips-listener` 7 / `config-diff-ignored` 2 / `instance-dropped` 19 / `completion-routed-to-root` 12）。round 1 と同じ値。実行後も `git status` クリーン
+
+### round 1 の格子の再確認
+
+`bun .gsd-lite/logs/component-effects/scratch/turn-014-robust-probe.mjs`（HEAD の `public/engine.wasm`）→ `{"steps":315,"problems":0}`。round 1 と同一
+
+### 受け入れ基準 6（round 2 で達成）
+
+`docs/components.md` のエラー文言は英語 6 / 日本語 3 がすべて実装の文字列と一致し、`host_progress` の例外も実装と一致。round 1 の表の「未達」はこれで解消。1〜5 / 7〜9 は round 1 の結果が再実行でも変わらない
+
+## round 1 の指摘（→ F1。turn 15 で解消）
+
+1. **R10 が明示した JS 文言が契約文書に無い**: `docs/components.md` の「エラー文言」節「日本語（JS）」の列挙に `コンポーネント {名前} の宣言が不正です（url を文字列で指定してください）` が無い（`git grep -F '宣言が不正です' -- docs` が 0 件。実装は `src/application-loader.js:128` / `src/runtime.js:51` にある）。REQUIREMENTS R10 の第 1 項（前回残留リスク 9）と PLAN の追従先チェックリスト「JS の日本語文言を足す」行の条件（1 件）に反する。T11 の最終確認は追従先チェックリスト 11 行のうち 9 条件を再実測していて、この行が抜けていた
+2. **「handler の失敗は完了を消費する」が `host_progress` に当てはまらない**: `docs/components.md:139` は 7 op 共通の文として書いているが、`host::Requests::progress`（`host.rs:151-173`）は `pending.get` だけで消費せず、progress handler が失敗しても同じ id の `host_progress` / `host_result` はその後も届く。Rust の格子 `completion_grid` は `HostProgress { consuming: false }` でこの挙動を固定済み。文書に例外の 1 文を足す（実装は変えない）
+
+どちらも文書だけの指摘で、データ損失・誤動作を伴わない。受け入れ 6（契約文書と実装の一対一）に掛かるため差し戻す。round 2 は「round 1 の格子の再確認 + F1 の差分の回帰」だけを行う。
+
+## round 1 で確認したこと
 
 ### 最終判定スクリプト（クリーンな作業ツリーから）
 
-`bun scripts/verify-instance-refactor.mjs` が exit 0。18 手順すべて期待どおり、合計 60.7 秒。`cargo test` 61 本（round 1 から +2）/ Vitest 651 本 32 ファイル（+2）/ `compare candidate` `steps 370 / diffs 0 / ok 348 / error 22 / sequences 44` / `probe composition` `steps 13 / problems 0` / 変異 5 本が `diffs 171 / 2 / 1`、`problems 3 / 2` で exit 1。`bun run check`（275 ファイル整形 / 106 ファイル lint / `cargo fmt --check`）と `bun run docs:check`（59 ファイル 484 リンク）green。証跡 `target/engine-compare/compare.json` / `composition.json` / `mutant-*.json`
+`bun scripts/verify-instance-refactor.mjs` が exit 0（ログ `.gsd-lite/logs/component-effects/scratch/turn-014-verify.log`）。`BASE_CHECKS` 6 本 green（`vp test run` 672 passed・34 files / `cargo test` 90 passed / `bun run check` 整形 280 files・lint 109 files / `docs:check` 499 targets・59 files / `build` 114 modules）→ `compare candidate` `steps 370 / diffs 0 / normalized: effects[*].kind === "http" → kind を除去` → `probe composition` `steps 54 / problems 0 / sequences 6` → 変異 7 本すべて exit 1（照合 `layout-x-offset` diffs 171 / `dialog-draft-revision` 2 / `unknown-item-message` 1、probe `emit-skips-listener` problems 7 / `config-diff-ignored` 2 / `instance-dropped` 19 / `completion-routed-to-root` 12）。T11（turn 13）の 2 回の実行と同じ値
 
-### round 1 の格子の再確認（`public/engine.wasm` = F1 入りのビルド）
+### ABI の堅牢性格子（round 1 で一括。`scratch/turn-014-robust-probe.mjs`、raw ABI、HEAD の `public/engine.wasm`）
 
-- `scratch/turn-015-robustness-probe.mjs`: 98 ケース、トラップ 0。応答の文言は round 1 と同じ（A 同梱の形 13 / B stale emit 対照 / C target 12 / D node 19 / E 子パッケージ 12 / F 宣言 12 / G emit 7 / H layout 7）
-- `scratch/turn-015-stale-emit.mjs`: 4 変種（対照 / emit 後 throw・config あり / emit 後 throw・config なし / emit 後 stub 拒否）がすべて `http_result true revision 2 query "changed"`。round 1 で `ok: false` だった 2 変種が直っている
-- `scratch/turn-015-strings.mjs`: `git diff main...HEAD -- engine/src` の `"..."` リテラルは追加 504 / 削除 68 / **削除のみ 0**。M1〜M5 の `from` は `lib.rs` に各 1 回
+parts-lab（子 3 種）を load し、子の http effect（`products`）・子の storage effect（`note` の init）・子の dialog（`approval`）を積んだ状態で **315 ステップ・problems 0**。各ステップで (1) 応答が返る（トラップ 0）、(2) `ok: false`、(3) 直後の `layout:800` が格子の前に取った基準とバイト列一致、を確認し、格子の後に正しい `instance` で 3 本の完了が通って `revision` が +1 / +2 / +3 と進むこと、消費済みの再送が `Component products: Unknown or completed HTTP request` で layout 不変であることまで見た。
 
-### F1 の回帰（子 Instance の emit キューの残留）
+- `instance` × 7 op（`http_result` / `storage_result` / `file_result` / `rpc_result` / `dialog_result` / `host_result` / `host_progress`）: 形の不正 15 種（`null` / `0` / `-1` / `1.5` / `true` / `[]` / `{}` / `["products"]` / `""` / `"/"` / `"/products"` / `"products/"` / `"products//x"` / `"a:b"` / `"products:1"`）→ `Invalid component instance`。形は合うが存在しない 16 種（`../products` / `products/..` / 前後の空白 / `\u0000` / `\n` / DEL / C1 `\u0085` / ` ` / BOM / 非 ASCII / 大文字 / 深いパス / 100,000 文字 / `\` / `products\note`）→ `Unknown component instance: …`。他 Instance を名乗る（id の持ち主以外の 2 つ）→ `Component {other}: Unknown or completed …`。`instance` 省略で子の id を root へ → `Unknown or completed …`
+- `id` 11 種（`-1` / `0` / `1.5` / 2^53 / 2^64 / 1e300 / `"1"` / `null` / `true` / `[]` / `{}`）× 3 op、`id` 欠落 → `Missing HTTP request id`、`ok` 欠落・文字列 → `Missing HTTP result ok`、`error` 3,000 バイト → `HTTP error exceeds 2048 bytes`
+- `buffer` 8 種（`0` / `-1` / `1.5` / 2^32 / `"1"` / 未割当 7 / `[]` / `{}`）× `file_result` / `rpc_result`、失敗完了に buffer → `Failed completion must not carry a binary buffer`
+- 封筒: `data` と `instance` の 100,000 段ネスト（serde の再帰上限がエラー文字列で返りスタックを壊さない）、トップレベルが配列 / 文字列 / `null`、壊れた JSON、空入力、`op` が数値、未知 op、`clock` が文字列、2,000,001 バイト → `Request exceeds 2 MB`。`layout` に `instance` を付けても無視される（ok）
 
-- `Runtime::clear_queues(&self)`（`lib.rs:568-573`）が root と `components` 全部の `Instance::clear_queues()` を回し、`Instance::clear_queues`（`instance.rs:251-258`）は `http / host / storage / files / rpc / emits` の 6 キューを空にする
-- 呼び出し 8 か所（`dispatch` `:577` / `progress_host` `:813` / `complete_host` `:838` / `complete_http` `:863` / `complete_storage` `:889` / `complete_file` `:920` / `complete_rpc` `:952` / `complete_dialog` `:976`）が `self.root.clear_queues()` から 1 行置換で `self.clear_queues()` になり、各関数内の位置・順序は不変（diff は各 1 行の `-`/`+` のみ）。`self.root.clear_queues()` は helper の中にだけ残る（自己再帰なし）。PLAN F1 の「8 関数 / 9 か所」は impl が実物（7 関数 + `dispatch` = 8 か所）に訂正済みで、`grep` の件数と一致
-- `reconfigure`（`lib.rs:721-750`）: `config` handler を `call_fn` する**前**に `child.emits.clear()`、後に `take().is_empty()` の判定。既存文言 `Component {path}: emit is not available in config` は不変
-- テスト 2 本が完了基準の表と対応: `a_stale_announcement_does_not_poison_a_later_completion`（表 1〜2 行目を `throw` / `stub` の 2 変種でループ。`dispatch("fetch")` → `take_effects()[0]["id"]` → `dispatch("a/shout")` が `Err` で revision 1 → `complete_http` が `Ok` で revision 2、root の `query` と子の `config` / `configs` / `seen` を確認）/ `a_configuration_travels_down_three_levels_at_run_time`（表 4 行目。`chain.json` の `config` が自分の `relayed` を書き、`a/c` の `config` が 1 回呼ばれ revision 1）。表 3 行目は既存 `a_child_cannot_announce_anything_while_it_is_being_reconfigured` が維持
-- `docs/components.md:89` に「失敗したイベントで子が積んだ `emit` は捨てられ、次のイベントや完了処理（`http_result` 等）に持ち越さない」の 1 文
+### コードレビュー（サブエージェント A + 親の再確認）
 
-### F2 の回帰（宣言の形の検査と軽微な追従）
+- トランザクション: `Runtime::complete` → `complete_at`（`lib.rs:985-1032`）→ `Instance::complete`（handler のみ。`lib.rs:1442-1564`）→ `commit_event`（emit 上方 → config 下方 → `commit_all`）で 1 commit・`revision += 1`。`commit_all`（`:1069-1140`）は root + 全子の `prepare_commit` / `prepare_effects` と dialogs / pages の `prepare` を全部集め、navigate 排他と `buffers::capacity` を全 Instance 合計で判定してから `apply` / `commit_effects` を並べる。途中の `Err` で何も動かない
+- 不正な完了: `abi.rs:36-42` `take_instance`（キー無し → root / `String` かつ `valid_instance_path` → path / それ以外 → `Invalid component instance`）を 7 op が通り、`complete_at` の `components.contains_key` で `Unknown component instance`。`dialogs::Requests::consume(id, response, expected)`（`dialogs.rs:348-389`）は origin 不一致で `pending` を触らない。`dispatch(":dialog:…")` は `expected = None` で origin 側の Instance を走らせる。`Instance::complete` の `Completion::Dialog` の `unreachable!` は `complete_at` が先に `Dialog` を取り分けるので到達しない
+- `take_effects`（`:1034-1065`）: root 7 連結 → `components`（BTreeMap）順に `Instance::take_effects`（http → storage → files → rpc → host）、`as_object_mut().insert("instance", path)`（`host_cancel` 含む）
+- snapshot キャッシュ: `instance.state` / `instance.ui` の書き込みは `apply` のみ（`*snapshot = None` 同居）。テストの `set_state` も `apply` 経由
+- JS: `host-effects.js` の `#lastId` / `#active` / `#operations` は path キー、cancel は同 path のみ、上限 8 は `activeById.size`。`http / storage / page-effects.js` は `resetInstances` + `bases.get(effect.instance ?? "")`、未登録は `onError` で WASM に送らない。`runtime.js:362-393` は `instanceTable` → 各 Instance の `hostEffects.prepare` を `engine.load` の前に行い、成功後に 6 本の `resetInstances`。`engine.js` の `withInstance` は `=== undefined` 判定、descriptors の buffer は `allocated` を `finally` で解放
+- scope: Rust `component_scope`（`composition.rs:216-231`）と JS `scopeProblem`（`component-tree.js:34-43`）は等価（各要素 `[A-Za-z0-9_-]` かつ `__` 無し、連結後 80 バイト以内）。検査条件（storage または files を宣言する子のみ）も両側一致。`tests/helpers/component-scope-cases.json` 15 行を `composition_tests.rs:1062` と `tests/components-loader.test.js:240` の両方が読む
+- テストの実質: `completion_grid` は 7 チャネル × 6 列で `screen_states`（root / `a` / `a/c`）・`revision`・再完了成功（pending 不変）を各セルで検証。`tests/abi.test.js` は不正 5 連の直後に `layout` 応答の文字列一致。`tests/parts-lab.test.js` 6 本（DOM / Canvas の Scene 一致、保存 → 再 load → 復元、相対 URL `/app/data/products.json`、confirm → emit → 親 state）。`tests/components-effects.test.js` 11 本
+- 変異: `MUTATIONS` 7 本の `from` は `engine/src/lib.rs` に各 1 回（最終判定の build 7 本が全部 exit 0）
+- 公開シグネチャ: `git diff main -- engine/src/lib.rs | grep '^[-+].*pub fn'` は追加 `load_with_bundle` / `complete` と、`complete_storage` / `complete_dialog` の `mut response` を落とした 2 行のみ（型・引数・呼び出し側不変）。既存 pub fn 16 本は全部残っている。`abi.rs` の op 名 11 個不変
 
-- `src/application-loader.js:141-144` と `src/runtime.js:48-51`: `typeof declaration?.url !== "string"` なら URL 解決の前に同一文言 `コンポーネント {name} の宣言が不正です（url を文字列で指定してください）` を throw。`resolveComponents` は `compile` の状態更新より前に走るので前画面は不変
-- テスト: ローダー節 `refuses a declaration without a string url before fetching anything`（`{}` / `null` / `{url: 5}` の 3 形。`reads` のキーが親の json / rhai の 2 件 = 子 URL の取得 0 回）/ ランタイム節 `refuses a declaration without a string url and keeps the loaded screen`（同 3 形。`runtime.screen.id` と `layout(400)` が不変）/ `hands the same composed scene to the dom and the canvas renderer` は両 stage を 400 にして最後の `render` 引数の `widgets` を `toEqual`（既存の `open/` / `shipped/` の assert も残る）
-- `docs/components.md` の 3 文: 許可属性節 `:37`（accordion には置かない）/ 制限節 `:120`（ローダーは宣言単位・Rust は配置単位）/ 段階 4 以降 `:162`（子ノードの `webmcp` は検証されるが登録されない）
+### セキュリティ（サブエージェント B + 親の再確認）
 
-### 受け入れ基準 1〜7
+CRITICAL / HIGH / MEDIUM なし。`instance` は `BTreeMap` のキーとしてしか使われず storage / FS に届かない。scope はホストが Instance 表から決め、子のスクリプト・effect から名乗れない。OPFS / IndexedDB の名前は従来どおり `safeName` / `safeKey` が門番。相対 URL は `http:` / `https:` のみで認証情報付きを拒否（root と同じ規則、回帰なし）。秘密情報のハードコード 0、新規依存 0、`Cargo.lock` 不変（rhai の `internals` を外しただけ）。LOW 2 件は下の残留リスク 1・2
 
-| #   | 基準                               | 確認方法と結果                                                                                                                                                                                                                                                                                                                                      |
-| --- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | 全検査 green、既存期待値の変更なし | 最終判定 18 手順 exit 0（上記）。`git diff main...HEAD --numstat -- tests/` は `abi.test.js` 38 / 0、`components-demo.test.js` 236 / 0（新規）、`components-loader.test.js` 449 / 0（新規）、`browser/font-parity.mjs` 1 / 1（xtype 許可リスト読み取りの正規表現。期待値ではない）                                                                  |
-| 2   | 挙動照合と候補のみ列の証跡         | `compare candidate` 差分 0（370 歩 44 列）、変異 5 本すべて exit 1、`probe composition` 13 歩 problems 0（load ok → `filter` → layout 800 で open 1 行 / shipped 0 行 → 子選択で notice に SO-001 / SO-002 → revision 0→1→2→3）。証跡 3 種が `target/engine-compare/` に存在                                                                        |
-| 3   | デモ（両レンダラー）               | `tests/components-demo.test.js` 5 本 green。`UiRuntime` 経由は dom / canvas を同幅 400 にして最後の Scene の `widgets` が `toEqual` かつ両方に `open/` と `shipped/` の key（round 1 の指摘 2(e) 解消）。カタログ 23 件に `order-dashboard`                                                                                                         |
-| 4   | 制限と拒否（R2 / R5 / R6 / R10）   | PROGRESS turn 14 の R10 対応表 18 行 + round 1 の格子 98 ケースの再確認（トラップ 0）。round 1 の指摘 1（完了経路の誤拒否）は `turn-015-stale-emit.mjs` 4 変種 ok と新テストで、指摘 2(a)（JS の `TypeError` / `<base>/undefined`）は新テスト 2 本で解消                                                                                            |
-| 5   | 契約文書と実装の一致               | round 1 で突き合わせた 24 件の文言は修正ラウンドで変わっていない（`git diff 4177ca1...HEAD -- docs/components.md` は追加 4 文のみ）。追加 4 文は上記 F1 / F2 の節で実装と照合。`components-plan.md:3` の段階 3 完了注記は不変。追従先チェックリストの `git grep -E '21画面\|12画面\|22画面\|変異3本\|M1〜M3' -- README.md docs scripts src` は 0 件 |
-| 6   | 公開シグネチャ                     | 修正ラウンドで足したのは private `fn clear_queues(&self)` のみ。`git diff 4177ca1...HEAD -- engine/src/lib.rs` に `pub fn` の変更なし（`dispatch` の `-`/`+` は helper 挿入による位置移動で署名は同一）。`cargo test` の `tests::` 4 本 green                                                                                                       |
-| 7   | 整形                               | `bun run check` green（最終判定の手順 4）。`git status` クリーンで開始                                                                                                                                                                                                                                                                              |
+### 文書の主張
+
+- 追従先チェックリストの `git grep` 条件: 古い件数（`19個` / `宣言7種` / `23画面` / `変異5本` / `拒否2本` / `internals` / `STUBS` / `rejectSequences` / `!effect.kind`）は 0 件。8 文書の `instance` 記載は各 1 件以上（architecture 3 / components-plan 5 / dialogs 1 / files-cache-rpc 2 / host-adapters-design 1 / http-adapter 1 / platform-features 1 / tutorial-http-grid 1）。`docs/testing.md` の新テスト 2 行と probe 6 列・変異 7 本の記述は実測と一致
+- `docs/components.md` の英語 6 文言と日本語 2 文言は実装の文字列と一致。**抜けているのは上の指摘 1 の 1 文言**。effect の形・連結順・`instance` の受理形・scope 規則は `lib.rs` / `abi.rs` / `composition.rs` / `component-tree.js` と一致。**指摘 2 のとおり `host_progress` の例外だけ本文が広い**
+- `docs/ai-development.md:26`（T10 で発見した「子に通信・保存・ダイアログを書くコードを生成しない」の逆転）は直っている
+- PROGRESS turn 13 の受け入れ 1〜9 / 直交表 / 受け入れ 5 の 5 項目 / P1〜P14 の表に出てくる `fn` 名・テスト名・probe ラベルは `cargo test` の出力と `tests/*.test.js` の `it(...)`、probe のステップ名に実在する
+
+### 受け入れ基準 1〜9（round 1 時点）
+
+| #   | 基準                 | 結果                                                                                                                                                 |
+| --- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | 全検査 green         | 最終判定の `BASE_CHECKS` 6 本 exit 0。期待値変更は PROGRESS の 3 見出し（`kind` 起因 1 件 / arity 起因 3 ファイル 6 箇所 / 撤去起因 5 本）に列挙済み |
+| 2   | 挙動照合             | diffs 0（正規化は http の `kind` のみ）。変異 7 本すべて exit 1                                                                                      |
+| 3   | 候補のみ probe       | 54 steps・problems 0。`parts-lab` 列が R9 の 3 項目を含む                                                                                            |
+| 4   | ルーティングの格子   | `completion_grid` + `the_dispatch_entrance_of_the_grid_names_its_instance_in_the_item_id`。直交表の 8 行すべてに担当あり                             |
+| 5   | 堅牢性               | 5 項目に担当あり（PROGRESS turn 13 の表）+ 本ターンの ABI 格子 315 ステップ トラップ 0                                                               |
+| 6   | 契約文書と実装の一致 | **未達（指摘 1・2）**。それ以外の文言・形・規則は一致                                                                                                |
+| 7   | 公開シグネチャ       | 既存 pub fn の名前・引数不変、op 名 11 個不変                                                                                                        |
+| 8   | デモ                 | `tests/parts-lab.test.js` 6 本 green（Scene 一致 / 保存 → reload → 復元 / http の行 / confirm → emit → 親 state）                                    |
+| 9   | 整形                 | `bun run check` green、`.gsd-lite/*.md` は `bunx vp fmt` 済み、`git status` クリーンで開始                                                           |
 
 ## 残留リスク（差し戻さない理由つき）
 
-1. **layout ごとの子スナップショット**: `layout_scope()` が毎回 全子の `ui.clone()` と `state_json()`（最大 1 MB × 7）を作る。既存画面はコスト 0、合成画面でも数 KB のデモでは問題ないが、大きな子 state では resize 連打で重くなる。要件に性能基準は無い。段階 4 以降で `revision` をキーにキャッシュする余地
-2. **`engine.js` の 2 MB 事前検査の窓**: `clock` を足す前の大きさで判定するので、約 50 バイトの窓では詳細文言ではなく `call` の既存文言になる。拒否自体は Rust 側（`abi.rs`）でも必ず起きる
-3. **`file_bytes` が stub 表に無い**: 純粋なコンストラクタで効果ではないため契約の 19 関数に含めていない。子で呼ぶと「not available in components」ではなく Rhai の関数未定義で落ちる（効果は到達しない。文言の不一致のみ）
-4. **エラー文言の識別子の揺れ**: Instance 上限は `exceeded at component {path}`（末尾）、`requires itemId` / 配置違反は xtype を使う。すべて `composition_tests.rs` と `components.md` に固定・記載済みなので変えない
-5. **`probe-composition.mjs` の例外経路**: WASM が不正（`compile` 失敗）や ABI の trap は未処理例外で exit 1、証跡を書かない。最終判定では `build:wasm` 直後の WASM にしか使わないので実害なし
-6. **`commit_all` の `children.sort_by`**: 呼び出し元が BTreeMap を畳むので常に整列済み。無害な冗長
-7. **宣言 `url` の 2048 バイトがエラー文言にそのまま入る**: `Component {path}: package {url} was not bundled` が最長 2 KB 強になる。ABI 応答の上限内で、JS 側は絶対 URL を渡すので通常は短い
-8. **テストの見落とし**: `a_child_cannot_announce_anything_while_it_is_being_reconfigured` が子 state の不変を見ない（同じ経路の `a_child_that_refuses_a_configuration_…` が親子とも見ているので実質カバー）。`component_nodes_accept_only_their_own_attributes` に accordion / radiogroup 配下のケースが無い（順序を入れ替えると `extras.rs:206` の `collapsible` 付与で属性検査が落ちる形なので、入れ替え自体は `cargo test` で検出される見込み）
-9. **F2 の JS 文言が契約文書に無い**（round 2 で追加）: `docs/components.md:16` は「エントリは `url` のみで、他のキーは読み込みエラー」と形の規則を書いているが、`url` が文字列でないときの JS 文言 `コンポーネント {名前} の宣言が不正です（url を文字列で指定してください）` は列挙していない（`:117` の JS 文言 3 件の並びに無い）。規則と実装は一致しており文言の列挙漏れだけなので差し戻さない。次に `components.md` を触るときに `:117` の括弧内へ 1 件足す
+1. **`Unknown component instance: {instance}` に送られた文字列がそのまま載る**（`lib.rs:1001`）。`valid_instance_path` は長さを見ないので最大 2 MB 弱の文字列が応答と `onError` の表示に写る。トラップ・state 変化は無く（格子で 100,000 文字を確認）、表示は `textContent` 経由で HTML 注入にはならない。要件に文言長の基準は無い。次に `abi.rs` を触るときに `instance` の長さを 80 × 3 + 2 程度で切るか、文言側で切り詰める余地
+2. **root の `id` に `__` があっても scope を持つ子がいなければ通る**: root `a__b`（子なし）と root `a` + storage 宣言の子 `b` が別画面として同じ scope `a__b` を組める。画面をまたぐ衝突は root の `id` が同じ別画面でも起きる既存の性質で、同一画面内の衝突（R5 の対象）は `__` 禁止で防げている
+3. **`配送先が未登録です` の経路に自動テストが無い**（`http / storage / page-effects.js`）。通常経路では `instanceTable` のキーしか `instance` に出ない（`names only instances the shared table holds, three levels deep and twice over` で固定）ので防壁にしか当たらない。文書 `components.md:193` の契約（`onError` に落として `complete` を呼ばない）を固定する 1 本があるとよい
+4. **`HostEffects` の同時操作上限が Instance ごと（最大 8 × 8 = 64）**: 決定どおり（R7 / DECISIONS Round 5）で、`components.md` の制限表に「Instance 数 × 上限」と書いてある。エンジン側の `At most 8 pending host calls` も Instance ごとなので整合
+5. **`http / storage-effects.js` で配送先が無いとき WASM の pending が残る**: `onError` だけで完了を送らないので、その id は次の `load` / `compile` の `reset*` まで pending のまま。表が stale になる経路は `compile` の成功後にしか無く、そのとき世代が進んで古い effect は捨てられるので実害なし
+6. **`docs/components.md:193` の「空白が 2 つ並ぶ」**: root 由来の effect で `配送先が未登録です` が出ることは `reset` 直後には無い（`""` は常に表にある）ので、実際には子の path だけが入る。文書の注記は無害
 
-## リモート運用
+## リモート運用（round 2 で実施）
 
-- `origin` = `https://github.com/6in/uivolve-web.git`（github.com）。`gh` は認証済み（account `6in`）。本ラウンドで `git push -u origin gsd-lite/component-composition` → `gh pr create --base main` を行い、PR の URL を下に記録する
-- PR: https://github.com/6in/uivolve-web/pull/2（push `288bc13` → `gh pr create --base main --head gsd-lite/component-composition`。`--head` なしでは `gh` がリモートブランチを見つけられず abort したため明示した）。マージは人間 / CI
-
----
-
-## round 1 の記録（turn 15、差し戻し。指摘は F1 / F2 で解消済み）
-
-- 対象: `git diff main...HEAD`（HEAD = `b331343`）。コードは `engine/src/composition.rs`（新規）/ `composition_tests.rs`（新規）/ `lib.rs` / `instance.rs` / `abi.rs` / `dynamic_ui.rs` / `Cargo.toml`、JS は `src/application-loader.js` / `engine.js` / `runtime.js` / `screen-catalog.js`、スクリプトは `scripts/probe-composition.mjs`（新規）/ `compare-engine-behavior.mjs` / `build-engine-variant.mjs` / `verify-instance-refactor.mjs`、デモ 4 ファイル、Vitest 2 本新規 + `abi.test.js` 追加、文書は `docs/components.md`（新規）と追従 6 ファイル
-- 進め方: コードレビューとセキュリティチェックを読み取り専用のサブエージェント 2 本に並行させ、親が最終判定スクリプト・堅牢性の格子プローブ・文書の照合・受け入れ基準の突き合わせを前景で行った。サブエージェントの報告は親が実物で再確認したものだけを採った
-
-### 指摘（差し戻し → 解消）
-
-1. **子 Instance の emit キューが失敗したイベントの後に残り、完了処理を誤拒否する**（`engine/src/lib.rs` `progress_host` / `complete_*` 7 本は `self.root.clear_queues()` のみ、子は `dispatch` でしか空にならない）。子 handler が `emit` の後に失敗（throw / stub 拒否 / 非 object）すると emit がキューに残り、次の `http_result` 等で root の bind 先が変わって `reconfigure` が走ると `child.emits.take()` が残留分を拾って `Component a: emit is not available in config` を返す。応答の id は消費済みなので HTTP 応答は失われる。ABI で再現（`scratch/turn-015-stale-emit.mjs`: 4 変種のうち 2 つが `http_result` で `ok: false`）。R10「どの応答状態でも…」と R4「config の呼び出し」の誤動作で、応答の消失を伴うので差し戻した。サブエージェント 2 本が独立に同じ指摘を出し、親が再現した → **F1（turn 16 で解消）**
-2. **軽微な指摘のまとめ** → **F2（turn 17 で解消）**: (a) `ApplicationLoader.#components` / `UiRuntime.resolveComponents` が `components: { a: {} }` / `{ a: null }` / `{ a: { url: 5 } }` で `<base>/undefined` を取りに行く、または `TypeError` を出す (b) JS ローダーは**宣言単位**で循環・深さを検査し置かれていない宣言も取得するのに対し Rust は**配置単位**。契約文書にその差が無い (c) 子ノードの `webmcp` は検証されるが登録されない。文書に無い (d) `layout: accordion` の親の `items` に置いた component ノードは折りたたみが効かない。文書に無い (e) `tests/components-demo.test.js` の `hands the same composed scene to the dom and the canvas renderer` は両 surface が接頭辞付き key を持つことだけを見て「同じ Scene」を比べていない（stage 幅が 400 / 500 で違う）
-
-### 堅牢性の格子（round 1 で一括。`scratch/turn-015-robustness-probe.mjs`、raw ABI）
-
-入力経路 × 面を 98 ケース流し、すべて JSON 応答（トラップ 0）。
-
-- `request.components` の形 13: 配列 / 文字列 / 数値 / null / entry が null・配列・空 / `package` が数値・未知フィールド / `script` が数値・欠落 → すべて `Invalid components` か serde の文言。9 件 → `At most 8 component packages`。使われない同梱は黙って通る
-- event target 12: `/` / `a/` / `a//boom` / `/a/boom` / `a/boom/` / `a/b/c/d/e` / 空 / `nope/x` / `a/nope` / `a` / `filter/x` → `Unknown itemId: <全体>`、`Component a: Unknown itemId: nope`、`This component does not accept events` のいずれか。拒否後の layout は ok
-- component ノード 19: config が配列 / 文字列 / `{bind: ""}` / `{bind: "a.b"}` / `{bind: 5}` / `{bind: ["x"]}` / 無いキー / null 値のキー（ok）/ 2 キー object（固定値、ok）/ null（ok）。listeners が数値・配列（serde）/ 未定義 handler。visibleBind にドット / 非 bool（隠れる: event は捨てられ revision 0、widgets 0）。itemId に `/` / `:`。`bind` 属性 → 拒否、`items: []` → 既定と同値で通る（空なので無害）
-- 子パッケージ 12: state が配列 / null / 文字列 → `Component a: Initial state must be an object`。version 2 / ui null / 自己参照（`Component a/m: circular reference`）/ window / requests / `http_get("x")` 直書き（line, position 付き）/ `"x".http_get()` のメソッド形も拒否 / 子が `fn http_get` を定義するだけなら通る（呼べば拒否）/ state に `config` が既にあれば注入で上書き
-- 宣言 12: 空名 / `/` 入り / 41 文字 / url 空 / 2049 バイト / 余分なキー / null / 文字列 / 組み込み `grid` / 別名 `msgbox` → それぞれの文言。root の ui 自体が component ノード → misplaced。url 2048 バイト（上限ちょうど）は宣言として通り未同梱で落ちる（残留リスク 7）
-- emit 7: 名前が数値 → Rhai の関数未定義、payload が FnPtr → `payload must be JSON-serializable`、9 件目 → `At most 8 emits per handler`、handler が非 object → `Handler must return a state object`、子が自分の `state.config` を文字列で上書き → ok（契約外だが害なし）
-- layout 7: 239 / 4097 / NaN / 文字列 → 既存の文言。失敗した reload の後も前画面の `a/` widgets が残る
-
-### コードレビュー（Rust）
-
-- 移動したコード: `run_event` / `blocked` / `prepare_commit` / `apply` は旧 `dispatch` / `commit_state` の本文と同順（`find_path` → `blocked` → `action` → `read_only` → `close_other_menus` → 組み込み 7 分岐 → `event_value` → `bind` 書き込み → `call_fn`。`prepare_commit` は `from_dynamic` → object → `check_state` → resolve → `validate_handlers` → `initialize_added` → `grid::reconcile` → resolve → `validate_handlers` → `validate_ui_state` → schema → `to_dynamic` → `check_state`）。`commit_all` は root prepare → 子 prepare（キー順）→ root のキュー prepare 7 連 → `buffers::capacity` → root apply → root commit 7 連 → 子 apply → `revision += 1`
-- 上限の境界: 深さ `depth + 1 > 3`（root = 1）、Instance `count > 8`（root 込み）、emit `len() >= 8` で 9 件目拒否。JS の `countInstances`（root = 1、`> 8`）と `visit`（`depth + 1 > 3`）が同じ値。Rust / JS の循環検出とも test で固定
-- 原子性: 検証はすべて `apply` の前。`apply` は代入のみ。`get_mut(...).expect` は直前の `get` で存在確認済み。`Ok(None)`（捨てる）では commit も revision も動かない。失敗の経路で親子とも不変（test 3 本 + probe `reject-at-runtime` の layout 同一）
-- emit / config の連鎖: `propagate_emits` は path を 1 段ずつ短くして root で終わる。`propagate_config` は BTreeMap のキー順（祖先が先）+ `visited` で各 Instance 1 回。emit 元が自分の候補 state を保ったまま reconfigure される（`candidate(path)` を読む）
-- LayoutScope: `let _components` が `layout` の終わりまで生き、Drop で thread_local を None に戻す。`with_component` は `RefCell` の borrow を閉じてから `f` を呼ぶので再入で二重 borrow にならない。スコープ外（dispatch 中の `measure` 等）では `None` → 0
-- panic 経路: `composition.rs` の `expect` 2 件は `{"xtype": <英数>}` / `{}` から全既定の `Node` を作るだけで入力に依存しない。`unwrap` は `find_path == true` の直後のみ。`Value::get` は非 object で `None`。`as_object_mut` は `ok_or_else` で守る。`Composing::load` は子 state が object でないときに `IndexMut` ではなく `Err` にする
-
-### コードレビュー（JS・スクリプト・テスト）
-
-- ローダー: `#download` は既存 `network-only` と同順（本文 → `parsePackage` → script 100 KB → descriptors）。`#components` は深さ優先で `declaration.url` を絶対 href に書き換え、循環 → 深さ → 既取得 skip → 再帰、最後に `countInstances`。`network-first` と `restore` は `withoutComponents` を通し、`restore` は components 拒否を `catch {}` に飲ませず前世代へ落ちない
-- `WasmEngine.load`: `components` が空なら key を付けない。2 MB 事前検査は同梱後の JSON バイト数で、最大の子を名指し。`call` の既存文言は不変
-- `UiRuntime.compile`: `resolveComponents` が url を絶対化して未同梱を拒否、子と孫に `prepareScreen`。成功後に `this.components = bundled`。`load` は `candidate.components ?? {}` を渡し、引数なしの `compile` は直前の子を再利用（決めた事項 14 どおり、文書化済み）
-- `probe-composition.mjs`: 引数不正・WASM 不在 exit 2、problems 有 exit 1、無 exit 0 を実行で確認。`verify-instance-refactor.mjs` は `probe` 付き変異を probe で検査
-- テストの妥当性: Rust の失敗系は親子の state を取り直して `==`、revision を固定。Vitest の 2MB は `layout` と `screen.id` の不変を見る。完了経路（`complete_*`）を合成画面で流すテストが無く、指摘 1 を素通りした → F1 で追加。3 段の config 連鎖は load 時のみで実行時のテストが無い → F1 で追加
-
-### セキュリティチェック
-
-- サンドボックス: 子 engine には効果 7 モジュールの `register` を呼ばず stub だけを登録（`instance.rs:95-105`）。`Fn("...")` / `call` / `eval` / メソッド形はすべて子 engine で解決されるので本物に届かない。`no_module` で `import` 無し。`AST::walk` は関数本体とクロージャに降りる。子が `fn http_get` を定義しても、呼び出し箇所は名前で拒否され、仮に走っても子自身のコード
-- 共有状態: `ExtensionContext` は `Rc<Cell<Option<Clock>>>` のみ、子は `clock: None` で `enter` しないので root の clock を消さない。`dialogs::SEQUENCE` / `files::BYTE_USAGE` / `buffers::STORE` は効果関数経由でしか触れない。拡張（date / decimal / text / regex）は純粋、regex キャッシュは engine ごとに有界
-- 境界の検証: 宣言名 `^[A-Za-z][A-Za-z0-9]{0,39}$`、`reserved` が XTYPES ∪ normalize の書き換え先。`itemId` の `/` `:` は `dynamic_ui::expand` の**後**の `validate` で見るので itemsBind 由来も対象。`port_kind` は `#[serde(skip)]` で `prepare_template` だけが立て、`route` が `port_kind == "component"` を要求するので JSON から component ノードを偽装できない。`unsupported_attribute` は serialize 比較なので列挙漏れが無い
-- DoS: 深さ 3 / Instance 8 / 2 MB が JS と Rust の 2 段。`propagate_emits` は path が単調に短くなり、`propagate_config` は `visited` + config 中 emit 禁止でピンポン無し。`AST::walk` は 100 KB 以下の script に線形
-- JS: `httpUrl` が子にも適用され http / https のみ・資格情報なし。クロスオリジンは root と同じく許可（回帰ではない）。cycle 検出は stack 照合が skip より先。`network-first` / `restore` の両経路が拒否
-- 秘密情報・インジェクション: 追加行に資格情報なし。利用者文字列はすべて `format!` の引数。`spawn` は引数配列、`shell: true` / `eval` / `new Function` なし
-
-### 文書の主張・期待値の変更（round 1）
-
-- 古い件数なし: `git grep -E '21画面|12画面|22画面|変異3本|M1〜M3'` が `README.md` / `docs` / `scripts` / `src` で 0 件。PLAN 追従先チェックリスト 10 行の「確かめ方」を再実行してすべて成立
-- `docs/testing.md:88`「スクリプト4本」= compare / probe / build-variant / verify、「変異5本」= `MUTATIONS.length`。`docs/components.md:10`「48種」= `XTYPES` の長さ。`README.md:25` / `:111`「23画面」= カタログ 23 件
-- `docs/components.md` の文言 24 件（名前・URL・属性・配置・config・emit 上限・init / config 中・上限 7 値・JS 文言 4 件・拒否 19 関数・宣言 7 種・window・network-first・本体なし・stateSchema）を `composition.rs` / `lib.rs` / `abi.rs` / `engine.js` / `application-loader.js` / `runtime.js` / `state_schema.rs:229` と突き合わせて一致。トランザクション順序 8 段は `commit_event` → `propagate_emits` → `propagate_config` → `commit_all` の順と一致
-- PLAN の訂正（T1 走査キー 7 種、T2 48 件 / 11 件、T3 arity と +14,142 バイト、T4 state object 検査、T5 接頭辞 1 段ずつ、T6 `unknown_item`、T7 `commit_state` → `commit_event`、T8 `clock` 引数、T10 layout 1 歩追加）はいずれも実測を正としたもので要件・決定に触れていない
+- `origin` = `https://github.com/6in/uivolve-web.git`（github.com）。`gh` は認証済み（account `6in`）
+- turn 16: `git push -u origin gsd-lite/component-effects`（新規ブランチ）→ `gh pr create --base main --head gsd-lite/component-effects --body-file .gsd-lite/logs/component-effects/scratch/turn-016-pr-body.md`
+- **PR: https://github.com/6in/uivolve-web/pull/3**（base `main` = `49c8183`、origin/main と一致を push 前に確認）。ローカルマージはしない。マージは人間 / CI

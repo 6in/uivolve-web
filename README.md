@@ -22,7 +22,7 @@ bun run dev
 
 開発サーバー: `http://127.0.0.1:4173/`。起動時にRustをWASMへビルドする。
 
-画面を直接開くには`/pages/hello-world`などを指定する。「サンプル一覧」は23画面を「はじめに」「フォーム・部品」「レイアウト・画面構成」「通信・Rust拡張」「データ保存」「アプリケーション例」に分け、短い説明とともに表示する。一覧は折りたため、画面選択欄にも同じカテゴリがある。並び・説明は`src/screen-catalog.js`で管理する。旧`?screen=hello-world`も同じ画面を読み込む。プレビュー例: `http://127.0.0.1:4174/pages/hello-world`。戻る・進むにも対応する。
+画面を直接開くには`/pages/hello-world`などを指定する。「サンプル一覧」は24画面を「はじめに」「フォーム・部品」「レイアウト・画面構成」「通信・Rust拡張」「データ保存」「アプリケーション例」に分け、短い説明とともに表示する。一覧は折りたため、画面選択欄にも同じカテゴリがある。並び・説明は`src/screen-catalog.js`で管理する。旧`?screen=hello-world`も同じ画面を読み込む。プレビュー例: `http://127.0.0.1:4174/pages/hello-world`。戻る・進むにも対応する。
 
 ```sh
 bun run build       # WASM + Vite+本番ビルド → dist/
@@ -64,6 +64,7 @@ Rustを変更したら`bun run build:wasm`を実行する。フロントエン�
 
 - 受注一覧の検索・行選択・顧客名と金額の編集。反映先はデモのメモリ内状態で、永続化やサーバーへの保存は行わない。
 - 「受注ダッシュボード」で、受注一覧の画面パッケージを部品として2つ並べる。親の絞り込み文字列を`config`で両方へ配り、行を選ぶと`listeners`で親へ知らせて説明文を更新する。同じ部品を2か所へ置いても表示と選択は独立する。データはデモのメモリ内状態で、永続化やサーバーへの保存は行わない。[部品化の契約](docs/components.md)を参照。
+- 「部品ラボ」で、HTTP取得・ブラウザ保存・確認ダイアログを使う3つの画面パッケージを部品として1画面に置く。各部品は自分の効果を自分で発行し、完了はその部品へ返るので、HTTPの一覧表示・メモの保存・承認の回答は互いに混ざらない。部品は終わったことだけを`listeners`で親へ知らせ、親は説明文を更新する。[部品化の契約](docs/components.md)を参照。
 - 「受注管理・Worker API」は独立したモックDSLで初期データとルートを定義し、サーバーなしでGET/POST/PATCH/DELETEを実行する。日付・金額・顧客名の正規化を含む。[WorkerモックAPI](docs/worker-mock-api.md)を参照。
 - DOM側・Canvas側のどちらから操作しても、共通状態を両側へ表示。
 - タスク管理へのHTTP読み込みと、追加・完了状態の切り替え。
@@ -108,7 +109,7 @@ Rust / WASM エンジン
 - `src/widget-contract.js`: DOM/Canvas/WebMCPで共有する操作部品の分類と許可action。
 - `src/screen-catalog.js`: 同梱画面のid・title。
 - `src/dom-renderer.js` / `src/canvas-renderer.js`: 描画・入力のアダプター。
-- `public/screens/`: エンジンとは別に配信する23画面。
+- `public/screens/`: エンジンとは別に配信する24画面。
 - `engine/src/state_schema.rs` / `metadata.rs`: DSLの型検証とWebMCPメタデータ。
 - `engine/src/storage.rs` / `src/storage-effects.js` / `src/storage-client.js`: 保存依頼・完了とIndexedDB/OPFSアダプター。
 - `engine/src/files.rs` / `src/file-client.js` / `src/opfs.js`: 名前付きOPFSファイル領域、FileBytes、非同期ファイル操作。

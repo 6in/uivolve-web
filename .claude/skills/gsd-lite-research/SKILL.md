@@ -58,6 +58,11 @@ slug=<slug>
      境界値・並行時の観測方法）を添える。plan はこれを完了基準に写す。
      タスク単体のテストで拾いにくい種類（並行性・境界値・暦の端（DST・曜日・月末）・契約外の
      エラー漏れ・権限）は意識して探す
+     - 対象がスクリプト言語（Rhai 等）を含むなら、成果物に「予約語一覧（正は処理系のソース。Rhai なら
+     `go` / `goto` / `call` / `exit` / `match` / `case` / `public` / `private` / `new` / `use` / `with` /
+     `module` / `package` / `super` / `spawn` / `thread` / `task` / `async` / `await` / `yield` / `default` /
+     `void` / `null` / `nil` / `shared` / `var` / `static` / `is` / `as` ほか）」を 1 行置き、
+     plan の「impl への注意」はその行を指す（識別子の衝突で手戻りしないため）
    - 要件への影響（受け入れ基準に足すべき観点があれば**提案として**記載。
      REQUIREMENTS.md 本文は書き換えない）
 4. **重大発見の扱い**: discuss の決定を覆しうる発見（例: 要件をほぼ満たす既存 OSS が
@@ -101,5 +106,8 @@ slug=<slug>
 - コミットメッセージは一時ファイルに書いて `git commit -F <file>` で渡す（`-m "$(...)"` は使わない）
 - 一時ファイルは `.gsd-lite/logs/<slug>/scratch/` に置き、名前に turn 番号を入れる
   （例 `turn-012-commit-msg.txt`。前のターンや前のマイルストーンのファイルを使い回さない）。
-  `mktemp -d` で作ったディレクトリはそのターン内で消す
+  `mktemp -d` で作ったディレクトリはそのターン内で消す。**`.gsd-lite/logs/<slug>/scratch/` は消さない**
+  （gitignore 済み。PLAN / PROGRESS / reflect が根拠として参照する）。`rm -rf` は使わない
+- native `Read` が「unchanged since your last Read」を返して本文を出さないとき（サブエージェント起動後に
+  起きやすい）は、`git show HEAD:<path>` または `cat <path>` で読む
 - 作業ディレクトリの外へは書かない（証跡は `.gsd-lite/` 配下に置く）

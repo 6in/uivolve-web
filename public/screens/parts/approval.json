@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "id": "approval",
+  "title": "承認（部品）",
+  "script": "approval.rhai",
+  "state": {
+    "result": "未確認",
+    "config": {}
+  },
+  "ui": {
+    "xtype": "container",
+    "layout": "vbox",
+    "items": [
+      {
+        "xtype": "button",
+        "itemId": "ask",
+        "text": "承認を確認",
+        "handler": "ask",
+        "variant": "primary"
+      },
+      { "xtype": "label", "itemId": "result", "bind": "result", "variant": "muted" }
+    ]
+  }
+}
