@@ -140,6 +140,8 @@ export function createUiTools(host, screens = []) {
           popup: snapshot.scene.popup,
           stateKeys: Object.keys(snapshot.state),
           ...(schema ? { stateSchema: schema.value, stateSchemaTruncated: schema.truncated } : {}),
+          // One summary per component instance: the whole list, never paginated with the widgets.
+          components: snapshot.scene.components ?? [],
           offset,
           total: widgets.length,
           nextOffset: offset + limit < widgets.length ? offset + limit : null,

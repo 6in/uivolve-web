@@ -2,6 +2,11 @@
   "version": 1,
   "id": "note-pad",
   "title": "メモ（部品）",
+  "webmcp": {
+    "label": "メモ",
+    "description": "メモを入力してこのブラウザに保存する部品。",
+    "tags": ["memo", "storage"]
+  },
   "script": "note-pad.rhai",
   "storage": {
     "memo": { "backend": "indexeddb", "key": "memo", "handler": "stored" }
@@ -20,14 +25,19 @@
         "itemId": "text",
         "fieldLabel": "メモ",
         "emptyText": "例：明日の打ち合わせ",
-        "bind": "text"
+        "bind": "text",
+        "webmcp": { "description": "保存するメモの本文。" }
       },
       {
         "xtype": "button",
         "itemId": "save",
         "text": "メモを保存",
         "handler": "save",
-        "variant": "primary"
+        "variant": "primary",
+        "webmcp": {
+          "description": "メモをIndexedDBへ保存し、親へsavedを通知する。",
+          "tags": ["write"]
+        }
       },
       { "xtype": "label", "itemId": "status", "bind": "status", "variant": "muted" }
     ]

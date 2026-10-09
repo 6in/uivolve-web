@@ -136,7 +136,7 @@ bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-52ec88
   - 依存: T3
   - 並列サブ作業: なし
 
-- [ ] T5: JS 側 — `ui_get_screen.components` とデモ子パッケージの `webmcp`（R2 / R2b / R3 / R4）
+- [x] T5: JS 側 — `ui_get_screen.components` とデモ子パッケージの `webmcp`（R2 / R2b / R3 / R4）
   - 完了基準:
     - `src/ui-tools.js:134-147` の `ui_get_screen` 戻りに `components: snapshot.scene.components ?? []` を足す（`preview()` を通さない。P21。`widgets` の `offset` / `limit` に影響されない）。`describe()` / `snapshot()`（`src/runtime.js:466-482`）は無改修
     - デモ（R2b。決めた事項 7 の文言）: `public/screens/parts/note-pad.json`（パッケージ直下 `webmcp` + `text` / `save` に部品の `webmcp`）、`parts/approval.json`（直下 + `ask`）、`parts/order-list.json`（直下 + `orders`）。上限内（label ≤ 160 バイト / description ≤ 2,000 バイト / tags ≤ 8・各 ≤ 80 バイト・重複なし。P20: 生成スクリプトは検証しないので `load` で確かめる）

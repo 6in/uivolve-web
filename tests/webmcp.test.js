@@ -196,6 +196,23 @@ it("propagates cancellation before a mutation and checks version again before lo
   expect(failed.error.code).toBe("STALE_SCREEN");
   expect(result.state.query).toBe("changed while downloading");
 });
+it("lists the component instances whole, outside the widget pagination and its input guards", async () => {
+  const first = await call("ui_get_screen", { limit: 20 });
+  expect(first.components).toEqual([]);
+  expect((await call("ui_load_screen", { ...version(), id: "grid-lab" })).ok).toBe(true);
+  const reloaded = await call("ui_get_screen", { limit: 20 });
+  expect(reloaded.components).toEqual([]);
+  const page = await call("ui_get_screen", { offset: 20, limit: 200 });
+  expect(page.components).toEqual([]);
+  expect(page.components).toEqual(reloaded.components);
+  for (const input of [{ offset: -1 }, { limit: 0 }, { limit: 1000 }, { extra: 1 }]) {
+    const failed = await call("ui_get_screen", input);
+    expect(failed.ok).toBe(false);
+    expect(failed.error.code).toBe("INVALID_INPUT");
+    expect(typeof failed.error.message).toBe("string");
+    expect(failed.components).toBeUndefined();
+  }
+});
 
 function modernContext(failAt = Infinity) {
   const registry = new Map([["other_app_tool", {}]]);

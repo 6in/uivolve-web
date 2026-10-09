@@ -1709,4 +1709,36 @@ describe("WasmEngine / UiRuntime の components", () => {
     expect(events.at(-1).error.name).toBe("QuotaExceededError");
     expect(runtime.screen.id).toBe(definition.id);
   });
+
+  /** The parent of `parent`, with the card placed behind a `ready` flag the `show` handler sets. */
+  const hiding = () => {
+    const screen = structuredClone(parent(CARD_URL));
+    screen.state.ready = false;
+    screen.ui.items[1].visibleBind = "ready";
+    screen.ui.items.push({ xtype: "button", itemId: "show", text: "表示", handler: "show" });
+    return screen;
+  };
+
+  // A hidden child still has a summary — that is how a host learns a component is there at all —
+  // so `hidden` is what tells the summary apart from the widgets the layout left out.
+  it("summarizes a child the parent hides and lays it out once the parent shows it", async () => {
+    const engine = await newEngine();
+    engine.load(
+      hiding(),
+      "fn init(s){s} fn show(s,e){s.ready = true; s}",
+      {},
+      {
+        components: { [CARD_URL]: { screen: card(), script: CARD_SCRIPT } },
+      },
+    );
+    const before = engine.layout(500);
+    expect(before.components).toHaveLength(1);
+    expect(before.components[0]).toMatchObject({ instance: "a", id: "card", hidden: true });
+    expect(before.widgets.some((w) => w.key.startsWith("a/"))).toBe(false);
+
+    engine.dispatch("show");
+    const after = engine.layout(500);
+    expect(after.components[0].hidden).toBe(false);
+    expect(after.widgets.some((w) => w.key.startsWith("a/"))).toBe(true);
+  });
 });

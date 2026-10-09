@@ -2,6 +2,11 @@
   "version": 1,
   "id": "approval",
   "title": "承認（部品）",
+  "webmcp": {
+    "label": "承認",
+    "description": "承認ダイアログで確認し、結果を親へ返す部品。",
+    "tags": ["approval", "dialog"]
+  },
   "script": "approval.rhai",
   "state": {
     "result": "未確認",
@@ -16,7 +21,8 @@
         "itemId": "ask",
         "text": "承認を確認",
         "handler": "ask",
-        "variant": "primary"
+        "variant": "primary",
+        "webmcp": { "description": "承認を確認するダイアログを開く。", "tags": ["dialog"] }
       },
       { "xtype": "label", "itemId": "result", "bind": "result", "variant": "muted" }
     ]

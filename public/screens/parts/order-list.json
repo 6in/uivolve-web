@@ -2,6 +2,11 @@
   "version": 1,
   "id": "order-list",
   "title": "受注一覧（部品）",
+  "webmcp": {
+    "label": "受注一覧",
+    "description": "親から受け取ったstatusとqueryで絞り込んだ受注を一覧する部品。",
+    "tags": ["orders", "list"]
+  },
   "script": "order-list.rhai",
   "state": {
     "orders": [
@@ -30,6 +35,7 @@
         "bind": "visible",
         "selectedBind": "selected",
         "handler": "select",
+        "webmcp": { "description": "行を選ぶと親へselectedを通知する。", "tags": ["select"] },
         "columns": [
           { "text": "受注番号", "dataIndex": "number", "flex": 1 },
           { "text": "顧客名", "dataIndex": "customer", "flex": 1.5 },
