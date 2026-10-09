@@ -194,6 +194,9 @@ PROGRESS / VERIFICATION 等）を `.gsd-lite/archive/<前回のmilestone>/` へ�
      OpenCode が含まれれば `.opencode/skills/` に
      6 スキル（research / plan / impl / verify / reflect / discuss）を配置する。
      既存スキルに独自変更があれば無断で上書きせず確認する。
+     編集した `.claude/skills/**/SKILL.md` は `bunx vp fmt <path>` で整形し、`bun run check` 相当が
+     green であることを確かめてからコミットする（本リポジトリでは `.claude/**` が `fmt.ignorePatterns` に
+     あり `vp fmt` は対象なしと出る。その場合は `bun run check` の green で足りる）。
      Claude が含まれる場合は Claude 用 init の allowlist マージ手順も行う。
      テンプレートがなければ `install.sh --engine all` を案内して準備完了まで待つ。
      Codex / OpenCode ホストのテンプレートに allowlist がない場合は
@@ -205,6 +208,8 @@ PROGRESS / VERIFICATION 等）を `.gsd-lite/archive/<前回のmilestone>/` へ�
      選択と違う場合はその変数を外した起動コマンドを使う（黙って無視しない）。
    - 決定を DECISIONS.md に記録し、state の `engine` / `phase_engines` を更新。
      同じ環境で `gsd-lite-loop.sh --check` を実行し、不足があれば起動せず解消する。
+     あわせて `.gsd-lite/state.json` がフォーマッタの ignore に入っていること（本リポジトリでは
+     `vite.config.js` の `fmt.ignorePatterns`）を確かめる（ループが毎ターン書き直すので整形対象だと check が赤のまま続く）。
      このチェックは CLI / スキル配置 / git 識別 / Codex sandbox の実効性 / **Claude Code の trust** の検証で、
      認証や外部サービス疎通の保証ではない。Codex sandbox の検証で止まった場合は
      表示された対処（`GSD_LITE_CODEX_SANDBOX=danger-full-access` で起動、カーネル設定、
