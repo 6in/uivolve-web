@@ -183,7 +183,7 @@ bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-52ec88
     - B: `docs/webmcp.md` + `docs/platform-features.md`（対象: その 2 ファイル）
     - 親: 対応表と `git grep` の再実行
 
-- [ ] T8: 最終判定と総点検（R4 の堅牢性格子を含む）
+- [x] T8: 最終判定と総点検（R4 の堅牢性格子を含む）
   - 完了基準:
     - `bun scripts/verify-instance-refactor.mjs` が exit 0（照合 差分 0、probe exit 0、変異 8 本すべて exit 1）。所要の表を PROGRESS に写す
     - 堅牢性格子（R4。scratch スクリプト `scratch/turn-<N>-robustness.mjs` で実 WASM + `createUiTools` を回し、結果表を PROGRESS に）: 画面状態 5 種（子なし / 子あり / 非表示の子 / 2 か所に置いた子 / `ui_load_screen` で入れ替えた直後）× ツール呼び出し（`ui_get_screen` の `offset` / `limit` 境界 4 通り + `ui_get_state` の root キー / 子のキー名（`NOT_FOUND` 系の `{ok:false}`）+ `ui_dispatch` の接頭辞付き key / 非表示の子の key（`NOT_VISIBLE`）/ 存在しない instance の key）で、どのセルも未捕捉例外が無く、`revision` と root `state` が失敗セルで不変
