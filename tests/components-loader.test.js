@@ -224,6 +224,46 @@ describe("ApplicationLoader の components 取得", () => {
     );
   });
 
+  // Placements are counted after the tree is built; declarations are counted before it is. A
+  // package naming more children than the tree can hold is refused at the package that holds the
+  // declarations, so no surplus key costs a fetch.
+  const declaring = (count, target = (n) => `c${n}.json`) => {
+    const urls = Array.from({ length: count }, (_, n) => target(n));
+    return [
+      [
+        "parent.json",
+        screen("parent", {
+          components: Object.fromEntries(urls.map((url, n) => [`c${n}`, { url }])),
+        }),
+      ],
+      ...[...new Set(urls)].map((url) => [url, screen(url.replace(".json", ""))]),
+    ];
+  };
+
+  it("refuses a ninth declaration before fetching any child", async () => {
+    const f = fixture(declaring(9));
+    await expect(f.loader.fetch(href("parent.json"))).rejects.toThrow(
+      `コンポーネントの宣言が8件を超えています: ${href("parent.json")}`,
+    );
+    // Only the parent's own body and script were read; not one declared url was opened.
+    expect([...f.reads.keys()].sort()).toEqual([href("parent.json"), href("parent.rhai")]);
+    const eight = fixture(declaring(8));
+    const candidate = await eight.loader.fetch(href("parent.json"));
+    expect(Object.keys(candidate.components)).toHaveLength(8);
+  });
+
+  it("refuses a ninth declaration on the manifest path as well", async () => {
+    // Nine declarations over eight distinct children, so the manifest itself stays within its own
+    // eight-child limit and the declaration count is what refuses the tree.
+    const list = declaring(9, (n) => `c${n % 8}.json`);
+    const f = fixture(list);
+    const t = await treeManifest(f, list);
+    expect(Object.keys(t.metadata.components)).toHaveLength(8);
+    await expect(f.loader.fetch(t.url, { mode: "network-first" })).rejects.toThrow(
+      `コンポーネントの宣言が8件を超えています: ${href("parent.json")}`,
+    );
+  });
+
   it("returns an empty components map for a screen without children", async () => {
     const f = fixture([["plain.json", screen("plain")]]);
     const candidate = await f.loader.fetch(href("plain.json"));
@@ -713,6 +753,58 @@ describe("ApplicationLoader の components 取得", () => {
       const child = t.metadata.components["?x"];
       expect(f.reads.has(new URL(child.source.url, t.sidecar).href)).toBe(false);
       expect(f.reads.has(new URL(child.script.url, t.sidecar).href)).toBe(false);
+    });
+
+    // `""` and `parent.json` are one child against the screen URL and two beside the sidecar, so a
+    // manifest listing both is the single case where the basis decides whether `manifest()` sees
+    // the duplicate at all. The wording carries no parenthesis: the shape is what is refused.
+    it("refuses two child keys that resolve to the same screen URL", async () => {
+      const list = parentWithChild();
+      const f = fixture(list);
+      const t = await treeManifest(f, list);
+      await revised(f, t, (c) => {
+        c[""] = c["a.json"];
+        c["parent.json"] = c["a.json"];
+        delete c["a.json"];
+      });
+      await expect(f.loader.fetch(t.url, { mode: "network-first" })).rejects.toThrow(
+        new RegExp(`^${MALFORMED}$`),
+      );
+      // The duplicate is judged on the manifest alone, so nothing beyond it was read.
+      expect([...f.reads.keys()]).toEqual([t.sidecar.href]);
+    });
+
+    // The 2 MB wording names a child by the same href the walk would key it under, so a key whose
+    // meaning depends on the basis — `?x` is the screen with a query, the sidecar with one — reads
+    // as the screen URL here as well.
+    it("names the largest child of an oversized tree by its screen URL", async () => {
+      const f = fixture([]);
+      const url = new URL(href("parent.json"));
+      const sidecar = new URL(url);
+      sidecar.pathname += ".manifest.json";
+      const entry = (name, size, seed) => ({
+        url: `packages/rev/${name}`,
+        sha256: seed.repeat(64),
+        size,
+      });
+      const child = (i, size, seed) => ({
+        source: entry(`component-${i}-source`, size, seed),
+        script: entry(`component-${i}-script`, 0, seed),
+        descriptors: {},
+      });
+      const metadata = {
+        version: 2,
+        revision: "a".repeat(64),
+        source: entry("source", 1_000_000, "1"),
+        script: entry("script", 1, "2"),
+        components: { "?x": child(0, 999_000, "3"), "b.json": child(1, 1_000, "4") },
+      };
+      metadata.revision = await manifestRevision(metadata);
+      f.responses.set(sidecar.href, JSON.stringify(metadata));
+      await expect(f.loader.fetch(url, { mode: "network-first" })).rejects.toThrow(
+        `配信ファイルの合計が2 MBを超えています（合計 2000001 バイト。最大の子: ${href("parent.json?x")} 999000 バイト）`,
+      );
+      expect([...f.reads.keys()]).toEqual([sidecar.href]);
     });
 
     it("names the child whose delivered file does not match its entry", async () => {

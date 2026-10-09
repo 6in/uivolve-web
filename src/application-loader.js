@@ -39,8 +39,10 @@ export async function manifestRevision(value) {
   return sha256(encoder.encode(JSON.stringify(parts)));
 }
 // A version 2 manifest lists the whole tree; version 1 describes one package and must not carry a
-// `components` key at all, so an older loader never silently drops children it cannot see.
-async function manifest(value, base) {
+// `components` key at all, so an older loader never silently drops children it cannot see. Both
+// bases are derived from the screen URL here: the delivered files sit beside the sidecar that
+// carries them, while a child key names a package and so resolves against the screen itself.
+async function manifest(value, screenUrl) {
   if (
     !value ||
     ![1, 2].includes(value.version) ||
@@ -49,6 +51,8 @@ async function manifest(value, base) {
     (value.version === 2 && (!Object.hasOwn(value, "components") || !isObject(value.components)))
   )
     throw new Error("配信マニフェストが不正です");
+  const sidecar = new URL(screenUrl);
+  sidecar.pathname += ".manifest.json";
   const check = (entry, limit) => {
     if (
       !entry ||
@@ -59,7 +63,7 @@ async function manifest(value, base) {
       entry.size > limit
     )
       throw new Error("マニフェストのファイル情報が不正です");
-    httpUrl(entry.url, base);
+    httpUrl(entry.url, sidecar);
   };
   check(value.source, 1_000_000);
   check(value.script, 100_000);
@@ -67,8 +71,10 @@ async function manifest(value, base) {
   if (!isObject(descriptors) || Object.keys(descriptors).length > 8)
     throw new Error("マニフェストの型情報が不正です");
   for (const entry of Object.values(descriptors)) check(entry, 1_000_000);
-  // Children are read as own properties into a null-prototype map keyed by the href their relative
-  // key resolves to, so a `__proto__` key and `a.json` vs `./a.json` are both plain collisions.
+  // Children are read as own properties into a null-prototype map keyed by the href their key
+  // resolves to against the screen URL — the basis `fetch`, `save` and `restore` all walk with, so
+  // a key like `?x` cannot mean two packages. A `__proto__` key and `a.json` vs `./a.json` are both
+  // plain collisions.
   const components = Object.create(null);
   if (value.version === 2) {
     const bad = () => new Error("マニフェストのコンポーネント情報が不正です");
@@ -83,7 +89,7 @@ async function manifest(value, base) {
         const own = child.descriptors ?? {};
         if (!isObject(own) || Object.keys(own).length > 8) throw bad();
         for (const entry of Object.values(own)) check(entry, 1_000_000);
-        href = httpUrl(key, base).href;
+        href = httpUrl(key, screenUrl).href;
       } catch {
         throw bad();
       }
@@ -261,6 +267,11 @@ export class ApplicationLoader {
     const packages = Object.create(null);
     if (!Object.keys(screen.components ?? {}).length) return packages;
     const visit = async (parent, base, depth, stack) => {
+      // How many children one package may declare, judged before a single declaration is read: a
+      // package that names more than the tree can hold is refused where it is written rather than
+      // after the fetches its surplus keys would have cost.
+      if (Object.keys(parent.components ?? {}).length > 8)
+        throw new Error(`コンポーネントの宣言が8件を超えています: ${base.href}`);
       for (const [name, declaration] of Object.entries(parent.components ?? {})) {
         if (typeof declaration?.url !== "string")
           throw new Error(
@@ -395,7 +406,7 @@ export class ApplicationLoader {
       sidecar.pathname += ".manifest.json";
       const metadata = await manifest(
         JSON.parse(await this.resources.text(sidecar, { signal })),
-        sidecar,
+        url,
       );
       const source = await verify(
         await this.resources.bytes(httpUrl(metadata.source.url, sidecar), { signal }),

@@ -38,6 +38,10 @@ export async function publishPackage(sourcePath, output = dirname(sourcePath)) {
   const rootClone = structuredClone(root.screen);
   const packages = Object.create(null);
   const visit = async (parent, declaringFile, depth, stack) => {
+    // One screen may declare at most eight children, judged before any of them is resolved so the
+    // count stands on the declarations alone however few of them the tree goes on to place.
+    if (Object.keys(parent.components ?? {}).length > 8)
+      throw new Error(`コンポーネントの宣言が8件を超えています: ${declaringFile}`);
     for (const [name, declaration] of Object.entries(parent.components ?? {})) {
       if (typeof declaration?.url !== "string")
         throw new Error(

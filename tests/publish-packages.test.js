@@ -239,6 +239,47 @@ describe("配信用パッケージの公開", () => {
     await untouched(output);
   });
 
+  // The declaration cap is judged before any child is read, so it stands on the count alone: the
+  // ninth declaration is refused even though none of them is placed and the Instance cap is clear.
+  it("refuses a root that declares a ninth component", async () => {
+    const parts = {};
+    const declarations = {};
+    for (let i = 0; i < 9; i++) {
+      parts[`screens/p${i}.json`] = screen(`p${i}`);
+      parts[`screens/p${i}.rhai`] = `fn p${i}(s) { s }`;
+      declarations[`c${i}`] = { url: `p${i}.json` };
+    }
+    const root = await workspace({
+      ...parts,
+      "screens/root.json": screen("root", { components: declarations }),
+      "screens/root.rhai": "fn root(s) { s }",
+    });
+    const output = join(root, "out");
+    await expect(publishPackage(join(root, "screens/root.json"), output)).rejects.toThrow(
+      "コンポーネントの宣言が8件を超えています",
+    );
+    await untouched(output);
+  });
+
+  it("publishes a root that declares the eight the contract allows", async () => {
+    const parts = {};
+    const declarations = {};
+    for (let i = 0; i < 8; i++) {
+      parts[`screens/p${i}.json`] = screen(`p${i}`);
+      parts[`screens/p${i}.rhai`] = `fn p${i}(s) { s }`;
+      declarations[`c${i}`] = { url: `p${i}.json` };
+    }
+    const root = await workspace({
+      ...parts,
+      "screens/root.json": screen("root", { components: declarations }),
+      "screens/root.rhai": "fn root(s) { s }",
+    });
+    const metadata = await publishPackage(join(root, "screens/root.json"), join(root, "out"));
+    expect(Object.keys(metadata.components).sort()).toEqual(
+      Object.keys(declarations).map((_, i) => `p${i}.json`),
+    );
+  });
+
   it("refuses a tree whose bodies and scripts pass two megabytes by one byte", async () => {
     const big = screen("big");
     const root = await workspace({

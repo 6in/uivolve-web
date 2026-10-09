@@ -207,6 +207,7 @@ scope規則の定義は本節が唯一で、他の文書はここを参照する
 - `マニフェストのコンポーネント情報が不正です`。version 2の子エントリの形・子の件数・子のファイル情報・絶対化後の重複が外れたとき。`components`自体が無い・`null`・配列・object以外のときは`配信マニフェストが不正です`。括弧付きの派生がある。
   - `マニフェストのコンポーネント情報が不正です（マニフェストに無い子: {URL}）`。宣言から辿った子がマニフェストに無い（配信・保存の両方、および`save`のとき）。
   - `マニフェストのコンポーネント情報が不正です（宣言に無い子: {URL}）`。マニフェストにあるのに宣言から辿れない子。
+- `コンポーネントの宣言が8件を超えています: {URL}`。1パッケージの`components`の宣言が8件を超えたとき、取得・列挙の前に拒否する。ローダー（`{URL}`は宣言を持つパッケージのhref）と生成スクリプト（`scripts/publish-packages.mjs`。`{URL}`は絶対ファイルパス）が同じ文言を使う。
 - `配信ファイルの合計が2 MBを超えています（合計 {総バイト数} バイト。最大の子: {URL} {バイト数} バイト）`。ローダーと生成スクリプト（`scripts/publish-packages.mjs`。`{URL}`の位置は子キー）が同じ文言を使う。
 - `配信ファイルのサイズ・ハッシュが一致しません`。rootのファイルが約束と違うとき。子は`配信ファイルのサイズ・ハッシュが一致しません（{URL}）`で、どのパッケージのファイルが壊れていたかを足した形。
 - `通信に失敗し、利用できる保存版もありません`。通信障害で復元へ落ちたのに、どの保存版も使えなかったとき。版を1つでも試せた場合は`通信に失敗し、利用できる保存版もありません（{最後に試した版の失敗文言}）`で、ポインタが1つも無いときは括弧なしの基本形。
@@ -222,6 +223,7 @@ Instanceごとの既存上限はそのまま。1画面分の予算を部品が�
 | ------------------------- | ------------------------------------------------------------------------------------------------- |
 | Instance数                | 8（rootを含む）                                                                                   |
 | 入れ子の深さ              | 3（rootが1段目）                                                                                  |
+| 宣言（1パッケージあたり） | 8（`components`に書ける件数。取得・列挙の前に拒否）                                               |
 | UIノード / 階層           | Instanceごとに200ノード / 20階層                                                                  |
 | スクリプト                | Instanceごとに100 KB                                                                              |
 | state                     | InstanceごとにJSONシリアライズ後1 MB                                                              |
@@ -246,7 +248,7 @@ Instanceごとの既存上限はそのまま。1画面分の予算を部品が�
 - **Instanceごとの上限は画面全体では足し合わさる**。pendingの非同期要求は1Instanceで8件までだが、画面はInstance数×8件まで同時に抱えうる。
 - `host_cancel`は**同じInstanceが出した操作だけ**を取り消す。他のInstanceの同名操作には届かない。
 - 超過時のエラーは`At most 8 instances per screen (root included); exceeded at component {path}`、`Component {path}: nesting depth exceeds 3`、`UI exceeds 200 nodes or 20 nesting levels`、`Script exceeds 100 KB`、`State exceeds 1 MB`、`Request exceeds 2 MB`、`At most 8 component packages`。
-- Instance数と同梱パッケージ数は別物。同じURLの子は1回だけ同梱され、置いた回数だけInstanceになる。
+- Instance数・同梱パッケージ数・宣言数はどれも別物。宣言は1パッケージあたり8件、Instance数はrootを含めて画面全体で8、同梱パッケージ数（ABIの`components`エントリ）は8。同じURLを2回宣言すれば宣言は2件、同梱は1件、置いた回数だけInstanceになる。
 - 2MBは3段構え。段ごとに数えるものと文言が違う。
 
   | 段               | どこ                                     | 何を数えるか                                                                     | 超過時                                                                                                  |
@@ -257,7 +259,7 @@ Instanceごとの既存上限はそのまま。1画面分の予算を部品が�
 
   **マニフェスト段階は生バイトの粗い前段で、`load`時（JSON化後）が正**。descriptorを合計に含めないのは、`load`のリクエストに入るのがpackageとscriptだけでdescriptorはbuffer ABIを通るため。descriptorには1 MB / 8件 / 16 MBの上限が別にある。「最大の子」も同じ`source.size + script.size`の和で選び、同点はキー順。
 
-- Instance数・入れ子の深さ・循環参照はJS側とRust側の2段で、JS側は取得中に日本語（`コンポーネントの数が8を超えています（rootを含む）: {URL}`、`コンポーネントの入れ子が3段を超えています: {URL}`、`コンポーネント {名前} の循環参照: {URL}`）、Rust側はload時に英語（上記と`Component {path}: circular reference to {url}`）で拒否する。この日本語3文言は生成スクリプト（`scripts/publish-packages.mjs`）も出し、そのとき`{URL}`の位置は絶対ファイルパスになる。
+- Instance数・入れ子の深さ・循環参照はJS側とRust側の2段で、JS側は取得中に日本語（`コンポーネントの数が8を超えています（rootを含む）: {URL}`、`コンポーネントの入れ子が3段を超えています: {URL}`、`コンポーネント {名前} の循環参照: {URL}`）、Rust側はload時に英語（上記と`Component {path}: circular reference to {url}`）で拒否する。宣言件数（1パッケージあたり8件）はJS側だけの検査で、取得・列挙の前に日本語（`コンポーネントの宣言が8件を超えています: {URL}`）で拒否する。Rust側と`src/runtime.js`の`resolveComponents`には無い。この日本語4文言は生成スクリプト（`scripts/publish-packages.mjs`）も出し、そのとき`{URL}`の位置は絶対ファイルパスになる。
 - `itemId`は`/`を予約する。componentノードでも通常のウィジェットでも使えない。接頭辞付きパスとの区別がつかなくなるため。
 - 宣言していないxtypeを置いた、または同梱されていないURLを宣言したときは`Component {path}: {xtype} is not declared`、`Component {path}: package {url} was not bundled`。
 - JSローダーは**宣言単位**で循環・深さを検査し、uiに置かれていない宣言も取得・検査する。Rustは**配置単位**で検査する。したがってraw ABIでは通る「置かれていない自己参照の宣言」は、ローダーでは拒否される。
