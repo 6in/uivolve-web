@@ -630,6 +630,34 @@ describe("ApplicationLoader の components 取得", () => {
       );
     });
 
+    // Most keys are plain relative paths and resolve the same against the sidecar as against the
+    // screen, both sitting in one directory. `?x` does not: it means the sidecar's own URL when
+    // read beside the sidecar and the screen's when read from the store. `fetch` resolves it the
+    // way `save` and `restore` do, so the declaration the sidecar basis would have matched —
+    // the sidecar URL itself — is refused instead of loading under a key the store cannot find.
+    it("resolves a child key against the screen URL rather than the sidecar", async () => {
+      const odd = [
+        [
+          "parent.json",
+          screen("parent", {
+            components: { odd: { url: "parent.json.manifest.json?x" } },
+            ui: { xtype: "container", items: [node("odd")] },
+          }),
+        ],
+        ["?x", screen("odd")],
+      ];
+      const f = fixture(odd);
+      const t = await treeManifest(f, odd);
+      expect(Object.keys(t.metadata.components)).toEqual(["?x"]);
+      await expect(f.loader.fetch(t.url, { mode: "network-first" })).rejects.toThrow(
+        `${MALFORMED}（マニフェストに無い子: ${href("parent.json.manifest.json?x")}）`,
+      );
+      // The refusal comes before the child's own files are opened.
+      const child = t.metadata.components["?x"];
+      expect(f.reads.has(new URL(child.source.url, t.sidecar).href)).toBe(false);
+      expect(f.reads.has(new URL(child.script.url, t.sidecar).href)).toBe(false);
+    });
+
     it("names the child whose delivered file does not match its entry", async () => {
       const list = tree();
       const swapped = encoder.encode("fn init(t) { t }");

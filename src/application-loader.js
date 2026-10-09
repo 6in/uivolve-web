@@ -409,7 +409,10 @@ export class ApplicationLoader {
         "network",
         metadata,
       );
-      const index = this.#childIndex(metadata, sidecar);
+      // Child keys resolve against the screen URL, the basis `save` and `restore` use, so one
+      // manifest cannot mean two trees: a key like `?x` or `#f` would otherwise name a different
+      // child here than in the store. The delivered files keep the sidecar as their own basis.
+      const index = this.#childIndex(metadata, url);
       const packages = await this.#walk(
         candidate.screen,
         url,
