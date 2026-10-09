@@ -164,7 +164,7 @@ bun run docs:check                                   # Markdown のローカル�
     - B: `tests/publish-packages.test.js` の (a)〜(e)（対象: `tests/publish-packages.test.js`。マニフェストの形・命名・文言は本 PLAN の「決めた事項」3〜5 を正とし、変えない）
     - 親: `bun run build:wasm` → Vitest → `bun run check` → コミット
 
-- [ ] T7: 契約文書の追従（R9。追従先チェックリスト 行 1〜14）
+- [x] T7: 契約文書の追従（R9。追従先チェックリスト 行 1〜14）
   - 完了基準:
     - 追従先チェックリストの行 1〜14 をすべて実施し、各行の「確かめ方」の `git grep` を**行番号つきで全行**再実行して PROGRESS に「行 1 … 行 14」の表で書く（無改修と判定した行 10・11 は理由を書く）
     - `docs/components.md`: 状態行（段階5）、「据え置きの拒否」から配信キャッシュを外して「3つ」、新節「子パッケージのメモリ共有」、「エラー文言」に JS 3 文言（T1 の英語 1 文言は再確認）、制限表の 2 MB 行と `instance` 行、「2MBの段構え」の 3 段化、「段階5以降の課題」から配信キャッシュを外す。`docs/files-cache-rpc.md:82-110`: 手順（木の取得・検証・保存・復元）、生成物の命名、マニフェスト version 2 の形と revision の式、子キーの基準、子の上限、`components/<i>/` の配置、3 文言、メモリ共有への参照、`:185`。`docs/components-plan.md:3,87,100`。`docs/ai-development.md:26`。`docs/architecture.md:84`。`docs/testing.md:41,43` + `publish-packages.test.js` の行。`docs/opfs-cache-rpc-investigation.md`。`README.md:116`。`skills/uivolve-web-app-dev/references/components-layout.md:30`、`skills/uivolve-web-engine-dev/references/components.md:12`

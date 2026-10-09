@@ -85,9 +85,10 @@ if response.operation == "read_bytes" {
 
 1. `<画面URLのpathname>.manifest.json`を取得する。URLのqueryは保持する。
 2. 指定された画面・Rhai・RPC Descriptorを取得し、サイズ・SHA-256・revision・DSLを検証する。
-3. WASMでコンパイル・init・UI/state検証に成功してから、ソース一式を保存する。
-4. 全ファイルの書き込み完了後に現在版のポインターを公開する。直前版も保持する。
-5. 通信障害だけに限って保存版を復元する。ハッシュ等を再検証し、現在のエンジンで再コンパイルする。
+3. `components`の宣言から辿った子を、マニフェストの`components`と突き合わせる。マニフェストに無い子も宣言に無い子も、どちらも拒否する。子のファイルもサイズ・SHA-256を検証し、DSLのパース・descriptorの一致・script URLというrootと同じゲートを通す。
+4. WASMでコンパイル・init・UI/state検証に成功してから、rootと子のソース一式を保存する。
+5. rootと子の全ファイルの書き込み完了後に現在版のポインターを公開する。直前版も保持する。
+6. 通信障害だけに限って保存版を復元する。rootと子の全ファイルを読み直してハッシュ等を再検証し、現在のエンジンで再コンパイルする。メモリに共有している子は復元では使わない。
 
 HTTP 401/403/404/500、パース・ハッシュ・コンパイル・init失敗で過去版へ戻さない。fetch上でCORS失敗とネットワーク障害を区別できない場合は、画面へ復元理由を表示する。キャンセルは復元の理由にしない。
 
@@ -99,11 +100,17 @@ bun run publish:packages public/screens/file-lab.yaml
 bun run publish:packages path/to/page.yaml path/to/output
 ```
 
-生成物は`<filename>.manifest.json`と`packages/<revision>/{source,script,descriptor-N}`。元の画面とRhai、相対参照のアセットと一緒に配信する。別の出力先を指定した場合、元のファイルのコピーは呼び出し側の責務。RPCのDescriptorは先に生成する。通常の`bun run build:wasm`でも同梱デモのDescriptorとマニフェストを生成する。
+生成物は`<filename>.manifest.json`と`packages/<revision>/{source,script,descriptor-N}`。子パッケージは同じディレクトリへ`component-<i>-source` / `component-<i>-script` / `component-<i>-descriptor-<n>`として出す。`i`は子キーをソートした添字、`n`はその子のdescriptorキーをソートした添字。ローダーはマニフェストの`url`を見るだけなので、この命名はマニフェストと配信物の間でだけ一致させる。元の画面とRhai、相対参照のアセットと一緒に配信する。別の出力先を指定した場合、元のファイルのコピーは呼び出し側の責務。RPCのDescriptorは先に生成する。通常の`bun run build:wasm`でも同梱デモのDescriptorとマニフェストを生成する。
 
-マニフェストは`version: 1 / revision / source / script / descriptors`。各ファイルは`{ url, sha256, size }`。`descriptors`のキーはDSLに書いたdescriptor URL。revisionは`SHA-256(JSON.stringify([source.sha256, script.sha256, ソート済みの[descriptorキー, sha256]の配列]))`。生成スクリプトを基準にする。サイズ上限は画面1 MB、Rhai100 KB、Descriptor各1 MB・8件。ハッシュは整合性確認で、配信者の署名ではない。
+マニフェストは`{ version: 2, revision, source, script, descriptors, components }`。各ファイルは`{ url, sha256, size }`。`descriptors`のキーはDSLに書いたdescriptor URLで、rootと子で同じ規則。`components`は`{ "<子キー>": { source, script, descriptors } }`で、子キーはrootの画面ファイルからの相対パス（posix形）。ローダーは子キーを`httpUrl(key, base)`で絶対化し、絶対化後に重複する子キー（`a.json`と`./a.json`）は拒否する。子の無い画面も`components: {}`を必ず持つ。子は最大8件、子ごとのdescriptorも8件。サイズ上限はrootと同じで、画面1 MB、Rhai100 KB、Descriptor各1 MB・8件。revisionは`SHA-256(JSON.stringify([source.sha256, script.sha256, ソート済みの[descriptorキー, sha256]の配列, ソート済みの[子キー, 子のsource.sha256, 子のscript.sha256, 子のソート済み[descriptorキー, sha256]]の配列]))`。ソートはキーのUTF-16 code unit順で、`components`の宣言順はrevisionに漏れない。`version: 1`も引き続き受ける。version 1は`components`キーを持ってはならず、revisionは末尾の子の配列が無い3要素のまま。生成スクリプトを基準にする。ハッシュは整合性確認で、配信者の署名ではない。
 
-キャッシュは`uivolve-web/cache/<SHA-256(元の画面URL)>/versions/<revision>/`に置く。元のURLを相対リソース解決の基準とし、エディターにも元のYAML/Rhaiを表示する。現在版が壊れていれば直前版を検証する。正常な保存後にそれ以前の版を削除する。更新中断・容量不足の場合、既存の保存版と表示中のUIを維持する。保存失敗は画面に表示する。破損した管理情報は「保存版を削除」で消してから再取得できる。
+キャッシュは`uivolve-web/cache/<SHA-256(元の画面URL)>/versions/<revision>/`に置く。rootが`source` / `script` / `descriptor-<n>`、子が`components/<i>/{source,script,descriptor-<n>}`。`<i>`・`<n>`は配信物と同じソート順の添字。保存も復元もマニフェストのキーで回すので、同じパッケージを2か所に宣言しても1スロットしか使わない。元のURLを相対リソース解決の基準とし、エディターにも元のYAML/Rhaiを表示する。現在版が壊れていれば直前版を検証する。正常な保存後にそれ以前の版を削除する。更新中断・容量不足の場合、既存の保存版と表示中のUIを維持する。保存失敗は画面に表示する。破損した管理情報は「保存版を削除」で消してから再取得できる。
+
+木の検証に失敗したときの文言は`マニフェストのコンポーネント情報が不正です`。`components`の形・子の件数・子のファイル情報・絶対化後の重複が外れたときに出る。どちら側に無いかが分かる場合は括弧付きの派生になり、宣言から辿った子がマニフェストに無ければ`マニフェストのコンポーネント情報が不正です（マニフェストに無い子: {URL}）`、マニフェストにあるのに宣言から辿れなければ`マニフェストのコンポーネント情報が不正です（宣言に無い子: {URL}）`。合計の超過は`配信ファイルの合計が2 MBを超えています（合計 {総バイト数} バイト。最大の子: {URL} {バイト数} バイト）`で、ローダーと生成スクリプトが同じ文言を使う（生成側は`{URL}`の位置が子キー）。ファイルの不一致はrootが`配信ファイルのサイズ・ハッシュが一致しません`、子はどのパッケージのファイルが壊れていたかを足した`配信ファイルのサイズ・ハッシュが一致しません（{URL}）`。
+
+この2 MBの合計はrootと全子の`source.size + script.size`の生バイトの和で、**descriptorは含めない**。descriptorは`load`のリクエストではなくbuffer ABIを通り、1 MB・8件・16 MBの上限を別に持つ。マニフェスト段階は生バイトの粗い前段で、`load`時（JSON化後）のバイト数が正。「最大の子」も同じ`source.size + script.size`の和で選び、同点はキー順。
+
+セッション内で子パッケージをメモリに共有する条件と無効化の契機は、[画面合成（コンポーネント）](components.md)の「子パッケージのメモリ共有」節にある。
 
 削除ボタンは現在の画面URLのキャッシュだけを削除し、ページのファイルとJSON保存を消さない。複数画面URLの合計容量制御やLRUは未実装。サイトデータ削除やブラウザの容量管理で失われ得る。
 
@@ -182,6 +189,6 @@ RPCのこの契約はUnary専用。圧縮、grpc-web-text、Streaming、ネイ�
 
 依頼の送信バッファはWASMが所有し、完了・画面置換時に解放する。ホストの応答・Descriptorアップロードは取り込み後／失敗時に解放する。ゼロコピーを保証しない。HTTP・JSON保存・ファイル・RPCの依頼準備がすべて成功してからstateとeffectsを確定する。
 
-`tests/files-cache-rpc.test.js`は実WASMと公式RPCサーバーを使い、ファイルの容量・パス・close・キャンセル、バッファ寿命、キャッシュの整合・HTTP拒否・世代保持、RPCの型・エラー・Streaming拒否・画面切替・JWT再送を検証する。インアプリブラウザでもOPFS保存／再読込、通信断時復元、403時の復元拒否、DOM/Canvasの両RPCボタンを確認した。
+`tests/files-cache-rpc.test.js`は実WASMと公式RPCサーバーを使い、ファイルの容量・パス・close・キャンセル、バッファ寿命、キャッシュの整合・HTTP拒否・世代保持、RPCの型・エラー・Streaming拒否・画面切替・JWT再送を検証する。木の保存・復元は`components-loader.test.js`が持つ。インアプリブラウザでもOPFS保存／再読込、通信断時復元、403時の復元拒否、DOM/Canvasの両RPCボタンを確認した。
 
 `bun run measure:rpc`で小さなEchoを測定できる。今回のrequestはProtoJSON表現70 bytes、Protobuf23 bytes。HTTP bodyはConnect送信23／応答29 bytes、gRPC-Web送信28／応答55 bytes。WASMは4,101,026 bytes。localhost・50回の例でdispatch約0.11〜0.17 ms、ABI読み取りコピー約0.002〜0.003 ms、通信約1.2〜1.7 ms、完了decode/state検証約0.10〜0.12 ms。HTTPヘッダーを含まず、JSON通信との性能比較でもない。サイズ削減は確認できるが、実アプリの高速化は別途測定する。

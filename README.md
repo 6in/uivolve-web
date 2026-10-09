@@ -113,7 +113,7 @@ Rust / WASM エンジン
 - `engine/src/state_schema.rs` / `metadata.rs`: DSLの型検証とWebMCPメタデータ。
 - `engine/src/storage.rs` / `src/storage-effects.js` / `src/storage-client.js`: 保存依頼・完了とIndexedDB/OPFSアダプター。
 - `engine/src/files.rs` / `src/file-client.js` / `src/opfs.js`: 名前付きOPFSファイル領域、FileBytes、非同期ファイル操作。
-- `src/application-loader.js` / `scripts/publish-packages.mjs`: 画面ソース一式の検証、配信用マニフェスト、OPFSキャッシュ。
+- `src/application-loader.js` / `scripts/publish-packages.mjs`: 子を含む木の取得・検証、配信用マニフェスト（`version: 2`）、OPFSキャッシュ。
 - `engine/src/rpc.rs` / `buffers.rs` / `src/rpc-client.js`: 動的Protobufコーデック、バッファABI、Unary RPC。
 - `src/package-format.js` / `src/page-router.js`: JSON/YAML変換と同梱画面のルート解決。
 - `engine/src/dynamic_ui.rs`: tabpanelのitemsBind展開、動的定義の上限確認、新しい部品の初期値補完。
