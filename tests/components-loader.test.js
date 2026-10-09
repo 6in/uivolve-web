@@ -359,6 +359,63 @@ describe("ApplicationLoader の components 取得", () => {
     expect(Object.keys(candidate.components)).toEqual([href("part.json")]);
   });
 
+  // `parsePackage` promises an object and nothing more, so the loader is what holds a package to
+  // the shape everything downstream reads: the id composes a storage scope and an RPC declaration
+  // is read field by field, both of which used to fail as a `TypeError` far from the cause.
+  it("refuses a screen whose id is not a string", async () => {
+    for (const id of [5, null, {}]) {
+      const f = fixture([["parent.json", screen(id)]]);
+      await expect(f.loader.fetch(href("parent.json")), String(id)).rejects.toThrow(
+        "画面idは文字列で指定してください",
+      );
+    }
+  });
+
+  it("refuses a root id that is not a string before any child is fetched", async () => {
+    const f = fixture([
+      [
+        "parent.json",
+        screen(5, {
+          components: { part: { url: "part.json" } },
+          ui: { xtype: "container", items: [{ xtype: "part", itemId: "a" }] },
+        }),
+      ],
+      [
+        "part.json",
+        screen("part", {
+          storage: { draft: { backend: "opfs", key: "draft", handler: "done" } },
+        }),
+      ],
+    ]);
+    await expect(f.loader.fetch(href("parent.json"))).rejects.toThrow(
+      "画面idは文字列で指定してください",
+    );
+    // The scope rules would have composed `5__a` out of a number; the child was never opened.
+    expect([...f.reads.keys()]).toEqual([href("parent.json")]);
+    expect(f.reads.has(href("part.json"))).toBe(false);
+  });
+
+  it("refuses an RPC declaration that is not an object, in an array as well as a map", async () => {
+    for (const value of [null, 5]) {
+      const f = fixture([["parent.json", screen("parent", { rpc: { x: value } })]]);
+      await expect(f.loader.fetch(href("parent.json")), String(value)).rejects.toThrow(
+        "RPC x の定義が不正です（object で指定してください）",
+      );
+    }
+    // The values are what gets read, and an array has values too: its index is the name to report.
+    const array = fixture([["parent.json", screen("parent", { rpc: [null] })]]);
+    await expect(array.loader.fetch(href("parent.json"))).rejects.toThrow(
+      "RPC 0 の定義が不正です（object で指定してください）",
+    );
+    // A missing, `null` or empty `rpc` carries no declaration to judge and goes through as it
+    // always has: `[]` is not refused for being an array.
+    for (const rpc of [null, []]) {
+      const f = fixture([["parent.json", screen("parent", { rpc })]]);
+      const candidate = await f.loader.fetch(href("parent.json"));
+      expect(candidate.screen.id, JSON.stringify(rpc)).toBe("parent");
+    }
+  });
+
   // A version 2 manifest lists the whole tree: the root plus every descendant, keyed by the path
   // the child resolves to against the root's own URL. Files are published under `packages/rev/`
   // with the names `publish-packages.mjs` gives them, the child index taken from the sorted keys.
@@ -1016,6 +1073,62 @@ describe("ApplicationLoader の components 取得", () => {
       // The first generation falls out once a third arrives, and nothing was iterating by then.
       expect(removals).toEqual([0]);
       expect(await names(held.directory, "versions")).toHaveLength(2);
+    });
+
+    // The delivered path judges a child the same way the network does: the manifest says nothing
+    // about what is inside a package, so the shape is still the loader's to refuse.
+    it("refuses a delivered child whose id is not a string", async () => {
+      const list = [
+        ["parent.json", screen("parent", { components: { a: { url: "a.json" } } })],
+        ["a.json", screen(5)],
+      ];
+      const f = fixture(list);
+      const t = await treeManifest(f, list);
+      await expect(f.loader.fetch(t.url, { mode: "network-first" })).rejects.toThrow(
+        "画面idは文字列で指定してください",
+      );
+    });
+
+    // A pointer is only ever read for what it says about a generation, so one that is not an
+    // object says nothing: the save reads past it and the restore reports it as a reason.
+    it("saves a new generation over pointers that are not objects", async () => {
+      const held = await afterFirstSave();
+      for (const name of ["current.json", "previous.json"])
+        await held.directory.write(name, encoder.encode("null"));
+      const two = await held.nextCandidate("generation two");
+      await held.loader.save(two);
+      expect(await names(held.directory, "versions")).toEqual([two.metadata.revision]);
+      const pointer = await pointerOf(held.directory, "current.json");
+      expect(pointer.url).toBe(held.url.href);
+      expect(pointer.metadata.revision).toBe(two.metadata.revision);
+    });
+
+    it("names a pointer that is not an object as the reason no stored version was used", async () => {
+      for (const raw of ["null", "[]", "5", '"x"']) {
+        const held = await afterFirstSave();
+        await held.directory.write("current.json", encoder.encode(raw));
+        await expect(held.loader.restore(held.url), raw).rejects.toThrow(
+          "通信に失敗し、利用できる保存版もありません（キャッシュの管理情報が不正です）",
+        );
+      }
+      // An object without a url is a pointer all the same, and keeps the wording it always had.
+      const empty = await afterFirstSave();
+      await empty.directory.write("current.json", encoder.encode("{}"));
+      await expect(empty.loader.restore(empty.url)).rejects.toThrow(
+        "通信に失敗し、利用できる保存版もありません（キャッシュのURLが一致しません）",
+      );
+    });
+
+    it("falls back to the previous generation when the current pointer is not an object", async () => {
+      const { loader, url, one, two, directory } = await twoGenerations();
+      expect(two.metadata.revision).not.toBe(one.metadata.revision);
+      expect((await pointerOf(directory, "previous.json")).metadata.revision).toBe(
+        one.metadata.revision,
+      );
+      await directory.write("current.json", encoder.encode("null"));
+      const restored = await loader.restore(url);
+      expect(restored.status).toBe("cache");
+      expect(restored.metadata.revision).toBe(one.metadata.revision);
     });
   });
 

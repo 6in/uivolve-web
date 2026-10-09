@@ -57,14 +57,14 @@ bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-52ec88
 
 ## Tasks
 
-- [ ] T1: R0 — ローダーの `TypeError` 3 点を日本語文言に（`id` 非文字列 / `rpc` の値が object でない / OPFS ポインタが object でない）
+- [x] T1: R0 — ローダーの `TypeError` 3 点を日本語文言に（`id` 非文字列 / `rpc` の値が object でない / OPFS ポインタが object でない）
   - 完了基準:
-    - `src/application-loader.js` に `shape(screen)`（名前は impl が決めてよい。export しない）を置き、`parsed()`（`:127-138`）と `#download()`（`:230-244`）の `parsePackage` 直後に呼ぶ。`typeof screen.id !== "string"` → `画面idは文字列で指定してください`。`screen.rpc` が object（配列も含めて現状どおり通す。P13）のとき各値が `value !== null && typeof value === "object" && !Array.isArray(value)` でなければ `RPC {名前} の定義が不正です（object で指定してください）`。`package-format.js` には入れない（P12: `mock-api-client.js:4` が画面でない定義を通す）
+    - `src/application-loader.js` に `shape(screen)`（名前は impl が決めてよい。export しない）を置き、`parsed()`（`:127-138`）と `#download()`（`:230-244`）の `parsePackage` 直後に呼ぶ。`typeof screen.id !== "string"` → `画面idは文字列で指定してください`。`screen.rpc` が `null` でない object（**配列も含む**。turn 3 訂正）のとき各値が `value !== null && typeof value === "object" && !Array.isArray(value)` でなければ `RPC {名前} の定義が不正です（object で指定してください）`（配列なら `{名前}` は添字）。`package-format.js` には入れない（P12: `mock-api-client.js:4` が画面でない定義を通す）
     - `save`（`:484-494`）: `JSON.parse` の結果が object でない（`null` / 配列 / プリミティブ）とき `NotFoundError` と同じ扱いで読み飛ばす。`keep` の計算（`:497-505`）も同じ型検査（P14）
     - `restore`（`:536-583`）: `stored` が object でないとき `new Error("キャッシュの管理情報が不正です")` を投げて `last` に入れる（§7-5）。`{}` / `{"url":5}` は従来どおり `キャッシュのURLが一致しません`
     - 回帰テスト（`tests/components-loader.test.js` の `fixture` / `memoryOpfs` / `pointerOf` を使う。新規ファイルは作らない）。各ケースで `TypeError` が出ないこと（`rejects.toThrow(TypeError)` が偽 / 文言一致）:
       - network-only: `id: 5` / `id: null` / `id: {}` の 3 件が `画面idは文字列で指定してください`。`id: 5` + storage を持つ子（`component-tree.js:38` の `part.includes` に到達していた形）も同文言で、子の取得前に拒否（`f.reads` にその子の URL が無い）
-      - network-only: `rpc: { x: null }` → `RPC x の定義が不正です（object で指定してください）`、`rpc: { x: 5 }` → 既存の `RPCのdescriptor URLが必要です` が残っていてもよいが新文言でもよい（どちらかに固定してテストに書く）、`rpc: null` / `rpc: []` は通る（現状不変）
+      - network-only: `rpc: { x: null }` と `rpc: { x: 5 }` がどちらも `RPC x の定義が不正です（object で指定してください）`（新文言に固定）、`rpc: [null]` が `RPC 0 の定義が不正です（object で指定してください）`（turn 3 訂正。配列のままだと `TypeError` が残り R0 に反する）、`rpc: null` / `rpc: []` は通る（現状不変）
       - network-first（`treeManifest`）の `parsed()` 経路で `id: 5` の子が同じ文言で拒否される
       - `current.json` = `null` と `previous.json` = `null` の両方で `save` が成功し、`versions/` に新 revision だけ残り `current.json` が正しいポインタになる（P14）
       - `current.json` = `null` → `restore` が `通信に失敗し、利用できる保存版もありません（キャッシュの管理情報が不正です）`。`current.json` = `[]` / `5` / `"x"` も同文言（「object でない」の代表 + 列挙外 1 件）。`{}` は `（キャッシュのURLが一致しません）`（P15）
@@ -205,7 +205,7 @@ bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-52ec88
    - `note-pad.json`: 直下 `{label: "メモ", description: "メモを入力してこのブラウザに保存する部品。", tags: ["memo", "storage"]}`、`text` に `{description: "保存するメモの本文。"}`、`save` に `{description: "メモをIndexedDBへ保存し、親へsavedを通知する。", tags: ["write"]}`
    - `approval.json`: 直下 `{label: "承認", description: "承認ダイアログで確認し、結果を親へ返す部品。", tags: ["approval", "dialog"]}`、`ask` に `{description: "承認を確認するダイアログを開く。", tags: ["dialog"]}`
    - `order-list.json`: 直下 `{label: "受注一覧", description: "親から受け取ったstatusとqueryで絞り込んだ受注を一覧する部品。", tags: ["orders", "list"]}`、`orders` に `{description: "行を選ぶと親へselectedを通知する。", tags: ["select"]}`。`metric` は itemId が無いので書かない（P3）
-8. **R0 の置き場所**は `src/application-loader.js` の非公開関数で、`parsed()` と `#download()` の両方から呼ぶ（`package-format.js` には入れない。`src/mock-api-client.js:4` が画面でない定義を通す。RESEARCH §5-H / P12）。`rpc` 自体が配列のときは現状どおり通す（P13 / §7-10）。文言は `画面idは文字列で指定してください` / `RPC {名前} の定義が不正です（object で指定してください）`
+8. **R0 の置き場所**は `src/application-loader.js` の非公開関数で、`parsed()` と `#download()` の両方から呼ぶ（`package-format.js` には入れない。`src/mock-api-client.js:4` が画面でない定義を通す。RESEARCH §5-H / P12）。**turn 3 訂正**: 「`rpc` 自体が配列のときは現状どおり通す（P13 / §7-10）」を撤回し、配列も各値を同じ規則で見る（`rpc: [null]` に `TypeError` が残り REQUIREMENTS R0「`TypeError` を出さない」に反することを実測した。`.gsd-lite/logs/component-webmcp/scratch/turn-003-rpc-array.mjs`）。`rpc: []` は値を持たないので従来どおり通り、却下項目「`rpc: []` を拒否する」は却下のまま。文言は `画面idは文字列で指定してください` / `RPC {名前} の定義が不正です（object で指定してください）`
 9. **R0 のポインタ**: `save` は object でないポインタを `NotFoundError` と同じく読み飛ばす（`keep` も同じ型検査）。`restore` は `キャッシュの管理情報が不正です` を `last` に入れる（`docs/files-cache-rpc.md:107` の「破損した管理情報は『保存版を削除』で消してから再取得できる」と対応。RESEARCH §7-5 / P15）
 10. **R0b の文言**は `コンポーネントの宣言が8件を超えています: {URL}`（既存 3 文言 `docs/components.md:257` と同じ形。`{URL}` はローダーでは宣言を持つパッケージの href、生成スクリプトでは絶対ファイルパス）。検査位置は `visit` の冒頭（ループ前）で 3 経路（network-only `:372` / network-first `:416` / restore `:569`）に同時に効く。Rust（`composition.rs:22-41` `validate_declarations`）と `src/runtime.js` の `resolveComponents` には足さない（REQUIREMENTS R0b の範囲）
 11. **`manifest()` の署名**は `manifest(value, screenUrl)`（第 2 引数を画面 URL に統一。sidecar は内部で `pathname += ".manifest.json"` で組み、配信ファイルの `url` の形検査にだけ使う）。呼び出し 3 か所（`fetch:386` / `save:489,502` / `restore:540`）がすべて画面 URL を渡す。基準に依存する境界値（`""` / `?x` / `#f` / `parent.json`）は T2 のテスト行に置く（RESEARCH §5-G）
