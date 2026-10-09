@@ -63,6 +63,14 @@
 - 並列取得・ETag・cache-first は入れない（既存のスコープ外のまま）。
 - 残留リスク 3 のテストは plan の最初のテストタスクに置く（reflect の提案どおり）。
 
+### plan が決めた細部（2026-10-09 turn 2。RESEARCH §5 / §7 の選択肢。全文は PLAN.md「決めた事項」）
+
+- R4 の「合計」は全パッケージの `source.size + script.size` の和で、**descriptor を含めない**（RESEARCH §7-1）。descriptor は buffer ABI 経由で `load` の JSON リクエストに入らず、含めると現状 load できる画面を前段が拒否する。文書には「マニフェスト段階は生バイトの粗い前段、load 時が正」と書く。
+- `instance` の 256 バイト上限は**完了 op（`take_instance`）だけ**に掛け、load 時の対称検査は入れない（RESEARCH §7-2 の (b)）。R6 の範囲（`take_instance`・Rust テスト 1 本・既存文言不変）を超える防壁を足さない。制限表に「超える接頭辞付きパスの子は完了を受け取れない」と書き、verify が残留リスクとして記録してよい。
+- 走査は供給元で抽象化した 1 本（`#walk` + network-only / network-first / 復元の 3 供給元。§5-A）。`manifest()` は形・上限・合計サイズ・revision までで、宣言の木との一致は走査後の `#matchTree`（§5-B）。
+- 配信側の子ファイルの命名は `packages/<revision>/component-<i>-source` / `-script` / `-descriptor-<n>`（§5-E）。生成スクリプトは `manifestRevision` を `src/application-loader.js` から import して式を 1 か所にする。
+- テストの置き場所: 木の検証・取得・共有・保存・復元は `tests/components-loader.test.js`、生成スクリプトは新規 `tests/publish-packages.test.js`、残留リスク 3 は `tests/components-effects.test.js`（§7-8）。
+
 ## 終了シーケンス
 
 - 確定サマリーに合意。research の対象は local_projects / official_docs / similar_oss の 3 つ。
