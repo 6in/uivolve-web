@@ -62,9 +62,6 @@ impl Instance {
         if !package.state.is_object() {
             return Err("Initial state must be an object".into());
         }
-        if component {
-            composition::reject_effect_declarations(&package)?;
-        }
         package.webmcp.validate()?;
         pages::Requests::validate(&package.pages)?;
         let declared = composition::validate_declarations(&package)?;

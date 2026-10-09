@@ -1300,9 +1300,16 @@ impl Runtime {
             .rev()
             .find(|w| w.kind == "menu-surface" && !w.disabled)
             .map(|w| json!({"target":w.target,"layer":w.layer}));
+        // `prefix_widgets` puts the path of the instance a widget came from in front of its
+        // target, and an itemId holds no `/`, so the last one splits the instance from the node
+        // that declared the metadata. Without the split only the root's tree would be searched.
         for widget in &mut widgets {
+            let (instance_path, item_id) = match widget.target.rsplit_once('/') {
+                Some((instance_path, item_id)) => (instance_path, item_id),
+                None => ("", widget.target.as_str()),
+            };
             let mut path = Vec::new();
-            if find_path(&self.root.ui, &widget.target, &mut path) {
+            if find_path(&self.instance(instance_path)?.ui, item_id, &mut path) {
                 let metadata = &path.last().unwrap().webmcp;
                 if !metadata.is_empty() {
                     widget.config["webmcp"] =

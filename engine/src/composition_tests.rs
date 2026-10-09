@@ -101,6 +101,20 @@ fn child() -> Package {
     serde_json::from_value(child_json()).expect("test child package")
 }
 
+/// The script `child_json` needs, for the tests that fill in a declaration keyed to `run`.
+const CHILD_RUN_SCRIPT: &str = "fn init(s) { s } fn run(s, e) { s }";
+
+/// A screen declaring one component from `url` and placing it at `item_id`: the only way to see
+/// the `Component {path}: ` prefix a composed load puts in front of a child's own error.
+fn placing(url: &str, item_id: &str) -> Package {
+    part(
+        "parent",
+        json!({}),
+        json!({"child": {"url": url}}),
+        json!([component("child", item_id, json!({}))]),
+    )
+}
+
 /// Run a child handler the way `dispatch` will once the instance tree exists (T4), and return
 /// the error it fails with. The committed state is never touched by a failed call.
 fn run_child(instance: &instance::Instance, handler: &str) -> Result<Dynamic, String> {
@@ -668,17 +682,14 @@ fn a_child_cannot_own_a_window_at_any_depth() {
         }))
         .expect("child with a window");
         let error = child_error(package.clone(), SCRIPT);
-        assert_eq!(
-            error, "window is not available in components (reserved for a later stage)",
-            "{xtype}"
-        );
+        assert_eq!(error, "window is not available in components", "{xtype}");
         // The same template is fine on a root, so the rejection is about being a component.
         load(package, SCRIPT).unwrap_or_else(|e| panic!("{xtype} should load on a root: {e}"));
     }
 }
 
 #[test]
-fn a_child_may_declare_host_effects_but_not_the_tool_surface() {
+fn a_child_may_declare_host_effects_and_the_tool_surface() {
     let declarations = [
         (
             "requests",
@@ -697,6 +708,8 @@ fn a_child_may_declare_host_effects_but_not_the_tool_surface() {
             "files",
             json!({"vol": {"backend": "opfs", "access": "read", "handler": "run"}}),
         ),
+        // A child describes itself for the tool surface too; `Scene.webmcp` stays the root's.
+        ("webmcp", json!({"description": "部品", "tags": ["part"]})),
     ];
     // `rpc` needs descriptors of its own, which
     // `a_child_declaring_rpc_needs_its_own_descriptors_bundled` covers.
@@ -705,16 +718,21 @@ fn a_child_may_declare_host_effects_but_not_the_tool_surface() {
         package[key] = value;
         let package: Package =
             serde_json::from_value(package).unwrap_or_else(|e| panic!("{key}: {e}"));
-        load_child(package, "fn init(s) { s } fn run(s, e) { s }")
+        load_child(package, CHILD_RUN_SCRIPT)
             .unwrap_or_else(|e| panic!("{key} should load on a child: {e}"));
     }
-    // The tool surface stays screen-wide: a child publishing one would speak for the root.
+    // The limits are the root's; only the placement is added in front of the message.
     let mut package = child_json();
-    package["webmcp"] = json!({"description": "child"});
+    package["webmcp"] = json!({"description": "x".repeat(2001)});
     let package: Package = serde_json::from_value(package).expect("a child with webmcp");
-    assert_eq!(
-        child_error(package, "fn init(s) { s } fn run(s, e) { s }"),
-        "webmcp is not available in components (reserved for a later stage)"
+    let error = compose_error(
+        placing("child.json", "part"),
+        bundle(vec![("child.json", package, CHILD_RUN_SCRIPT)]),
+    );
+    assert!(error.starts_with("Component part: "), "{error}");
+    assert!(
+        error.ends_with("webmcp: description/label/tags exceed limits or have duplicate tags"),
+        "{error}"
     );
 }
 
@@ -1221,6 +1239,111 @@ fn component_widgets_carry_the_prefix_that_keeps_a_shared_item_id_unique() {
         json!({"query": "", "ready": false})
     );
     assert!(scene.modal.is_none());
+}
+
+/// `described.json` — a child whose button carries the node metadata of a part.
+fn described() -> Package {
+    part(
+        "described",
+        json!({"value": 0}),
+        json!({}),
+        json!([
+            {"xtype": "button", "itemId": "fire", "text": "呼ぶ", "handler": "run",
+             "webmcp": {"description": "呼ぶ", "tags": ["call"]}},
+        ]),
+    )
+}
+
+fn described_bundle() -> HashMap<String, (Package, String)> {
+    bundle(vec![("described.json", described(), CHILD_RUN_SCRIPT)])
+}
+
+/// What `described`'s button publishes, once the layout has found the node that declared it.
+fn fire_metadata() -> Value {
+    json!({"description": "呼ぶ", "tags": ["call"]})
+}
+
+#[test]
+fn a_child_node_publishes_its_webmcp_on_the_prefixed_widget() {
+    let runtime = compose(
+        part(
+            "parent",
+            json!({}),
+            json!({"described": {"url": "described.json"}}),
+            json!([
+                {"xtype": "button", "itemId": "own", "text": "親", "handler": "onSelected",
+                 "webmcp": {"description": "親のボタン"}},
+                component("described", "b", json!({})),
+            ]),
+        ),
+        described_bundle(),
+    )
+    .expect("a composed screen");
+    let scene = runtime.layout(800.0).expect("a scene");
+    assert_eq!(
+        widget_at(&scene, "b/fire").config["webmcp"],
+        fire_metadata()
+    );
+    // A root node keeps the metadata it always had.
+    assert_eq!(
+        widget_at(&scene, "own").config["webmcp"],
+        json!({"description": "親のボタン"})
+    );
+}
+
+#[test]
+fn a_grandchild_node_publishes_its_webmcp_under_the_full_instance_path() {
+    let runtime = compose(
+        part(
+            "parent",
+            json!({}),
+            json!({"middle": {"url": "middle.json"}}),
+            json!([component("middle", "a", json!({}))]),
+        ),
+        bundle(vec![
+            (
+                "middle.json",
+                part(
+                    "middle",
+                    json!({}),
+                    json!({"described": {"url": "described.json"}}),
+                    json!([component("described", "c", json!({}))]),
+                ),
+                CHILD_SCRIPT,
+            ),
+            ("described.json", described(), CHILD_RUN_SCRIPT),
+        ]),
+    )
+    .expect("a composed screen");
+    let scene = runtime.layout(800.0).expect("a scene");
+    // Splitting at the first `/` would look for an itemId `c/fire` in the instance `a`.
+    assert_eq!(
+        widget_at(&scene, "a/c/fire").config["webmcp"],
+        fire_metadata()
+    );
+}
+
+#[test]
+fn one_package_placed_twice_publishes_the_same_webmcp_under_each_key() {
+    let runtime = compose(
+        part(
+            "parent",
+            json!({}),
+            json!({"described": {"url": "described.json"}}),
+            json!([
+                component("described", "b", json!({})),
+                component("described", "d", json!({})),
+            ]),
+        ),
+        described_bundle(),
+    )
+    .expect("a composed screen");
+    let scene = runtime.layout(800.0).expect("a scene");
+    let left = widget_at(&scene, "b/fire");
+    let right = widget_at(&scene, "d/fire");
+    assert_eq!(left.config["webmcp"], fire_metadata());
+    assert_eq!(left.config["webmcp"], right.config["webmcp"]);
+    assert_ne!(left.key, right.key);
 }
 
 #[test]

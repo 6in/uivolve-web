@@ -270,7 +270,8 @@ const CALL_AT_LOAD = `fn init(s) { s } ${DONE} fn run(s, e) { http_get("load"); 
 const CALL_THROUGH_A_POINTER = `fn init(s) { s } ${DONE} fn run(s, e) { let f = Fn("http_get"); f.call("load"); s.value = 1; s }`;
 // A dialog is screen-wide, so the effect the host receives says which instance asked for it.
 const ASK_FOR_A_DIALOG = `fn init(s) { s } ${DONE} fn run(s, e) { alert("こんにちは"); s }`;
-// The tool surface stays the root's: a child publishing one is still refused at load.
+// A child describes itself for the tool surface too, so the load goes through. What the child
+// then publishes is the next task's column.
 const CHILD_WITH_WEBMCP = { ...EFFECT_CHILD, webmcp: { description: "部品" } };
 
 function dialogEffect(response, instance) {
@@ -311,11 +312,7 @@ function effectSequences() {
     },
     {
       id: "child-webmcp-refused",
-      steps: [
-        loadStep("load", parent, bundleWith(CALL_AT_LOAD, CHILD_WITH_WEBMCP), (r) =>
-          isRefused(r, ["webmcp is not available in components"]),
-        ),
-      ],
+      steps: [loadStep("load", parent, bundleWith(CALL_AT_LOAD, CHILD_WITH_WEBMCP), isOk)],
     },
   ];
 }

@@ -94,7 +94,7 @@ bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-52ec88
     - B: 生成スクリプトの件数上限とそのテスト（対象: `scripts/publish-packages.mjs`, `tests/publish-packages.test.js`）
     - C: 文書（対象: `docs/files-cache-rpc.md`, `docs/components.md`）
 
-- [ ] T3: R1 + R2 前半 — 子 widget の `metadata.webmcp`、子パッケージ `webmcp` の受け入れ、`window` の文言（Rust）
+- [x] T3: R1 + R2 前半 — 子 widget の `metadata.webmcp`、子パッケージ `webmcp` の受け入れ、`window` の文言（Rust）
   - 完了基準:
     - `engine/src/lib.rs:1303-1312` の後処理を、`widget.target.rsplit_once('/')` で `(instance パス, itemId)` に割り、`self.instance(path)?.ui`（`None` = root の `self.root.ui`）に `find_path` を掛ける形にする（決めた事項 2）。root の挙動（target に `/` が無い）は不変
     - `engine/src/composition.rs:233-240` の `reject_effect_declarations` を削除し、`instance.rs:65-67` の `if component { … }` ブロックを消す。直後の `package.webmcp.validate()?` が子にも効く

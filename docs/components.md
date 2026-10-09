@@ -169,7 +169,7 @@ scope規則の定義は本節が唯一で、他の文書はここを参照する
 
 **子の`webmcp`**。`webmcp`を宣言する子は`webmcp is not available in components (reserved for a later stage)`。画面全体のツール面はrootのもの。
 
-**子uiの`window`**。`window is not available in components (reserved for a later stage)`。画面全体のモーダル層とフォーカスはrootのもの。正規化が`window`へ書き換える`messagebox` / `msgbox`も同じエラーで拒否される。判定はload時に解決済みUIツリーへ掛けるので、`visibleBind`などで条件付きに現れるwindowも通らない。
+**子uiの`window`**。`window is not available in components`。画面全体のモーダル層とフォーカスはrootのもの。正規化が`window`へ書き換える`messagebox` / `msgbox`も同じエラーで拒否される。判定はload時に解決済みUIツリーへ掛けるので、`visibleBind`などで条件付きに現れるwindowも通らない。
 
 **エディタの「変更を適用」**。直前の`load`で取得した子をそのまま再利用する。編集した定義の宣言URLが、再利用できる子のURLと一致しなければ`コンポーネント {名前} の本体がありません（URLから読み込んでください）`。子を差し替えたいときは「URLから読み込む」で取り直す。
 
