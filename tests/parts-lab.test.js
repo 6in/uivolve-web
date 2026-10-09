@@ -4,6 +4,7 @@ import { componentScope } from "../src/component-tree.js";
 import { ResourceClient } from "../src/resource-client.js";
 import { UiRuntime } from "../src/runtime.js";
 import { WasmEngine } from "../src/engine.js";
+import { createUiTools } from "../src/webmcp.js";
 
 // Adapters are verified in-browser. These tests exercise the shared host with real WASM.
 vi.mock("../src/dom-renderer.js", () => ({
@@ -311,6 +312,76 @@ describe("UiRuntime 経由の部品ラボ", () => {
     expect(count("screens/parts/approval.json")).toBe(1);
     expect(count("screens/http-grid.json")).toBe(2);
     expect(count(PARENT)).toBe(2);
+    expect(errors).toEqual([]);
+  });
+
+  // The three placements, as `Scene.components` reports them. `webmcp` is the declaration of the
+  // package itself, so a part that never declares one has no key at all.
+  const summaries = () => {
+    const note = JSON.parse(sources["screens/parts/note-pad.json"]);
+    const approval = JSON.parse(sources["screens/parts/approval.json"]);
+    return [
+      { instance: "approval", id: approval.id, title: approval.title, webmcp: approval.webmcp },
+      { instance: "note", id: note.id, title: note.title, webmcp: note.webmcp },
+      { instance: "products", id: "http-grid", title: "HTTP JSON・グリッドへ表示" },
+    ];
+  };
+
+  it("summarises the three placements in instance byte order, webmcp only where declared", async () => {
+    const { runtime, errors } = await host();
+    await runtime.load(PARENT);
+    await runtime.whenIdle();
+    const components = runtime.snapshot().scene.components;
+    // `a` < `n` < `p`: the instance names are ordered as bytes, not as the parent lists them.
+    expect(components.map((c) => c.instance)).toEqual(["approval", "note", "products"]);
+    expect(components.map((c) => c.hidden)).toEqual([false, false, false]);
+    const [approval, note, products] = components;
+    // http-grid declares no webmcp, so the summary of its placement omits the key entirely.
+    expect(Object.hasOwn(products, "webmcp")).toBe(false);
+    expect(note).toEqual({
+      instance: "note",
+      id: "note-pad",
+      title: "メモ（部品）",
+      webmcp: {
+        label: "メモ",
+        description: "メモを入力してこのブラウザに保存する部品。",
+        tags: ["memo", "storage"],
+      },
+      hidden: false,
+    });
+    expect(approval).toEqual({
+      instance: "approval",
+      id: "approval",
+      title: "承認（部品）",
+      webmcp: {
+        label: "承認",
+        description: "承認ダイアログで確認し、結果を親へ返す部品。",
+        tags: ["approval", "dialog"],
+      },
+      hidden: false,
+    });
+    // The same three summaries the shipped packages declare, read straight off disk.
+    expect(components.map(({ hidden: _hidden, ...rest }) => rest)).toEqual(summaries());
+    expect(errors).toEqual([]);
+  });
+
+  it("reports the summaries and the node declarations through ui_get_screen", async () => {
+    const { runtime, errors } = await host();
+    await runtime.load(PARENT);
+    await runtime.whenIdle();
+    const tools = createUiTools(runtime);
+    const result = await tools.find((t) => t.name === "ui_get_screen").execute({});
+    expect(result.ok, JSON.stringify(result.error)).toBe(true);
+    expect(result.components).toEqual(runtime.snapshot().scene.components);
+    expect(result.components.map((c) => c.instance)).toEqual(["approval", "note", "products"]);
+    expect(Object.hasOwn(result.components[2], "webmcp")).toBe(false);
+    // A node declaration travels in the widget metadata, not in the component summary.
+    const text = result.widgets.find((w) => w.key === "note/text");
+    expect(text, result.widgets.map((w) => w.key).join(" ")).toBeDefined();
+    expect(text.metadata.webmcp).toEqual({ description: "保存するメモの本文。" });
+    // R3: the state of the screen is the root's own, never merged with the state of the parts.
+    expect(result.stateKeys).toEqual(["notice"]);
+    expect(Object.keys(runtime.snapshot().state)).toEqual(["notice"]);
     expect(errors).toEqual([]);
   });
 });

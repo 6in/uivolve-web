@@ -101,6 +101,20 @@ fn child() -> Package {
     serde_json::from_value(child_json()).expect("test child package")
 }
 
+/// The script `child_json` needs, for the tests that fill in a declaration keyed to `run`.
+const CHILD_RUN_SCRIPT: &str = "fn init(s) { s } fn run(s, e) { s }";
+
+/// A screen declaring one component from `url` and placing it at `item_id`: the only way to see
+/// the `Component {path}: ` prefix a composed load puts in front of a child's own error.
+fn placing(url: &str, item_id: &str) -> Package {
+    part(
+        "parent",
+        json!({}),
+        json!({"child": {"url": url}}),
+        json!([component("child", item_id, json!({}))]),
+    )
+}
+
 /// Run a child handler the way `dispatch` will once the instance tree exists (T4), and return
 /// the error it fails with. The committed state is never touched by a failed call.
 fn run_child(instance: &instance::Instance, handler: &str) -> Result<Dynamic, String> {
@@ -668,17 +682,14 @@ fn a_child_cannot_own_a_window_at_any_depth() {
         }))
         .expect("child with a window");
         let error = child_error(package.clone(), SCRIPT);
-        assert_eq!(
-            error, "window is not available in components (reserved for a later stage)",
-            "{xtype}"
-        );
+        assert_eq!(error, "window is not available in components", "{xtype}");
         // The same template is fine on a root, so the rejection is about being a component.
         load(package, SCRIPT).unwrap_or_else(|e| panic!("{xtype} should load on a root: {e}"));
     }
 }
 
 #[test]
-fn a_child_may_declare_host_effects_but_not_the_tool_surface() {
+fn a_child_may_declare_host_effects_and_the_tool_surface() {
     let declarations = [
         (
             "requests",
@@ -697,6 +708,8 @@ fn a_child_may_declare_host_effects_but_not_the_tool_surface() {
             "files",
             json!({"vol": {"backend": "opfs", "access": "read", "handler": "run"}}),
         ),
+        // A child describes itself for the tool surface too; `Scene.webmcp` stays the root's.
+        ("webmcp", json!({"description": "部品", "tags": ["part"]})),
     ];
     // `rpc` needs descriptors of its own, which
     // `a_child_declaring_rpc_needs_its_own_descriptors_bundled` covers.
@@ -705,16 +718,21 @@ fn a_child_may_declare_host_effects_but_not_the_tool_surface() {
         package[key] = value;
         let package: Package =
             serde_json::from_value(package).unwrap_or_else(|e| panic!("{key}: {e}"));
-        load_child(package, "fn init(s) { s } fn run(s, e) { s }")
+        load_child(package, CHILD_RUN_SCRIPT)
             .unwrap_or_else(|e| panic!("{key} should load on a child: {e}"));
     }
-    // The tool surface stays screen-wide: a child publishing one would speak for the root.
+    // The limits are the root's; only the placement is added in front of the message.
     let mut package = child_json();
-    package["webmcp"] = json!({"description": "child"});
+    package["webmcp"] = json!({"description": "x".repeat(2001)});
     let package: Package = serde_json::from_value(package).expect("a child with webmcp");
-    assert_eq!(
-        child_error(package, "fn init(s) { s } fn run(s, e) { s }"),
-        "webmcp is not available in components (reserved for a later stage)"
+    let error = compose_error(
+        placing("child.json", "part"),
+        bundle(vec![("child.json", package, CHILD_RUN_SCRIPT)]),
+    );
+    assert!(error.starts_with("Component part: "), "{error}");
+    assert!(
+        error.ends_with("webmcp: description/label/tags exceed limits or have duplicate tags"),
+        "{error}"
     );
 }
 
@@ -1221,6 +1239,388 @@ fn component_widgets_carry_the_prefix_that_keeps_a_shared_item_id_unique() {
         json!({"query": "", "ready": false})
     );
     assert!(scene.modal.is_none());
+}
+
+/// `described.json` — a child whose button carries the node metadata of a part.
+fn described() -> Package {
+    part(
+        "described",
+        json!({"value": 0}),
+        json!({}),
+        json!([
+            {"xtype": "button", "itemId": "fire", "text": "呼ぶ", "handler": "run",
+             "webmcp": {"description": "呼ぶ", "tags": ["call"]}},
+        ]),
+    )
+}
+
+fn described_bundle() -> HashMap<String, (Package, String)> {
+    bundle(vec![("described.json", described(), CHILD_RUN_SCRIPT)])
+}
+
+/// What `described`'s button publishes, once the layout has found the node that declared it.
+fn fire_metadata() -> Value {
+    json!({"description": "呼ぶ", "tags": ["call"]})
+}
+
+#[test]
+fn a_child_node_publishes_its_webmcp_on_the_prefixed_widget() {
+    let runtime = compose(
+        part(
+            "parent",
+            json!({}),
+            json!({"described": {"url": "described.json"}}),
+            json!([
+                {"xtype": "button", "itemId": "own", "text": "親", "handler": "onSelected",
+                 "webmcp": {"description": "親のボタン"}},
+                component("described", "b", json!({})),
+            ]),
+        ),
+        described_bundle(),
+    )
+    .expect("a composed screen");
+    let scene = runtime.layout(800.0).expect("a scene");
+    assert_eq!(
+        widget_at(&scene, "b/fire").config["webmcp"],
+        fire_metadata()
+    );
+    // A root node keeps the metadata it always had.
+    assert_eq!(
+        widget_at(&scene, "own").config["webmcp"],
+        json!({"description": "親のボタン"})
+    );
+}
+
+/// `labelled.json` — a child whose only node declares metadata without an itemId to publish it
+/// under, the way the root of a screen does.
+fn labelled() -> Package {
+    part(
+        "labelled",
+        json!({"value": 0}),
+        json!({}),
+        json!([{"xtype": "label", "text": "子", "webmcp": {"description": "子のラベル"}}]),
+    )
+}
+
+#[test]
+fn a_node_without_an_item_id_publishes_its_webmcp_on_no_widget() {
+    let mut root = part(
+        "parent",
+        json!({"query": ""}),
+        json!({"labelled": {"url": "labelled.json"}}),
+        json!([
+            {"xtype": "label", "text": "親", "webmcp": {"description": "rootのラベル"}},
+            {"xtype": "textfield", "itemId": "search", "bind": "query", "fieldLabel": "検索",
+             "webmcp": {"description": "絞り込みの語"}},
+            component("labelled", "a", json!({})),
+        ]),
+    );
+    // The root node carries no itemId either, and `find_path` answers it for the empty one.
+    root.ui.webmcp.description = "rootのコンテナ".into();
+    let parts = bundle(vec![("labelled.json", labelled(), CHILD_SCRIPT)]);
+    let runtime = compose(root, parts).expect("a composed screen");
+    let scene = runtime.layout(800.0).expect("a scene");
+    let keys = keys(&scene);
+    // A widget without a target has no node of its own to publish, in any instance.
+    for widget in scene.widgets.iter().filter(|w| w.target.is_empty()) {
+        assert!(
+            widget.config.get("webmcp").is_none(),
+            "{} carries webmcp in {keys:?}",
+            widget.key
+        );
+    }
+    // The two labels, keyed by their index because neither declared an itemId.
+    for key in ["root.0", "a/root.0"] {
+        assert!(
+            widget_at(&scene, key).config.get("webmcp").is_none(),
+            "{key} carries webmcp in {keys:?}"
+        );
+    }
+    // A node with an itemId still publishes what it declared.
+    assert_eq!(
+        widget_at(&scene, "search").config["webmcp"],
+        json!({"description": "絞り込みの語"})
+    );
+}
+
+#[test]
+fn a_grandchild_node_publishes_its_webmcp_under_the_full_instance_path() {
+    let runtime = compose(
+        part(
+            "parent",
+            json!({}),
+            json!({"middle": {"url": "middle.json"}}),
+            json!([component("middle", "a", json!({}))]),
+        ),
+        bundle(vec![
+            (
+                "middle.json",
+                part(
+                    "middle",
+                    json!({}),
+                    json!({"described": {"url": "described.json"}}),
+                    json!([component("described", "c", json!({}))]),
+                ),
+                CHILD_SCRIPT,
+            ),
+            ("described.json", described(), CHILD_RUN_SCRIPT),
+        ]),
+    )
+    .expect("a composed screen");
+    let scene = runtime.layout(800.0).expect("a scene");
+    // Splitting at the first `/` would look for an itemId `c/fire` in the instance `a`.
+    assert_eq!(
+        widget_at(&scene, "a/c/fire").config["webmcp"],
+        fire_metadata()
+    );
+}
+
+#[test]
+fn one_package_placed_twice_publishes_the_same_webmcp_under_each_key() {
+    let runtime = compose(
+        part(
+            "parent",
+            json!({}),
+            json!({"described": {"url": "described.json"}}),
+            json!([
+                component("described", "b", json!({})),
+                component("described", "d", json!({})),
+            ]),
+        ),
+        described_bundle(),
+    )
+    .expect("a composed screen");
+    let scene = runtime.layout(800.0).expect("a scene");
+    let left = widget_at(&scene, "b/fire");
+    let right = widget_at(&scene, "d/fire");
+    assert_eq!(left.config["webmcp"], fire_metadata());
+    assert_eq!(left.config["webmcp"], right.config["webmcp"]);
+    assert_ne!(left.key, right.key);
+}
+
+// --- the component summaries of a scene ---
+
+/// The tool surface `described_leaf` declares for its whole package.
+fn leaf_webmcp() -> Value {
+    json!({"description": "件数を出す部品。", "label": "明細", "tags": ["leaf"]})
+}
+
+/// `leaf.json` with a package-level `webmcp`, so a summary has something to carry.
+fn described_leaf() -> Package {
+    let mut package = leaf();
+    package.webmcp = serde_json::from_value(leaf_webmcp()).expect("a webmcp block");
+    package
+}
+
+/// `bundled()` with the leaf declaring its tool surface under both of its placements.
+fn described_bundled() -> HashMap<String, (Package, String)> {
+    bundle(vec![
+        ("middle.json", middle(), MIDDLE_SCRIPT),
+        ("leaf.json", described_leaf(), CHILD_SCRIPT),
+    ])
+}
+
+/// The `components` of a serialized scene. `None` is the key being left out of the response.
+fn summaries(scene: &Scene) -> Option<Value> {
+    serde_json::to_value(scene)
+        .expect("a serialized scene")
+        .get("components")
+        .cloned()
+}
+
+/// The summaries as `(instance, hidden)` pairs, for the tests that watch the visibility alone.
+fn visibility(scene: &Scene) -> Vec<(String, bool)> {
+    scene
+        .components
+        .iter()
+        .map(|summary| (summary.instance.clone(), summary.hidden))
+        .collect()
+}
+
+/// A screen placing one child behind a `visibleBind` of the root.
+fn hiding(xtype: &str, url: &str, ready: bool) -> Package {
+    part(
+        "parent",
+        json!({"query": "", "ready": ready}),
+        json!({xtype: {"url": url}}),
+        json!([
+            {"xtype": xtype, "itemId": "a", "config": {}, "visibleBind": "ready"},
+            {"xtype": "label", "itemId": "footer", "text": "合計"},
+        ]),
+    )
+}
+
+#[test]
+fn a_screen_without_components_leaves_the_summaries_out_of_the_scene() {
+    let runtime = compose(
+        part(
+            "parent",
+            json!({}),
+            json!({}),
+            json!([{"xtype": "label", "itemId": "caption", "text": "単独"}]),
+        ),
+        HashMap::new(),
+    )
+    .expect("a screen without children");
+    let scene = runtime.layout(800.0).expect("a scene");
+    assert_eq!(summaries(&scene), None);
+}
+
+#[test]
+fn every_component_instance_is_summarized_in_path_order() {
+    let runtime = compose(composed(), described_bundled()).expect("a composed screen");
+    let scene = runtime.layout(800.0).expect("a scene");
+    assert_eq!(
+        summaries(&scene),
+        Some(json!([
+            {"instance": "a", "id": "middle", "title": "middle", "hidden": false},
+            {"instance": "a/c", "id": "leaf", "title": "leaf",
+             "webmcp": leaf_webmcp(), "hidden": false},
+            {"instance": "b", "id": "leaf", "title": "leaf",
+             "webmcp": leaf_webmcp(), "hidden": false},
+        ]))
+    );
+}
+
+#[test]
+fn the_tool_surface_of_the_screen_stays_the_one_the_root_declared() {
+    let mut package = composed();
+    package.webmcp = serde_json::from_value(json!({"description": "画面"})).expect("a webmcp");
+    let runtime = compose(package, described_bundled()).expect("a composed screen");
+    let scene = runtime.layout(800.0).expect("a scene");
+    // The children publish their own surfaces in the summaries, never in the screen's block.
+    assert_eq!(
+        serde_json::to_value(&scene.webmcp).expect("the metadata of the screen"),
+        json!({"description": "画面"})
+    );
+    assert_eq!(
+        scene
+            .components
+            .iter()
+            .filter(|summary| !summary.webmcp.is_empty())
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn a_component_the_parent_hides_is_summarized_as_hidden() {
+    let mut runtime =
+        compose(hiding("list", "list.json", false), list_bundle()).expect("a composed screen");
+    let scene = runtime.layout(800.0).expect("a scene");
+    assert_eq!(visibility(&scene), vec![("a".to_owned(), true)]);
+    assert!(
+        !scene.widgets.iter().any(|w| w.key.starts_with("a/")),
+        "{:?}",
+        keys(&scene)
+    );
+    set_state(&mut runtime.root, "ready", json!(true));
+    let scene = runtime.layout(800.0).expect("a scene");
+    assert_eq!(visibility(&scene), vec![("a".to_owned(), false)]);
+    assert!(
+        scene.widgets.iter().any(|w| w.key.starts_with("a/")),
+        "{:?}",
+        keys(&scene)
+    );
+}
+
+#[test]
+fn hiding_a_component_hides_the_ones_it_carries_below_it() {
+    let mut runtime = compose(
+        hiding("middle", "middle.json", false),
+        bundle(vec![
+            ("middle.json", middle_list(), CHILD_SCRIPT),
+            ("list.json", list_part(), CHILD_SCRIPT),
+        ]),
+    )
+    .expect("a composed screen");
+    let scene = runtime.layout(800.0).expect("a scene");
+    assert_eq!(
+        visibility(&scene),
+        vec![("a".to_owned(), true), ("a/c".to_owned(), true)]
+    );
+    set_state(&mut runtime.root, "ready", json!(true));
+    let scene = runtime.layout(800.0).expect("a scene");
+    assert_eq!(
+        visibility(&scene),
+        vec![("a".to_owned(), false), ("a/c".to_owned(), false)]
+    );
+}
+
+/// A child whose own state carries the key its parent binds the placement to.
+fn shadowing() -> Package {
+    part(
+        "shadow",
+        json!({"ready": false}),
+        json!({}),
+        json!([{"xtype": "label", "itemId": "caption", "text": "影"}]),
+    )
+}
+
+#[test]
+fn the_visibility_of_a_component_is_read_from_the_state_of_its_parent() {
+    let mut runtime = compose(
+        hiding("shadow", "shadow.json", true),
+        bundle(vec![("shadow.json", shadowing(), CHILD_SCRIPT)]),
+    )
+    .expect("a composed screen");
+    // The child holds a `ready` of its own, and it is the parent's that answers the placement.
+    assert_eq!(child_state(&runtime, "a")["ready"], json!(false));
+    let scene = runtime.layout(800.0).expect("a scene");
+    assert_eq!(visibility(&scene), vec![("a".to_owned(), false)]);
+    set_state(&mut runtime.root, "ready", json!(false));
+    let scene = runtime.layout(800.0).expect("a scene");
+    assert_eq!(visibility(&scene), vec![("a".to_owned(), true)]);
+}
+
+#[test]
+fn an_event_that_moves_a_child_leaves_the_summaries_where_they_were() {
+    let mut runtime = compose(
+        acting(json!([flag_field(), component("part", "a", json!({}))])),
+        panel_bundle(),
+    )
+    .expect("a composed screen");
+    let before = summaries(&runtime.layout(800.0).expect("a scene"));
+    runtime
+        .dispatch("a/button", json!({}))
+        .expect("the button of the child");
+    assert_eq!(child_state(&runtime, "a")["count"], json!(1));
+    // The summaries come from the packages, so a state the event moved cannot reach them.
+    assert_eq!(summaries(&runtime.layout(800.0).expect("a scene")), before);
+}
+
+#[test]
+fn one_package_placed_twice_is_summarized_once_per_placement() {
+    let runtime = compose(
+        part(
+            "parent",
+            json!({}),
+            json!({"leaf": {"url": "leaf.json"}}),
+            json!([
+                component("leaf", "open", json!({})),
+                component("leaf", "shipped", json!({})),
+            ]),
+        ),
+        described_bundled(),
+    )
+    .expect("a composed screen");
+    let scene = runtime.layout(800.0).expect("a scene");
+    assert_eq!(
+        visibility(&scene),
+        vec![("open".to_owned(), false), ("shipped".to_owned(), false)]
+    );
+    let open = &scene.components[0];
+    let shipped = &scene.components[1];
+    assert_eq!(open.id, shipped.id);
+    assert_ne!(open.instance, shipped.instance);
+    assert_eq!(
+        serde_json::to_value(&open.webmcp).expect("the metadata of a placement"),
+        leaf_webmcp()
+    );
+    assert_eq!(
+        serde_json::to_value(&open.webmcp).expect("the metadata of a placement"),
+        serde_json::to_value(&shipped.webmcp).expect("the metadata of its twin")
+    );
 }
 
 #[test]

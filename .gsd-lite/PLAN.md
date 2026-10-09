@@ -1,334 +1,293 @@
-# PLAN — component-loader（段階 5: 子を含む画面の配信キャッシュ）
+# PLAN — component-webmcp（段階 6: WebMCP の合成）
 
-- 作成: 2026-10-09 / gsd-lite-plan（turn 2）
-- 入力: REQUIREMENTS.md / DECISIONS.md / RESEARCH.md / `.gsd-lite/reflect/20261009-0342-component-effects.md` と `20261008-0114-component-composition.md` の「次回への提案」
-- 行番号は HEAD = `bae3026`（main `aa79bd1` + discuss + research の 2 コミット）のもの。impl は各ターンの冒頭で `git grep -n` で引き直す
+- 作成: 2026-10-10 / gsd-lite-plan（turn 2）
+- 入力: REQUIREMENTS.md / DECISIONS.md / RESEARCH.md（HEAD `fa22d26` = main `52ec888` + discuss / research の 2 コミット）
+- 前提の実測: `bun scripts/verify-instance-refactor.mjs` を base HEAD（main `52ec888`）に対して turn 2 で 1 回実行し exit 0（照合 370 歩・差分 0、probe 54 歩・問題 0、変異 7 本すべて検出。ログ `.gsd-lite/logs/component-webmcp/scratch/turn-002-verify-base.log`）。ハーネスの陳腐化は無く、T1 に直す行は不要
 
 ## 検証コマンド
 
-impl の各ターンがテストに使うコマンド（リポジトリのルートで実行）:
+impl の各ターンがテストに使うコマンド（リポジトリルートで実行）:
 
 ```bash
-bun run build:wasm                                   # Rust・デモのマニフェストを触ったターンの最初に 1 回（約 40 秒。public/engine.wasm と public/screens/*.manifest.json を再生成）
-bunx vp test run tests/components-loader.test.js     # 対象ファイルだけ回す（他: tests/files-cache-rpc.test.js / tests/components-effects.test.js / tests/publish-packages.test.js / tests/abi.test.js / tests/runtime.test.js）
-bunx vp test run                                     # Vitest 全体（約 60 秒）
-bun run test:rust                                    # cargo test（engine/）
-bun run check                                        # vp check（整形 + lint）+ cargo fmt --check。exit code はここで見る
-bun run docs:check                                   # Markdown のローカルリンク切れ（scripts/check-docs.mjs）
+# 整形（bun run check の前に、編集した src / tests / scripts / docs / .gsd-lite のファイルへ掛ける。整形後に対象テストをもう 1 度回す）
+bunx vp fmt <編集したファイル…>
+cargo fmt --manifest-path engine/Cargo.toml
+# Rust
+cargo test --manifest-path engine/Cargo.toml
+# WASM を作り直してから JS（Rust を触ったターンは必ず build:wasm を先に。tests/*.test.js は public/engine.wasm を読む）
+bun run build:wasm
+bunx vp test run                       # 全部
+bunx vp test run tests/<file>.test.js  # 1 本
+# lint / fmt 判定（exit code はこれで見る。Markdown だけを vp check に渡すと lint 対象 0 件で非 0 になる）
+bun run check
+bun run docs:check
+# 合成の probe と照合（Rust を触ったターン）
+bun scripts/probe-composition.mjs --candidate public/engine.wasm
+bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-52ec888.wasm --candidate public/engine.wasm
 ```
 
-- 環境の初期化（テストの前に毎回）: なし。`bun run build:wasm` は `bun run test` が先頭で回す（`package.json` の `test`）。Vitest の多くが `public/engine.wasm` と `public/screens/*.manifest.json` を読むので、Rust・`scripts/publish-packages.mjs`・`public/screens/` を触ったターンは Vitest の前に `bun run build:wasm` を回す
-- 最終判定（クリーンな状態から全検査。verify と T8 が使う）: `bun scripts/verify-instance-refactor.mjs`（`BASE_CHECKS` 6 本 `verify-instance-refactor.mjs:19-26` = `build:wasm` → `vp test run` → `test:rust` → `check` → `docs:check` → `build` → base `main` の WASM が無ければ自動ビルド `:82-94` → base 照合 差分 0 → 候補のみ probe exit 0 → 変異 7 本（`build-engine-variant.mjs:9` の `MUTATIONS`）が各 exit 1。`verify-instance-refactor.mjs` 本体は無改修（T8 訂正: `scripts/compare-engine-behavior.mjs` の `matches()` は base が段階 4 になったことで陳腐化していて、HTTP の effect の id を引けず base 側で落ちる。`effect.kind === undefined || effect.kind === "http"` の 1 行に直す。照合そのものは `kind` を正規化で除去しているので差分 0 は変わらない）。本マイルストーンの Rust 変更は `engine/src/abi.rs` の `take_instance` だけで、`MUTATIONS` の `from` は全部 `lib.rs`（`build-engine-variant.mjs:13-61`）なので変異は触らない。base 照合は 256 バイト以下の `instance` に差分を作らない（応答が変わるのは 257 バイト以上の拒否だけで、照合の列にそんな値は無い））
-- このリポジトリの注意: `bunx vp check <Markdown 1 本>` は整形 pass でも lint 対象 0 件で非 0 終了する。Markdown の整形は `bunx vp fmt <path>` の出力で判定し、exit code は `bun run check` で見る。`.gsd-lite/*.md` は整形対象（`vite.config.js:20-29` の `ignorePatterns` に `.gsd-lite/state.json` と `.claude/**` だけ）なので、PLAN / PROGRESS を書いたら `bunx vp fmt .gsd-lite/PLAN.md .gsd-lite/PROGRESS.md` を掛ける
-- Vitest の一時ディレクトリは `tests/distribution.test.js:16` と同じ `mkdtemp(join(tmpdir(), "uivolve-…"))`（Vitest の子プロセスは Bash の allowlist の外で動くので既存テストと同じ形でよい）。impl 自身の一時ファイルは `.gsd-lite/logs/component-loader/scratch/turn-NNN-*.{mjs,txt}`
+- 環境の初期化（テストの前に毎回）: なし（`bun run build:wasm` が `public/engine.wasm` と同梱デモのマニフェスト `public/screens/*.manifest.json` / `packages/` を再生成する。どちらも gitignore 済み）
+- `bun run check` の前に `bunx vp fmt <編集したファイル>` を掛け、整形後に対象テストをもう 1 度回す。`Edit` は整形の後に読み直してから行う（前回 reflect Minus 1）
+- 最終判定（クリーンな状態から全検査。verify と T8 が使う）: `bun scripts/verify-instance-refactor.mjs`（既定 `--base-commit main`。約 5 分。`build:wasm` → `vp test run` → `test:rust` → `check` → `docs:check` → `build` → base 照合（差分 0）→ probe → 変異全本が exit 1）。T6 で変異を 1 本足すので最終判定の表示は「変異 8 本」になる
+- `target/engine-compare/base-52ec888.wasm` は turn 2 の最終判定で作成済み。無ければ `bun scripts/build-engine-variant.mjs --commit 52ec888 --out target/engine-compare/base-52ec888.wasm`
 
 ## 追従先チェックリスト
 
-「X を足したら直す場所」。impl は該当する変更をしたら全行を確かめ、T8 は**行番号つきで全行**を再実行して PROGRESS に「行 1 … 行 N」の表で書く（行数が合わなければ T8 は未完了）。verify は照合を再実行する。
+各行に連番。T8（最終判定型）は全行を再実行し、PROGRESS に「行 1 … 行 N」の表で書く（行数が合わなければ未完了）。
+「確かめ方」の `git grep` は plan のターンで 1 度実行し、現状のヒット数を「現状」に書いた。
 
-| 行  | 変更の種類                                        | 直す場所                                                                                                                                                                                                                                                                                                                                                                                                               | 確かめ方                                                                                                                                                                                                                                                                                                        |
-| --- | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | 旧契約の言い回し（配信キャッシュの拒否）          | `docs/components.md:173`（据え置きの拒否「配信キャッシュ」段落 → 削除し「据え置きの拒否」を 3 つに）、`:246`（段階 5 以降の課題から配信キャッシュを外す）、`skills/uivolve-web-app-dev/references/components-layout.md:30`（「`components`を持つ画面は`network-first`で配信できない」→ 木のマニフェストで配信できる）、`docs/ai-development.md:26`（「配信キャッシュ … 段階5以降の将来設計」から配信キャッシュを外す） | `git grep -n -E 'componentsを持つ画面                                                                                                                                                                                                                                                                           | network-firstで配信できない                                                                                                                                                                  | 1パッケージ1本                                                                      | マニフェストが1パッケージ                                                                                                                        | 段階5で決める | 配信キャッシュ.*段階5以降' -- docs README.md skills src tests scripts index.html .claude` が 0 件 |
-| 2   | 旧契約の言い回し（段階の状態行）                  | `docs/components.md:3`（「実装済み契約（段階4）」→ 段階5）、`docs/components-plan.md:3`（「段階4 … まで完了」→ 段階5）、`:87`（「入力2MB上限の扱いは段階5で決める」→ 据え置き + マニフェスト段階の早期拒否）、`:100`（段階5 を「本マイルストーンで完了」に）                                                                                                                                                           | `git grep -n -F '実装済み契約（段階4）' -- docs/components.md` が 0 件、`git grep -n -F '状態: 段階4' -- docs/components-plan.md` が 0 件、`git grep -n -F '段階5で決める' -- docs/components-plan.md` が 0 件、`git grep -n -F '段階5（ローダー）。本マイルストーンで完了' -- docs/components-plan.md` が 1 件 |
-| 3   | マニフェストの形・revision の式・生成物の命名     | `docs/files-cache-rpc.md:102`（生成物に `component-<i>-source` 等を足す）、`:104`（`version: 2 / … / components`、revision の式、子の上限）、`:106`（キャッシュの配置に `components/<i>/`）、`:86-90`（手順に木の取得・検証・保存）                                                                                                                                                                                    | `git grep -n -F 'version: 1 / revision' -- docs` が 0 件、`git grep -n -F 'version: 2' -- docs/files-cache-rpc.md` が 1 件以上、`git grep -n -F 'component-<i>-source' -- docs/files-cache-rpc.md` が 1 件以上                                                                                                  |
-| 4   | JS の日本語文言を足す（ローダー・生成スクリプト） | `docs/components.md:177-196`「エラー文言」の日本語の列挙に `マニフェストのコンポーネント情報が不正です`・`配信ファイルの合計が2 MBを超えています（合計 {総バイト数} バイト。最大の子: {URL} {バイト数} バイト）`・`配信ファイルのサイズ・ハッシュが一致しません（{URL}）`、`docs/files-cache-rpc.md` の配信キャッシュ節に同じ 3 文言                                                                                   | `git grep -c -F 'マニフェストのコンポーネント情報が不正です' -- docs/components.md docs/files-cache-rpc.md` が両方 1 以上、`git grep -c -F '配信ファイルの合計が2 MBを超えています' -- docs/components.md docs/files-cache-rpc.md` が両方 1 以上                                                                |
-| 5   | 2 MB の段構え                                     | `docs/components.md:226-231`（「2MBはJS側とRust側の2段構え」→ マニフェスト段階（生バイトの粗い前段）・同梱後（JS）・入力長（Rust）の 3 段。「マニフェスト段階は生バイト、load は JSON 化後」を書く）、`:209`（制限表の「ABIの1リクエスト」行に「配信はマニフェストの `source.size + script.size` 合計で前段拒否」）                                                                                                    | `git grep -n -F '2段構え' -- docs/components.md` が 0 件、`git grep -n -F '3段構え' -- docs/components.md` が 1 件以上                                                                                                                                                                                          |
-| 6   | Rust の英語文言を足す（`instance` 256 バイト）    | `docs/components.md:181-188`「英語（Rust）」の列挙に `Component instance path exceeds 256 bytes`、`:131`（「形から外れた値は…」の文に 256 バイト超を足す）、`:202-210` 制限表に行「完了opの`instance` \| 256バイト（超えると値を文言に載せずに拒否）」、`docs/architecture.md:84`（完了の 7 操作が受ける `instance` は 256 バイト以内）                                                                                | `git grep -c -F 'Component instance path exceeds 256 bytes' -- docs/components.md` が 2 以上（文言列挙 + 制限表 or :131）、`git grep -c -F '256' -- docs/architecture.md` が 1 以上                                                                                                                             |
-| 7   | メモリ共有（R5）の契約                            | `docs/components.md`「据え置きの拒否」の後ろか「制限」の前に「子パッケージのメモリ共有」節を新設（同じ `UiRuntime` 内・子だけ・3 契機・`network-first` は sha256 一致時のみ・トークンだけの差し替えは検知しない・`network-only` はセッション内で子の更新を見ないので「再読込」で取り直す）、`docs/files-cache-rpc.md` の配信キャッシュ節から参照                                                                       | `git grep -n -F 'メモリ共有' -- docs/components.md docs/files-cache-rpc.md` が両方 1 件以上、`git grep -n -F '再読込' -- docs/components.md` が 1 件以上                                                                                                                                                        |
-| 8   | テストファイルを足す・役割を変える                | `docs/testing.md:41`（`components-loader.test.js` の行に「木のマニフェストの検証・保存・復元・メモリ共有」）、`:43`（`components-effects.test.js` に「配送先未登録の拒否」）、表に `tests/publish-packages.test.js` の行を足す、`docs/files-cache-rpc.md:185`（`files-cache-rpc.test.js` の説明に木の保存・復元は `components-loader.test.js` と書く）                                                                 | `git grep -n -F 'tests/publish-packages.test.js' -- docs/testing.md` が 1 件、`git grep -n -E '配送先' -- docs/testing.md` が 1 件以上                                                                                                                                                                          |
-| 9   | OPFS の調査文書（計画・検討の履歴）               | `docs/opfs-cache-rpc-investigation.md:10`（「同じ版の定義とスクリプトをまとめて保持する」→ 子パッケージも同じ版に含める）、`:20`、`:88`、`:93`（「マニフェストと全ファイル」に木を含める 1 句）。履歴文書なので「段階 5 で子を含む木に拡張した」の 1 行を「アプリケーションキャッシュ案」節の末尾に足す形でよい                                                                                                        | `git grep -n -F '段階5' -- docs/opfs-cache-rpc-investigation.md` が 1 件以上                                                                                                                                                                                                                                    |
-| 10  | README・スキル・ホスト設計の 1 行                 | `README.md:116`（`application-loader.js` / `publish-packages.mjs` の説明に「子を含む木」）、`skills/uivolve-web-engine-dev/references/components.md:12`（ローダーの木の取得・共有・配信キャッシュは `src/application-loader.js` が担う 1 句）、`docs/host-adapters-design.md`（plan 時点で `git grep -n -E 'network-first                                                                                              | キャッシュ                                                                                                                                                                                                                                                                                                      | マニフェスト' -- docs/host-adapters-design.md`が 0 件。impl が再実行して 0 件なら**無改修と判定して PROGRESS に書く**。REQUIREMENTS の`:178`は空行で`:179` が「バイナリABIと検証」の見出し） | `git grep -n -E '木                                                                 | 子を含む' -- README.md`の`:116` が 1 件、`git grep -n -F 'application-loader' -- skills/uivolve-web-engine-dev/references/components.md` が 1 件 |
-| 11  | 無改修と判定する文書（理由を PROGRESS に書く）    | `docs/runtime-distribution.md:40`（「配信キャッシュを有効にする場合はマニフェストの生成も必要」。木でも真）、`:105`、`skills/uivolve-web-app-dev/references/io-extensions.md:15`、`skills/uivolve-web-engine-dev/references/host.md:21`（network-first の一般論）、`docs/components.md:194`（配送先未登録の説明。テストを足すだけ）、`docs/testing.md:90`（最終判定の手順。`verify-instance-refactor.mjs` は無改修）   | T7 と T8 が「無改修」と PROGRESS に明記する（行 11 の 6 か所を列挙）                                                                                                                                                                                                                                            |
-| 12  | ソースをテキストとして読むテスト・スクリプト      | `scripts/build-engine-variant.mjs:9-61`（`MUTATIONS` の `from` は全部 `engine/src/lib.rs` の文字列。`lib.rs` は本マイルストーンで触らない）、`tests/browser/font-parity.mjs:1072`（`lib.rs` の `XTYPES`。触らない）。`abi.rs` を読むテスト・スクリプトは無い（`git grep -n -E 'readFile(Sync)?\(.*(src/                                                                                                                | engine/src/                                                                                                                                                                                                                                                                                                     | scripts/)' -- tests scripts` が上の 1 件だけ）                                                                                                                                               | `git diff main --stat -- engine/src/lib.rs` が 0 行、最終判定の変異 7 本が各 exit 1 |
-| 13  | 件数を書いている文書                              | `docs/components.md:253`「probe は 6 列・54 ステップ」（probe は無改修なので変わらない）、`docs/components.md:167`「子に許していないのは次の4つだけ」→ 配信キャッシュを外して **3つ**                                                                                                                                                                                                                                  | `git grep -n -F '次の4つだけ' -- docs/components.md` が 0 件、`git grep -n -F '次の3つだけ' -- docs/components.md` が 1 件                                                                                                                                                                                      |
-| 14  | AI への生成指示文書（常に追従先）                 | `docs/ai-development.md:26`（行 1 と同じ行。「子の`window`・WebMCPの合成は段階6以降の将来設計」に書き換え、配信キャッシュは実装済みとして「子を含む画面も `network-first` で配信・復元できる」を 1 句）                                                                                                                                                                                                                | `git grep -n -F '配信キャッシュ' -- docs/ai-development.md` の行が「段階5以降」を含まない                                                                                                                                                                                                                       |
+| #   | 変更の種類                                                 | 直す場所                                                                                                                                                                                                                                                                                                 | 確かめ方                                                                                                                                                                                                                                                                                             | 現状（turn 2）                                                                                       |
+| --- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| 1   | 子パッケージの `webmcp` 拒否を撤去                         | `engine/src/composition.rs:233-240`（`reject_effect_declarations` 削除）/ `engine/src/instance.rs:65-67`（`if component { … }` 削除）/ `engine/src/composition_tests.rs:681-719` / `scripts/probe-composition.mjs:273-274,312-319` / `docs/components.md:108,166-170,197,275`                            | `git grep -n -F 'reserved for a later stage' -- src engine docs scripts tests` が 0 件、`git grep -n -F 'reject_effect_declarations' -- engine scripts tests` が 0 件、`git grep -n -F 'child-webmcp-refused' -- docs scripts tests` が 0 件                                                         | 7 件（components.md 170/172/197、composition.rs 239/246、composition_tests.rs 672/717）/ 3 件 / 3 件 |
+| 2   | `window` の拒否文言から括弧を落とす（挙動は不変）          | `engine/src/composition.rs:246` / `engine/src/composition_tests.rs:672` / `docs/components.md:172`                                                                                                                                                                                                       | `git grep -n -F 'window is not available in components' -- engine docs` が 3 件（rs / tests / md）で、いずれの行にも `reserved` が無い                                                                                                                                                               | 3 件（すべて `(reserved for a later stage)` 付き）                                                   |
+| 3   | `Scene` に `components[]` を足す                           | `engine/src/lib.rs:353-366`（`Scene`）/ `src/ui-tools.js:134-147`（`ui_get_screen` の戻り）/ `docs/webmcp.md`「次の拡張点」/ `docs/platform-features.md:112-131`「WebMCP の記述」/ `docs/components.md`（「子の `webmcp`」節を新設）                                                                     | `git grep -n -F 'components: snapshot.scene.components' -- src` が 1 件、`git grep -n -E 'components\[\]' -- docs/webmcp.md docs/platform-features.md docs/components.md` がそれぞれ ≥ 1 件、`git grep -n -F 'skip_serializing_if = "Vec::is_empty"' -- engine/src/lib.rs` が `components` 行に 1 件 | 0 件 / 0 件 / 0 件                                                                                   |
+| 4   | probe の列を置き換え、ステップ数と列 ID が変わる           | `scripts/probe-composition.mjs` / `docs/components.md:281`（「6列・54ステップ」「列IDは …」）/ `docs/testing.md:91`（「3つの列を1つのWASMへ流し」「子の`webmcp`はload時に拒否される」）                                                                                                                  | `git grep -n -E '54 ?ステップ                                                                                                                                                                                                                                                                        | 3つの列                                                                                              | child-webmcp-refused                                                                                                                                                                                      | はload時に拒否される' -- docs`が 0 件。新しい数字は`target/engine-compare/composition.json`の`steps`/`sequences` と一致（T6 の実測を書く） | 54ステップ 1 件（components.md:281）/ 3つの列 1 件（testing.md:91）/ 拒否される 1 件（testing.md:91） |
+| 5   | 変異を 1 本足す（M8 `components-omitted`）                 | `scripts/build-engine-variant.mjs:9-65`（`MUTATIONS`）/ `docs/testing.md:91`（「変異7本」）/ `scripts/verify-instance-refactor.mjs:5`（ヘッダコメント「変異 7 本」）                                                                                                                                     | `git grep -n -E '変異 ?7 ?本' -- docs scripts` が 0 件、`git grep -n -E '変異 ?8 ?本' -- docs/testing.md scripts/verify-instance-refactor.mjs` が 2 件                                                                                                                                               | 2 件（testing.md:91、verify-instance-refactor.mjs:5）                                                |
+| 6   | 子ノードの `webmcp` が `widgets[].metadata.webmcp` に出る  | `engine/src/lib.rs:1303-1312`（後処理）/ `docs/components.md:275`（「検証されるが登録されない」）/ `docs/webmcp.md:65` / `docs/platform-features.md:131`                                                                                                                                                 | `git grep -n -F '検証されるが登録されない' -- docs` が 0 件。`docs/webmcp.md` に「`widgets[].key` の最初の `:` より前（`:` が無ければ key 全体）を末尾の `/` で割った左側が `components[].instance`」の突き合わせ規則が 1 か所（`git grep -n -F '最初の' -- docs/webmcp.md` が 1 件。F1 で改めた語） | 1 件                                                                                                 |
+| 7   | 段階計画と AI 生成指示                                     | `docs/components-plan.md:101`（段階 6 の行）/ `docs/ai-development.md:26`（「段階6以降の将来設計」「子に`webmcp`宣言 … を書くコードを生成しない」）/ `docs/components.md:272-275`「段階6以降の課題」                                                                                                     | `git grep -n -E '段階 ?6以降                                                                                                                                                                                                                                                                         | WebMCPの合成は段階                                                                                   | 子に`webmcp`宣言と' -- docs README.md .claude` が 0 件。`docs/components-plan.md`の段階 6 行が「本マイルストーンで完了」を含む。「段階6以降の課題」の見出しは「段階7以降の課題」（子の`window` 等が残る） | ai-development.md:26 1 件、components.md:272 1 件、components-plan.md:101 1 件                                                             |
+| 8   | R0 のローダー文言 3 つ（`id` / `rpc` の値 / ポインタの型） | `src/application-loader.js` / `docs/files-cache-rpc.md:93,109` / `docs/components.md:200-211`「エラー文言」日本語                                                                                                                                                                                        | `git grep -n -F 'キャッシュの管理情報が不正です' -- src docs` が src 1 件 + docs 2 件、`git grep -n -F '画面idは文字列で指定してください' -- src docs` が src 1 件 + docs ≥ 1 件、`git grep -n -F 'の定義が不正です（object で指定してください）' -- src docs` が src 1 件 + docs ≥ 1 件             | 0 件                                                                                                 |
+| 9   | R0b の宣言件数上限（8 件）                                 | `src/application-loader.js:250-283`（`#walk` の `visit` 冒頭）/ `scripts/publish-packages.mjs:40-58`（`visit` 冒頭）/ `docs/files-cache-rpc.md:105,109` / `docs/components.md`「制限」表（行を足す）・`:246`（「Instance数と同梱パッケージ数は別物」に宣言数を加える）・`:257`（日本語 3 文言 → 4 文言） | `git grep -n -F 'コンポーネントの宣言が8件を超えています' -- src scripts docs` が src 1 + scripts 1 + docs ≥ 2 件。`git grep -n -F '日本語3文言' -- docs` が 0 件                                                                                                                                    | 0 件 / `日本語3文言` 1 件（components.md:257）                                                       |
+| 10  | R0c の `manifest()` の基準を画面 URL に統一                | `src/application-loader.js:40-118,384-389`（`manifest(value, base)` → `manifest(value, screenUrl)`、`fetch:386` の第 2 引数）/ `docs/files-cache-rpc.md:105`（既に「`base`はrootの画面URL」と断言している）/ `docs/components.md:205,208`                                                                | `git grep -n -E 'manifest\((previous\.metadata                                                                                                                                                                                                                                                       | stored\.metadata                                                                                     | $)' -- src/application-loader.js` の呼び出し 4 か所がすべて画面 URL（`candidate.url`/`url`）を渡す。`git grep -n -F 'sidecar' -- src/application-loader.js`の`manifest(` 呼び出し行が 0 件                | `manifest(…, sidecar)` 1 件（:386-389）                                                                                                    |
+| 11  | デモの子パッケージに `webmcp` を足す                       | `public/screens/parts/note-pad.json` / `parts/approval.json` / `parts/order-list.json` / `tests/parts-lab.test.js` / `tests/components-demo.test.js`                                                                                                                                                     | `git grep -n -c '"webmcp"' -- public/screens/parts/` が 3 ファイルとも ≥ 1。`bun run build:wasm` 後に `public/screens/parts-lab.json.manifest.json` / `order-dashboard.json.manifest.json` が再生成される（gitignore 済みなのでコミットには出ない）                                                  | 0 / 0 / 0                                                                                            |
+| 12  | 文書の断言 → 実装シンボルの対応（T7 で表にする）           | `docs/webmcp.md`（`components[]` の順序・`hidden` の定義・突き合わせ規則）/ `docs/components.md`（上限超過の文言の出し手）                                                                                                                                                                               | 断言ごとに `git grep` で実装シンボル（`BTreeMap`、`hidden_component`、`rsplit_once('/')`、`Metadata::validate`、`Component {path}: `）を引き、同じ語で書かれている（T7 の完了基準の対応表）                                                                                                          | —                                                                                                    |
+| 13  | ソースをテキストとして読むテスト・スクリプト               | `scripts/build-engine-variant.mjs`（`MUTATIONS[*].from` は `lib.rs` の文字列置換）                                                                                                                                                                                                                       | `lib.rs` を編集した各ターンで、全 `from` 文字列が `engine/src/lib.rs` に**ちょうど 1 回**現れることを scratch スクリプト（前回の `.gsd-lite/logs/component-loader/scratch/turn-011-mutation-from.mjs` 相当を `scratch/turn-<N>-mutation-from.mjs` に作る）で確認                                     | 7 本とも 1 回（turn 2 の最終判定で全変異がビルドできた）                                             |
+| 14  | `docs/testing.md` の自動テスト表                           | `docs/testing.md:20-45` の表（新しいテストファイルを作ったとき）                                                                                                                                                                                                                                         | 本計画は新規テストファイルを作らない（既存ファイルへ追記）。T8 で `git status --porcelain tests/` に `??` が無いことを確認                                                                                                                                                                           | —                                                                                                    |
+
+旧契約の言い回しの `git grep`（turn 2 実施）: `据え置き` は `docs/components.md:108,166,225` と `docs/components-plan.md:87` に 4 件。`:108` / `:166` は撤去対象（行 1）。`:225`（ABI の 2 MB は据え置き）と `components-plan.md:87` は本件と無関係なので**除外**（条件: `git grep -n -F '据え置き' -- docs/components.md` が `:225` 相当の 1 件だけになる）。`rootのもの` は `docs/components.md:170,172` の 2 件（`:170` は撤去、`:172` は `window` の行で残す）。
 
 ## Tasks
 
-<!--
-粒度: 各タスクは 1 ターン（新規コンテキスト 1 回）で実装 + テスト + コミットまで完結する大きさ。8 タスク。
-依存順に並べる（impl は常に先頭の未完了タスクを取る）。
--->
-
-- [x] T1: 前回の残留リスク 1・3（`instance` 256 バイト上限 / `配送先が未登録です` の契約テスト）
+- [x] T1: R0 — ローダーの `TypeError` 3 点を日本語文言に（`id` 非文字列 / `rpc` の値が object でない / OPFS ポインタが object でない）
   - 完了基準:
-    - (A) Rust: `engine/src/abi.rs:36-42` の `take_instance` を `pub(crate) fn` にし、`Some(Value::String(path)) if path.len() > 256 => Err("Component instance path exceeds 256 bytes".into())` の腕を `valid_instance_path` の腕より**前**に置く（P13: `String::len` = UTF-8 バイト数）。既存の `Invalid component instance` / `Unknown component instance: {instance}`（`lib.rs:1001`）の文言は変えない。`engine/src/composition_tests.rs` に 1 本（`crate::abi::take_instance(&json!({"instance": …}))` で: `"a".repeat(256)` → `Ok`、`"a".repeat(257)` → `Err` で文言が `Component instance path exceeds 256 bytes` に等しく **`err.contains(&path)` が false**、`format!("{}:{}", "a".repeat(200), "b".repeat(57))`（257 バイト・`:` 入り）→ 長さの文言（`valid_instance_path` より先に効く）、`"あ".repeat(86)`（258 バイト・86 文字）→ 長さの文言、`"a".repeat(255) + "/x"`（257）→ 長さの文言、`None` → `Ok("")`）。`tests/abi.test.js:194-203` の表に行 `["a".repeat(257), "Component instance path exceeds 256 bytes"]` を足し、既存の `layout` 文字列一致（state 不変）がその行でも成立する。`bun run test:rust` と `bunx vp test run tests/abi.test.js` が green
-    - (B) JS: `tests/components-effects.test.js` に `describe("配送先が未登録の Instance")` を足し、`HttpEffects`（`src/http-effects.js:31-38`）/ `StorageEffects`（`src/storage-effects.js:35-42`）/ `PageEffects`（`src/page-effects.js:28-31`）の 3 経路それぞれで: `host.resetInstances(new Map([["", base]]))` の後に `run([{ id: 1, instance: "ghost", … }])` → `onError` が 1 回・引数の `message` が `コンポーネント ghost の配送先が未登録です`、`complete`（page は `load`）が 0 回、`resources.text` / `client.execute` が 0 回。root 由来（`instance` 無し）を空の `Map` に流す行（`resetInstances(new Map())` → `コンポーネント  の配送先が未登録です`。空白 2 つ）も 3 経路に置く。雛形は `tests/http-grid.test.js:163-181` / `tests/platform-features.test.js:311-337` / `tests/page-navigation.test.js:182-190`。`bunx vp test run tests/components-effects.test.js` が green
-    - (C) 文書（列挙の drift を本タスクで塞ぐ。T7 は再確認だけ）: `docs/components.md` の英語文言列挙（`:181-188`）に `Component instance path exceeds 256 bytes`、`:131` の文に「256 バイトを超えるパスは値を載せずに `Component instance path exceeds 256 bytes`」、制限表（`:202-210`）に行「完了opの`instance` | 256バイト」を足す（追従先 行 6 の前半）。`bunx vp fmt docs/components.md` 済み
-    - 到達性: `take_instance` は `abi.rs:99,121,132` ほか 7 op の入口で、JSON のデコード直後に呼ばれる。手前に効く防壁は `Request exceeds 2 MB`（`abi.rs:181`。2 MB 未満の 257 バイトには掛からない）だけ
-  - 対象: `engine/src/abi.rs`, `engine/src/composition_tests.rs`, `tests/abi.test.js`, `tests/components-effects.test.js`, `docs/components.md`
+    - `src/application-loader.js` に `shape(screen)`（名前は impl が決めてよい。export しない）を置き、`parsed()`（`:127-138`）と `#download()`（`:230-244`）の `parsePackage` 直後に呼ぶ。`typeof screen.id !== "string"` → `画面idは文字列で指定してください`。`screen.rpc` が `null` でない object（**配列も含む**。turn 3 訂正）のとき各値が `value !== null && typeof value === "object" && !Array.isArray(value)` でなければ `RPC {名前} の定義が不正です（object で指定してください）`（配列なら `{名前}` は添字）。`package-format.js` には入れない（P12: `mock-api-client.js:4` が画面でない定義を通す）
+    - `save`（`:484-494`）: `JSON.parse` の結果が object でない（`null` / 配列 / プリミティブ）とき `NotFoundError` と同じ扱いで読み飛ばす。`keep` の計算（`:497-505`）も同じ型検査（P14）
+    - `restore`（`:536-583`）: `stored` が object でないとき `new Error("キャッシュの管理情報が不正です")` を投げて `last` に入れる（§7-5）。`{}` / `{"url":5}` は従来どおり `キャッシュのURLが一致しません`
+    - 回帰テスト（`tests/components-loader.test.js` の `fixture` / `memoryOpfs` / `pointerOf` を使う。新規ファイルは作らない）。各ケースで `TypeError` が出ないこと（`rejects.toThrow(TypeError)` が偽 / 文言一致）:
+      - network-only: `id: 5` / `id: null` / `id: {}` の 3 件が `画面idは文字列で指定してください`。`id: 5` + storage を持つ子（`component-tree.js:38` の `part.includes` に到達していた形）も同文言で、子の取得前に拒否（`f.reads` にその子の URL が無い）
+      - network-only: `rpc: { x: null }` と `rpc: { x: 5 }` がどちらも `RPC x の定義が不正です（object で指定してください）`（新文言に固定）、`rpc: [null]` が `RPC 0 の定義が不正です（object で指定してください）`（turn 3 訂正。配列のままだと `TypeError` が残り R0 に反する）、`rpc: null` / `rpc: []` は通る（現状不変）
+      - network-first（`treeManifest`）の `parsed()` 経路で `id: 5` の子が同じ文言で拒否される
+      - `current.json` = `null` と `previous.json` = `null` の両方で `save` が成功し、`versions/` に新 revision だけ残り `current.json` が正しいポインタになる（P14）
+      - `current.json` = `null` → `restore` が `通信に失敗し、利用できる保存版もありません（キャッシュの管理情報が不正です）`。`current.json` = `[]` / `5` / `"x"` も同文言（「object でない」の代表 + 列挙外 1 件）。`{}` は `（キャッシュのURLが一致しません）`（P15）
+      - `current.json` = `null` だが `previous.json` が正しいとき `restore` は previous から復元する
+    - 文書: `docs/files-cache-rpc.md:93`（復元の文言の段落）に `キャッシュの管理情報が不正です` を、`docs/files-cache-rpc.md`「YAML/JSONとRhaiの配信キャッシュ」の取得段落に `id` / `rpc` の 2 文言を足す。`docs/components.md:200-211` の日本語一覧に 3 文言を足す（root と子が同じゲートを通る旨）
+    - `bunx vp test run tests/components-loader.test.js tests/worker-mock.test.js tests/files-cache-rpc.test.js` green、`bun run check` green
+    - 担う落とし穴: P12 / P13 / P14 / P15
+  - 対象: `src/application-loader.js`, `tests/components-loader.test.js`, `docs/files-cache-rpc.md`, `docs/components.md`
   - 依存: なし
   - 並列サブ作業:
-    - A: Rust の 256 バイトの腕とテスト + `tests/abi.test.js` の 1 行（対象: `engine/src/abi.rs`, `engine/src/composition_tests.rs`, `tests/abi.test.js`）
-    - B: 配送先未登録の 3 経路テスト（対象: `tests/components-effects.test.js`）
-    - 親: (C) の文書 3 行、`bun run build:wasm` → `bun run test:rust` → `bunx vp test run tests/abi.test.js tests/components-effects.test.js` → `bun run check` → コミット（サブエージェントには `bun run build:wasm` / `cargo` / 全体 Vitest を禁止し、親が統合後にまとめて回す）
+    - A: ローダー本体（`shape` / `save` / `restore`）と回帰テスト（対象: `src/application-loader.js`, `tests/components-loader.test.js`）
+    - B: 文書 2 ファイルへの文言追記（対象: `docs/files-cache-rpc.md`, `docs/components.md`。文言 3 つは上の完了基準の文字列を正とし、A と同時に確定）
 
-- [x] T2: マニフェスト version 2 の検証と revision（`manifest()` の両受け・`components` の形・キーの絶対化・2 MB 早期拒否）
+- [x] T2: R0b + R0c — 宣言件数上限（8 件）と `manifest()` の画面 URL 基準への統一
   - 完了基準:
-    - `src/application-loader.js:13-25` `manifestRevision(value)` が `value.version === 2` のとき R1 の式 `SHA-256(JSON.stringify([source.sha256, script.sha256, ソート済み[descriptorキー, sha256], ソート済み[子キー, 子.source.sha256, 子.script.sha256, ソート済み[descriptorキー, sha256]]]))` を返し、version 1（および `version` 無し）は既存の 3 要素の式のまま。比較子は既存の `<` / `>`（`:20`）を子キーにも使う（P1）
-    - `manifest(value, base)`（`:26-54`）: `version` が 1 でも 2 でもない → `配信マニフェストが不正です`。version 1 で `Object.hasOwn(value, "components")` → `配信マニフェストが不正です`（P16: 空 `{}` でも不正）。version 2 で `components` が own property でない・`null`・配列・object 以外 → `配信マニフェストが不正です`。各子（`Object.entries` で読み、`Object.create(null)` に写す。P17）: 値が object でない / `source` `script` `descriptors` が root と同じ `check`（1 MB / 100 KB / 各 1 MB・8 件）を通らない / `httpUrl(key, base)` が投げる / 絶対化した href が別のキーと重複（P3 の `a.json` と `./a.json`）/ 子が 8 件超 → `マニフェストのコンポーネント情報が不正です`。この段階では子ファイルの `url` の形だけ見る（`httpUrl(entry.url, base)`。取得はしない）
-    - 2 MB 早期拒否（R4。決めた事項 2）: `manifest()` の中で、revision 検査の**前**に `total = Σ (source.size + script.size)`（root + 全子。descriptor は含めない）を取り、`total > 2_000_000` なら `配信ファイルの合計が2 MBを超えています（合計 {total} バイト。最大の子: {href} {bytes} バイト）`（`href` は絶対化した子キー、`bytes` はその子の `source.size + script.size`。最大が同値なら絶対化した href の `<` 順で先のもの）。`total === 2_000_000` は通る
-    - 検証の順序: version → root の `check` → descriptors → `components` の形 → 合計サイズ → revision 一致（`配信revisionとファイルのハッシュが一致しません`）
-    - `fetch` の network-first 経路（`:171-197`）は本タスクでは **`manifest()` を通した後に `withoutComponents` を呼ぶ既存の形のまま**（木の取得は T3、`withoutComponents` の撤去も T3）。version 2 で `components: {}` の子なし画面は `withoutComponents`（宣言の有無しか見ない `:63`）を素通りするので、T2 の時点で network-first と `save` / `restore` を往復できる。`tests/files-cache-rpc.test.js:225-253` の `cacheFixture` は version 1 のままで green
-    - テスト（`tests/components-loader.test.js` に `describe("ApplicationLoader の木のマニフェスト")` を新設。fixture は `:48-67` の `fixture()` + `reads` を流用し、マニフェストを `responses` に載せる補助関数 `treeManifest(list)` を作る（子キー → `{source, script, descriptors}` を実バイトから組み、`revision` は `manifestRevision` で付ける）。ファイルは `packages/<rev>/component-<i>-source` 等の命名（決めた事項 4））:
-      - (a) version 2 + `components: {}` の子なし画面が network-first で取得でき、`save` → `restore` が往復する（`memoryOpfs` + `locks: null`。`tests/helpers/opfs.js`）
-      - (b) version 1 + `components: {}` → `配信マニフェストが不正です`（受け入れ 2(g)）。version 3 → 同文言。version 2 で `components` 無し → 同文言
-      - (c) 子の `script.size` が 100_001 / 子の `descriptors` が 9 件 / `source.sha256` が 63 桁 / `components: []` / 子キー `a.json` と `./a.json` の重複 / 子キー `javascript:alert(1)` / 子 9 件 → `マニフェストのコンポーネント情報が不正です`（`components: []` は `配信マニフェストが不正です`）。いずれも `resources.bytes` が 0 回（`reads` にマニフェスト URL 以外が無い）
-      - (d) 合計 2,000,001（例: root `source.size` 1,000,000 + `script.size` 1 + 子 A `source.size` 999,000 + 子 B `source.size` 1,000、子の `script.size` は 0 → 2,000,001。`size` は 0 以上の整数なら `check` を通る `:34-36`）→ `配信ファイルの合計が2 MBを超えています（合計 2000001 バイト。最大の子: {子 A の href} 999000 バイト）` で `reads` にマニフェスト URL 以外が無い（受け入れ 2(e)。§1.5 の読み方）。合計ちょうど 2,000,000 は manifest を通り、次の `resources.bytes` が 404 なので `HTTP 404` で落ちる（境界値。P10）
-      - (e) `manifestRevision`: 同じ木を子キーの挿入順を逆にして組んでも revision が同じ。descriptor を持つ子（`rpc-demo.pb`。`:294-327` の fixture）でも同じ。子の `source.sha256` を 1 文字変えると revision が変わる
-      - (f) P17: `JSON.parse('{"components":{"__proto__":{"source":5}}}')` の形（own property として入る `__proto__` キーで値が形不正）が `TypeError` 等の例外にならず `マニフェストのコンポーネント情報が不正です`。値の形が正しい `__proto__` キーは `httpUrl("__proto__", base)` を通るので T2 では拒否されない（宣言との一致検査が T3。**T3 (b) で `（宣言に無い子: …）` を固定する**）
-    - `bunx vp test run tests/components-loader.test.js tests/files-cache-rpc.test.js` が green（既存の `refuses a screen with components on the delivery cache path` `:190-214` は T3 で置き換えるので本タスクでは残す）
-  - 対象: `src/application-loader.js`, `tests/components-loader.test.js`
-  - 依存: なし（T1 と独立。順序は T1 → T2）
-  - 並列サブ作業: なし（同じ 2 ファイル）
+    - R0b: `src/application-loader.js` `#walk` の `visit` 冒頭（`for` の前）で `Object.keys(parent.components ?? {}).length > 8` なら `コンポーネントの宣言が8件を超えています: {URL}`（`{URL}` = 宣言を持つパッケージの href = `base.href`）。取得・列挙の前（P16）。`scripts/publish-packages.mjs` の `visit` 冒頭に同じ検査（`{URL}` は絶対ファイルパス `declaringFile`）。`src/runtime.js:45-67` の `resolveComponents` は対象外（REQUIREMENTS R0b）
+    - R0b テスト: `tests/components-loader.test.js` で 9 件宣言（ui には置かない。配置 8 Instance の既存テスト `:205-225` と別物）が network-only で拒否され、root 以外の `f.reads` が 0。8 件は通る。network-first（`treeManifest` 経路）でも 9 件が同文言。`tests/publish-packages.test.js` に 9 件拒否（`untouched(output)`）と 8 件通過
+    - R0c: `manifest(value, screenUrl)` に署名を変え、配信ファイルの `url` の形検査（`check` 内の `httpUrl(entry.url, base)`）だけ内部で組んだ sidecar（`new URL(screenUrl)` に `pathname += ".manifest.json"`）を基準にする。子キーの重複判定（`:92`）と 2 MB 文言の「最大の子」（`:108-113`）は `httpUrl(key, screenUrl).href`。`fetch:386-389` の呼び出しを `manifest(…, url)` に変える。`save:489,502` / `restore:540` は既に画面 URL
+    - R0c テスト（`tests/components-loader.test.js`、`treeManifest` で revision 込み）: (a) 既存の相対キー（`a.json` 等）の受け入れ / 拒否 / 文言のテストが期待値不変で通る（既存テストを変えない）。(b) 子キー `""` と `parent.json` の 2 つを持つマニフェスト（`version: 2`、どちらも同じ画面 URL に解決）が `マニフェストのコンポーネント情報が不正です`（括弧なし）で拒否される。(c) 基準依存キー（`?x`）を最大の子にした 2 MB 超のマニフェストで、文言の「最大の子」が画面 URL 基準の href（`href("parent.json?x")`）になる（P19）。(d) sidecar 基準でのみ解決できていた `url`（`packages/<rev>/source` の相対）が引き続き sidecar 基準で読める（既存の network-first テスト `:573` が不変。P18）
+    - 文書: `docs/files-cache-rpc.md:105` の「`base`はrootの画面URL」の断言が `manifest()` の実装と一致（R0c 後に真になる）。`:109` に宣言件数の文言を足す。`docs/components.md`「制限」表に `| 宣言（1パッケージあたり） | 8 |` の行、`:246` に「宣言数（1 パッケージ 8）は Instance 数・同梱数とも別物」（P17）、`:257` を「日本語4文言」に
+    - `bunx vp test run tests/components-loader.test.js tests/publish-packages.test.js` green、`bun run check` green
+    - 担う落とし穴: P16 / P17 / P18 / P19
+  - 対象: `src/application-loader.js`, `scripts/publish-packages.mjs`, `tests/components-loader.test.js`, `tests/publish-packages.test.js`, `docs/files-cache-rpc.md`, `docs/components.md`
+  - 依存: T1
+  - 並列サブ作業:
+    - A: ローダー（R0b の `#walk` + R0c の `manifest()`）とそのテスト（対象: `src/application-loader.js`, `tests/components-loader.test.js`）
+    - B: 生成スクリプトの件数上限とそのテスト（対象: `scripts/publish-packages.mjs`, `tests/publish-packages.test.js`）
+    - C: 文書（対象: `docs/files-cache-rpc.md`, `docs/components.md`）
 
-- [x] T3: 走査の供給元抽象化と network-first の木の取得（`withoutComponents` の撤去）
+- [x] T3: R1 + R2 前半 — 子 widget の `metadata.webmcp`、子パッケージ `webmcp` の受け入れ、`window` の文言（Rust）
   - 完了基準:
-    - `#components(screen, url, signal)`（`:121-158`）を `#walk(screen, url, signal, provide)` に置き換える。`provide(href, name)` は `(href: URL) → Promise<{screen, script: string, descriptors, sourceBytes, scriptBytes, hashes: {source, script, descriptors: {key: sha256}}}>` の形で、循環（`stack`）・深さ（`depth + 1 > 3`）・1 回取得（`packages[href]`）・宣言の `url` 書き換え（`declaration.url = child.href`）・`instanceTable` / `scopeProblem` の検査は `#walk` の 1 か所に残す（§5-A）。供給元に関係なく宣言へ降りる（P4）
-    - 供給元 2 つ（T5 で 3 つ目）: `#fromNetwork(signal)` = 既存 `#download` + `hashes` の計算（`sha256` を取得時に 1 回）、`#childIndex(metadata, base)` = `httpUrl(key, base).href → entry` の索引を `manifest()` の結果から組む（`#matchTree` も同じ索引を使うので切り出す）、`#fromManifest(index, base, signal)` = その索引を引く `provide` を返す。`provide(href)` は索引に無ければ `マニフェストのコンポーネント情報が不正です（マニフェストに無い子: {href}）`、あれば `resources.bytes(httpUrl(entry.url, base))` + `verify` を source / script / descriptors（ソート済みキー順）に掛け、`hashes` はマニフェストの sha256 をそのまま持つ。子ファイルの `verify` 失敗は `配信ファイルのサイズ・ハッシュが一致しません（{href}）`（`href` = 子パッケージの絶対 URL。root のファイルは既存文言のまま）
-    - 走査後の一致検査 `#matchTree(index, packages)`（§5-B）: 索引にあって `packages` に無い href → `マニフェストのコンポーネント情報が不正です（宣言に無い子: {href}）`（複数なら `<` 順で先頭 1 件）
-    - `#candidate`（`:79-101`）の「parse → rpc の descriptor 集合とファイルの一致 → `script` 文字列必須」を純関数 `parsed(url, source, script, descriptors)` に切り出し、root（`#candidate`）と `#fromManifest`（子）の両方が使う（子でも `RPCのDescriptorと配信ファイルが一致しません` / `script URLがありません` が出る）
-    - `fetch` の network-first（`:171-197`）: manifest → root の source / script / descriptors → `#candidate` → `#walk(candidate.screen, url, signal, #fromManifest(...))` → `#matchTree` → `signal?.throwIfAborted()` → 認証再確認 → `candidate.components = packages`（`{screen, script, descriptors, sourceBytes, scriptBytes, hashes}` のまま。`engine.js:93-103` / `runtime.js:56-64` は 3 キーしか読まないので壊れない）→ return。network-only は `#walk(..., #fromNetwork(signal))`。**`withoutComponents`（`:60-67`）と `fetch:195` の呼び出しを削除**。`restore:300` の呼び出しは T5 で消すので、本タスクでは `restore` の中で `candidate.components = Object.create(null)` を直接置いて **`components` を持つ保存版を `マニフェストのコンポーネント情報が不正です` で拒否**（T5 までの暫定。T5 の完了基準で置き換える）
-    - 子の取得で `e.code === "NETWORK"` の失敗は root と同じく `restore` へ落ちる（`catch` は既存 `:198-206` のまま）。ハッシュ不一致・一致検査の失敗は落ちない（既存 `rejects corrupted … packages` と同じ意味）
-    - テスト（`tests/components-loader.test.js`）: `:190-214` の `refuses a screen with components on the delivery cache path` を**削除**し、`describe("ApplicationLoader の木のマニフェスト")` に足す:
-      - (a) parent（子 a・孫 leaf、`parts/b.json`）の version 2 マニフェストで network-first → `candidate.components` のキーが network-only と同じ 3 つ、`candidate.screen.components` の URL 書き換え・`candidate.components[a].screen.components.leaf.url` が network-only と `toEqual`、`instanceTable` の表が同じ、各子ファイルの `reads` が 1
-      - (b) マニフェストに無い子（宣言にあるのにキーが無い）→ `マニフェストのコンポーネント情報が不正です（マニフェストに無い子: {href}）`。宣言に無い子（余るキー）→ `（宣言に無い子: {href}）`。`__proto__` キー（T2 (f) の期待値をここで書き換える）→ `（宣言に無い子: {href}）`。いずれも余る子のファイルは取得しない（`reads` に無い）
-      - (c) 子の script のバイトを差し替え（サイズ同じ・ハッシュ違い）→ `配信ファイルのサイズ・ハッシュが一致しません（{子の href}）`。root の script 差し替え → 既存文言（URL 無し）
-      - (d) 子の取得が `TypeError("offline")`（`code: "NETWORK"`。`resource-client.js` が付ける）→ `restore` へ落ち、保存版が無ければ `通信に失敗し、利用できる保存版もありません`
-      - (e) 共有から来た子でも走査が宣言へ降りる（P4）はメモリ共有が T4 なので T4 で書く。本タスクでは network-first の木に対する循環（子が root を宣言）→ `循環参照`、深さ 4 → `入れ子が3段を超えています`、scope 違反の子 → `保存領域 … が不正です` の 3 本（network-only の既存テスト `:126-159,:280-291` と同じ fixture にマニフェストを付ける）
-      - (f) 既存の入口 × 新しい状態の直交表: `fetch(network-only)` / `fetch(network-first)` / `save` / `restore` / `clear` の 5 入口のうち、本タスク後に木を流せるのは `fetch` の 2 つ。`save(candidate)` に木の候補を渡すと子を書かない（T5 までの暫定。`save` の既存テストが green のまま）。`restore` は `components` ありの保存版を拒否する（上記）。`clear` は無改修
-    - `bunx vp test run tests/components-loader.test.js tests/files-cache-rpc.test.js tests/parts-lab.test.js tests/components-demo.test.js tests/components-effects.test.js` が green（network-only の既存テストは期待値不変）
-  - 対象: `src/application-loader.js`, `tests/components-loader.test.js`
-  - 依存: T2
-  - 並列サブ作業: なし（走査の書き換えとテストは同じ構造に依存する）
+    - `engine/src/lib.rs:1303-1312` の後処理を、`widget.target.rsplit_once('/')` で `(instance パス, itemId)` に割り、`self.instance(path)?.ui`（`None` = root の `self.root.ui`）に `find_path` を掛ける形にする（決めた事項 2）。root の挙動（target に `/` が無い）は不変
+    - `engine/src/composition.rs:233-240` の `reject_effect_declarations` を削除し、`instance.rs:65-67` の `if component { … }` ブロックを消す。直後の `package.webmcp.validate()?` が子にも効く
+    - `composition.rs:246` の文言を `window is not available in components` に変える（判定は不変）。`composition_tests.rs:672` と `docs/components.md:172` を同じ文字列に
+    - Rust テスト（`engine/src/composition_tests.rs`。`part()` / `component()` / `compose()` / `widget_at()` / `keys()` の雛形で）:
+      - 深さ 1: 子ノード（itemId あり）の `webmcp` が `widget_at(&scene, "b/<itemId>").config["webmcp"]` に `{description, tags}` で出る。root ノードの `webmcp` も従来どおり出る（回帰）
+      - 深さ 3（`composed()` 系: `a` → `a/c`）: `a/c/<leaf の itemId>` に出る（P2。`split_once` だと壊れる形）
+      - 同じ子を 2 か所（`b` と `d` に同じ `leaf.json`）: 両 widget の `config["webmcp"]` が等しく、key だけ違う（P4）
+      - `a_child_may_declare_host_effects_but_not_the_tool_surface` を「`webmcp` を含む 7 種とも子で通る」に書き換え（関数名も `…_and_the_tool_surface` 等に変える）。上限超過（description 2,001 バイト）の子は `compose_error` が `starts_with("Component part: ")` かつ `ends_with("webmcp: description/label/tags exceed limits or have duplicate tags")`（P8。決めた事項 4）
+      - `a_child_cannot_own_a_window_at_any_depth` が新文言で green
+    - `cargo test` green、`cargo fmt -- --check` green。`bun run build:wasm` → `bunx vp test run` green（JS 側は無改修で通るはず。`tests/components-effects.test.js` 等に旧文言の期待が無いことを `git grep -n -F 'not available in components' -- tests` で確認: 現状 0 件）
+    - 照合: `bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-52ec888.wasm --candidate public/engine.wasm` が差分 0（`Scene` の形はこのタスクでは変わらない）。`bun scripts/probe-composition.mjs --candidate public/engine.wasm` は `child-webmcp-refused` 列が**落ちる**（load が通るようになるため）。このタスクでは probe 列を `isOk` の最小形（load が通る 1 ステップ）に書き換えて exit 0 にし、列の本置き換えは T6 で行う。チェックリスト行 13（`MUTATIONS[*].from` が `lib.rs` に各 1 回）
+    - 担う落とし穴: P2 / P3（既存挙動のまま。文書は T7） / P4 / P8 / P11
+  - 対象: `engine/src/lib.rs`, `engine/src/composition.rs`, `engine/src/instance.rs`, `engine/src/composition_tests.rs`, `scripts/probe-composition.mjs`（最小の暫定変更）, `docs/components.md:172`
+  - 依存: なし（T1 / T2 と独立。impl は PLAN の順に取る）
+  - 並列サブ作業: なし（`lib.rs` / `composition.rs` / テストが互いに依存）
 
-- [x] T4: ページ遷移をまたぐ子のメモリ共有（R5）と無効化の 3 契機
+- [x] T4: R2 後半 — `Scene.components[]`（instance / id / title / webmcp / hidden）を WASM で作る（Rust）
   - 完了基準:
-    - `ApplicationLoader` に `#share = new Map()`（href → T3 の provide の戻りの形）と `#shareKey = { mode: undefined, auth: undefined }` を持つ（`UiRuntime` ごとに 1 つ `runtime.js:83`）。`fetch(value, { mode, signal, refresh = false })` の冒頭で `auth = JSON.stringify(this.resources.getAuthentication())`（P12）を取り、`refresh || mode !== this.#shareKey.mode || auth !== this.#shareKey.auth` なら `#share.clear()`、その後 `#shareKey = { mode, auth }`（P11: 値比較）。`UiRuntime.load`（`runtime.js:419-422`）が `refresh: refreshEngine` を渡す
-    - 供給元の共有参照: `#fromNetwork` は `#share.get(href)` があれば取得せずに返す（network-only は一致確認なし）。`#fromManifest` は `#share.get(href)` の `hashes` が索引のエントリと**すべて一致**（`source` / `script` の sha256、`descriptors` のキー集合と各 sha256）したときだけ返し、違えば取得して置き換える。root は共有しない（`#share` に入れるのは `#walk` が集めた `packages` だけ）
-    - 共有への追加は `#walk` が `instanceTable` / `scopeProblem` まで終えた**後**に `for (const [href, entry] of Object.entries(packages)) this.#share.set(href, entry)`（P6: 途中の abort・検証失敗では入れない）。`fetch` の `catch` → `restore` 経路でも T5 の復元後に同じ関数で入れられるよう `#remember(packages)` に切り出す
-    - 共有エントリの `screen` は clone せず凍結もしない（決めた事項 7。走査の `declaration.url` 書き換えは絶対 URL に対して冪等、`runtime.js:45-70` の `resolveComponents` は `prepareScreen` で clone する）
-    - `UiRuntime.components`（`runtime.js:385`。編集適用の再利用）は触らない
-    - テスト（`tests/components-loader.test.js` に `describe("子パッケージのメモリ共有")`。`fixture()` の `reads` で回数を数える）:
-      - (a) 同じ loader で parent A（子 a・孫 leaf）→ parent B（子 a）を network-only で順に取得 → `reads.get(a.json)` と `a.rhai` と `leaf.json` が 1、B の `candidate.components[a]` と A のものが**同じオブジェクト**（`toBe`）、A の取得後と B の取得後で共有エントリの `screen` が `toEqual`（P5）
-      - (b) `fetch(B, { refresh: true })` → 2 回目の取得。同じ `mode` で `refresh` 無しの 3 回目 → 増えない（P11）
-      - (c) `resources.setAuthentication({ mode: "none", allowedOrigins: [同じ] })` を再設定して取得 → 増えない（`mode: "none"` は `allowedOrigins` を必ず `[]` にするので metadata が同じ。P12）。`{ mode: "jwt", token: "x", allowedOrigins: [base の origin] }` にして network-only で取得 → 増える（network-only は認証ありでも取得できる）。`allowedOrigins` をもう 1 つ足した `jwt` に変える → 増える
-      - (d) network-first: A の木のマニフェストで取得（子ファイル `component-0-source` 等の `reads` が 1）→ もう 1 度 network-first → 子ファイルの `reads` は 1 のまま（共有を使った）→ 子の script を変えたマニフェスト（sha256 違い）→ 子ファイルを再取得（`reads` が 2）し `candidate.components[a].script` が新しい値。descriptor の sha256 だけ違う場合も再取得
-      - (e) `network-only` で取得 → `network-first` で取得（`mode` 変更）→ 子ファイルをマニフェスト経由で取得する（共有が消えている）。逆順も同じ
-      - (f) 共有から来た子でも走査が降りる（P4。深さのみ。循環は共有経由では構成できない: 共有に入った子の部分木は検証済みで、別 root からの循環は「その子が root を宣言する」ことになり最初の load で落ちる）: A（depth 2 で `mid` を共有。`mid` → `leaf`）→ B（`wrap` → `mid` → `leaf` = depth 4）→ `コンポーネントの入れ子が3段を超えています: {leaf の href}`、`mid` のファイルは再取得していない
-      - (g) 取得途中の失敗は共有に入らない（P6）: A の `leaf.rhai` を 404 にして A が失敗 → `leaf` を使う B の取得で `leaf.json` が再び読まれる（`reads` 2）。`a.json` も共有に入っていない（`a.json` の `reads` 2）
-      - (h) `UiRuntime.load(url, { refreshEngine: true })` が `applicationLoader.fetch` に `refresh: true` を渡す（`vi.spyOn(runtime.applicationLoader, "fetch")`。`tests/components-loader.test.js` の 2 つ目の `describe` の `host()` を使う。雛形は `tests/runtime.test.js:49-59`）。`refreshEngine` 無しの `load` は `refresh: false`
-      - (i) runtime レベル（`tests/parts-lab.test.js` の `host()` を流用して同ファイルに 1 本）: `runtime.load("screens/parts-lab.json")` → `runtime.load("screens/http-grid.json")` → `runtime.load("screens/parts-lab.json")` で、`fetch` モックの呼び出し URL のうち `parts/note-pad.json` と `parts/approval.json` が 1 回ずつ、`http-grid.json` は 2 回（root としての 1 回 + 子としての 1 回。root は共有しない。`:245-260` の形）
-    - `bunx vp test run tests/components-loader.test.js tests/parts-lab.test.js tests/runtime.test.js` が green
-  - 対象: `src/application-loader.js`, `src/runtime.js`, `tests/components-loader.test.js`, `tests/parts-lab.test.js`
+    - `engine/src/lib.rs` に `#[derive(Serialize)] pub struct Component { pub instance: String, pub id: String, pub title: String, #[serde(skip_serializing_if = "metadata::Metadata::is_empty")] pub webmcp: metadata::Metadata, pub hidden: bool }` と、`Scene` に `#[serde(skip_serializing_if = "Vec::is_empty")] pub components: Vec<Component>` を足す（決めた事項 1）。`layout()` の `Scene { … }` 生成で `components: self.component_summaries()?,` と書く（この 1 行が T6 の変異 M8 の置換点。文字列を変えない）
+    - `fn component_summaries(&self) -> Result<Vec<Component>, String>`: `self.components`（`BTreeMap`。親は子より先に来る）を順に回し、`path.rsplit_once('/')` で `(parent_path, item_id)`（`None` → `("", path)`）。`hidden = hidden[parent_path] || hidden_component(component_node(parent, item_id).ok_or(unknown_item(path))?, &parent_state)`。`parent_state` は root なら `self.root.state_json()?`、子なら `self.instance(parent_path)?.state_json()?`（決めた事項 3。`layout_scope()` の後ろで呼ぶ。P7）。`id` / `title` / `webmcp` は `instance.package` のクローン
+    - Rust テスト（`composition_tests.rs`。`serde_json::to_value(&scene)` で見る）:
+      - 子の無い画面: JSON に `components` キーが**無い**（P1）
+      - `composed()` + `bundled()`: `components` が `[a, a/c, b]` の順で、`id` / `title` が各パッケージのもの、`webmcp` は宣言した子だけに出る、`hidden` が全部 `false`
+      - 既存の入口 × `components[]` の直交表（各行 1 アサーション以上）:
+        | 入口                                                     | 確かめること                                                                                                                                |
+        | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+        | `load_with_components` 直後の `layout`                   | 上の順序・内容                                                                                                                              |
+        | 親の `visibleBind` が false（`listing` + `visibleBind`） | `hidden: true` で widgets に `a/` が無い。`set_state(&mut runtime.root, "ready", json!(true))` 後は `hidden: false` で widgets が出る（6b） |
+        | 深さ 3 で中間（`a`）を隠す                               | `a` と `a/c` の両方が `hidden: true`、表示に戻すと両方 `false`（P5）                                                                        |
+        | 親 state に `ready`、子 state にも同名キー（false）      | 親の `ready` だけで切り替わる（P6）                                                                                                         |
+        | `dispatch`（子の handler が自分の state を変える）       | `components[]` の `id` / `title` / `webmcp` / 順序が不変（package 由来）                                                                    |
+        | 同じ子を 2 か所（`open` / `shipped`）                    | 2 件、`id` が同じ、`instance` が違う、`webmcp` が deep-equal（P4）                                                                          |
+        | `layout` の幅エラー（`width` 範囲外）                    | 既存 `a_rejected_layout_leaves_no_scope_behind_for_the_next_one` が green（P7）                                                             |
+      - `scene.webmcp` は root のまま（子に `webmcp` を宣言しても `Scene.webmcp` が変わらない。受け入れ 3）
+    - `cargo test` green。`bun run build:wasm` 後、`compare-engine-behavior.mjs` が差分 0（子の無い画面の `layout` 応答が不変 = P1 の実証）、`probe-composition.mjs` exit 0（T3 の暫定列のまま）。チェックリスト行 13
+    - 担う落とし穴: P1 / P5 / P6 / P7 / P4
+  - 対象: `engine/src/lib.rs`, `engine/src/composition_tests.rs`
   - 依存: T3
-  - 並列サブ作業: なし（共有の形が供給元と結びつく）
-
-- [x] T5: 木の保存と復元（`save` / `restore` の木への拡張、堅牢性）
-  - 完了基準:
-    - `save(candidate)`（`:208-264`）: root の source / script / descriptor を書いた後、`keys = Object.keys(candidate.metadata.components ?? {}).sort()` の添字 `i` ごとに `href = httpUrl(keys[i], candidate.url).href`、`entry = candidate.components[href]`（無ければ `マニフェストのコンポーネント情報が不正です（マニフェストに無い子: {href}）`）、`directory.mkdir(`${path}/components/${i}`)` → `write(`${path}/components/${i}/source`, entry.sourceBytes)` → `script` → `descriptor-${n}`（`n` は `Object.keys(metadata.components[keys[i]].descriptors ?? {}).sort()` の添字。`entry.descriptors[key]` のバイト列）。保存は**マニフェストのキー**で回す（P15: 2 か所に置いた子も 1 回）。その後は既存どおり abort / 認証 / `previous.json` / `current.json` / 古い版の削除。古い版の削除は `versions.entries()` を**配列に集めてから** `removeEntry`（P9）し、`NotFoundError` は無視
-    - `restore`（`:265-306`）: ポインタごとに `manifest()` → root のファイル `verify` → `#candidate(..., "cache", metadata)` → `#childIndex(metadata, url)` → `#walk(candidate.screen, url, signal, #fromStore(directory, metadata, url, signal))` → `#matchTree(index, packages)` → `candidate.components = packages` → `#remember(packages)`（T4）→ return。`#fromStore` は `keys.sort()` の逆引き（`href → i`）で `components/${i}/{source,script,descriptor-n}` を `directory.read` + `verify`（失敗は `配信ファイルのサイズ・ハッシュが一致しません（{href}）`）。root と子孫のどれか 1 つでも失敗したらその版を使わず次のポインタ（R3）。`catch` は `catch (e) { signal?.throwIfAborted(); last = e; }` の形で最後の理由を保持し（P7）、両方失敗したら `通信に失敗し、利用できる保存版もありません（{last.message}）`（`last` があるとき。ポインタが無い `NotFoundError` だけなら既存の文言のまま）。**T3 の暫定（`components` ありの保存版の拒否）を削除**
-    - `clear` は無改修（子は root 配下。R3）
-    - `restore` の走査は `withFileLock` の callback の中で動くが他のロックは取らない（§1.1: `save` / `restore` / `clear` を別のロックの callback から呼ばない）
-    - テスト（`tests/components-loader.test.js` の `describe("ApplicationLoader の木のマニフェスト")` に足す。`memoryOpfs` + `locks: null`。版ディレクトリの中身は `OpfsDirectory(["uivolve-web", "cache", await sha256(encoder.encode(url.href))])` で読む（`tests/files-cache-rpc.test.js:301-306` の形）:
-      - (a) 受け入れ 2(a): version 2 の木（子 a・孫 leaf・`parts/b.json`、うち 1 つは descriptor 付き）で取得 → `save` → `versions/<rev>/components/0..2/{source,script[,descriptor-0]}` が存在し、`current.json` の `metadata` が version 2 で `components` を持つ。`write` の呼び出し回数（`fs.controls.beforeClose` の回数）= root 2 + 子 3 × 2 + descriptor 1 + `current.json` 1 = 10
-      - (b) 受け入れ 2(b): マニフェスト取得を `TypeError("offline")` にして network-first → `status: "cache"`、`candidate.components` のキー・各子の `screen.components` の書き換え後 URL・`instanceTable` の表・`scopeProblem` の判定が network-only の取得結果と `toEqual`、`candidate.fallbackReason` が `HTTP取得に失敗しました（通信・CORS・リダイレクトを確認してください）`（`ResourceClient` が `TypeError` を言い換えた NETWORK の文言。決めた事項 14 の「通信エラーの `message`」はこれ）。復元した木が `runtime.compile(candidate.screen, candidate.script, url, { components: candidate.components })`（`tests/components-loader.test.js` の 2 つ目の `describe` の `host()`）で実 WASM に load できる
-      - (c) 受け入れ 2(c): 2 版を保存（T2 の `treeManifest` で子の script を変えた第 2 版）→ 現在版の `components/0/script` を `"bad"` に上書き → `restore` の `metadata.revision` が第 1 版。`current.json` は第 2 版のまま（壊した版は消さない。既存 `:290-311` と同じ）
-      - (d) 受け入れ 2(d): 第 1 版の子も壊す → `通信に失敗し、利用できる保存版もありません（配信ファイルのサイズ・ハッシュが一致しません（{href}））`（正規表現 `/保存版もありません/` でも通る）
-      - (e) 受け入れ 2(h): `left: part.json` / `right: ./part.json` の木（`:105-124` の fixture）を保存 → `versions/<rev>/components/` の子ディレクトリが 1 つ、`beforeClose` の回数 = root 2 + 子 2 + 1
-      - (f) 子キーのソート往復（P8）: 子キー `A.json` / `_a.json` / `a-1.json` / `a.json` の 4 子を持つ木を `save` → `restore` で各子の `script` が元と一致（`Object.keys(...).sort()` は UTF-16 code unit 順 = `A.json` < `_a.json` < `a-1.json` < `a.json`）
-      - (g) 受け入れ 8（R8。堅牢性）: 第 1 版を保存 → 第 2 版の保存で `fs.controls.beforeClose` が子の `script`（N 回目の `close`）で `QuotaExceededError` を投げる → `save` が reject し、`restore` が第 1 版、`current.json` が第 1 版のまま（`:312-324` の形）。`signal` を途中で abort（`beforeClose` の中で `controller.abort()`）→ `AbortError` で抜け、`current.json` が第 1 版のまま。`UiRuntime.load`（`runtime.js:447-454`）が `save` の失敗を `onCache({ status: "save-error" })` に落として表示中の UI（`runtime.screen.id`）を保つ 1 本
-      - (h) `save` の古い版の削除が反復の後に起きる（P9）: `memoryOpfs` の `versions` の `removeEntry` を `vi.spyOn` し、3 版保存後に `entries()` の完了より後に全呼び出し（`mock.invocationCallOrder`）。既存 `keeps only the current and previous complete cache generations`（`tests/files-cache-rpc.test.js:325-337`）が green のまま
-      - (i) 受け入れ 2(f): version 1 のマニフェスト / 保存版（`tests/files-cache-rpc.test.js` の既存 7 本）が無改修で green
-      - (j) 直交表（既存の入口 × 木）: `fetch(network-only)` 木 / `fetch(network-first)` 木 / `save` 木 / `restore` 木 / `clear` 木（保存後に `clear` → `restore` が `保存版もありません`）の 5 入口を 1 本ずつ（(a)〜(e) と `clear` の 1 本で網羅していることを PROGRESS に表で書く）
-    - `bunx vp test run tests/components-loader.test.js tests/files-cache-rpc.test.js` が green
-  - 対象: `src/application-loader.js`, `tests/components-loader.test.js`
-  - 依存: T4
   - 並列サブ作業: なし
 
-- [x] T6: 生成スクリプトの version 2（子の再帰・検査・命名・2 MB）とデモのマニフェスト
+- [x] T5: JS 側 — `ui_get_screen.components` とデモ子パッケージの `webmcp`（R2 / R2b / R3 / R4）
   - 完了基準:
-    - `scripts/publish-packages.mjs` の `publishPackage(sourcePath, output = dirname(sourcePath))`（`:9-56`）が: (1) `readPackage(filePath)` で画面・`script`・descriptor を**そのファイルの dirname 基準**で読む（既存 `readRelative` の規則 `:12-16`。`^(?:[a-z]+:|\/)` を拒否する文言は既存のまま）、(2) `components` を宣言単位で DFS（`declaration.url` が文字列でない → `コンポーネント {名前} の宣言が不正です（url を文字列で指定してください）`、ローカル相対パス以外 → 既存の `配信用ビルダーにはローカルの相対パスを指定してください`、`childPath = fileURLToPath(new URL(declaration.url, pathToFileURL(declaringFile)))`、`stack` に `childPath` があれば `コンポーネント {名前} の循環参照: {childPath}`、`depth + 1 > 3` なら `コンポーネントの入れ子が3段を超えています: {childPath}`、同じ `childPath` は 1 回だけ読む）、(3) `structuredClone` した画面の `declaration.url` を `childPath` に書き換えて `instanceTable(rootClone, sourcePath, packages)`（`src/component-tree.js:5`）を通す（9 Instance で `コンポーネントの数が8を超えています（rootを含む）: {childPath}`）、(4) 合計 `Σ (source.length + script.length)` が `2_000_000` 超なら `配信ファイルの合計が2 MBを超えています（合計 {total} バイト。最大の子: {key} {bytes} バイト）`（`key` は下のマニフェストの子キー）、(5) マニフェストを**先に組む**: 子キー = `relative(dirname(sourcePath), childPath).split(sep).join("/")`（posix）、各子 `{source, script, descriptors}` の `url` = `packages/<rev>/component-<i>-source` / `component-<i>-script` / `component-<i>-descriptor-<n>`（`i` = 子キーを `.sort()` した添字、`n` = その子の descriptor キーを `.sort()` した添字。root は既存の `source` / `script` / `descriptor-<n>`）、`sha256` は `createHash`、`revision` は **`../src/application-loader.js` の `manifestRevision` を import** して付ける（P1: 式を 1 か所に）、(6) `packages/<rev>/` を作って全ファイルを書き、`<basename>.manifest.json` を書く（書き出しは revision 確定後。§5-E）。`version: 2` を常に出し、子の無い画面は `components: {}`
-    - `scripts/build.mjs:11-12` と引数なしの `bun run publish:packages` は無改修で `SCREEN_CATALOG` 全画面を生成する（`order-dashboard` / `parts-lab` を含む）
-    - テスト（新規 `tests/publish-packages.test.js`。一時ディレクトリは `mkdtemp(join(tmpdir(), "uivolve-publish-"))` で `afterAll` に `rm(..., { recursive: true })`）:
-      - (a) 受け入れ 3 / 7 / P2: fixture を一時ディレクトリに書く: `screens/root.json`（子 `parts/mid.json`、descriptor 付き子 `rpc.json` が `../rpc-demo.pb` を参照）、`parts/mid.json`（孫 `./leaf.json` と `../../shared/x.json`）→ `publishPackage(root, out)` の `metadata.version` が 2、`Object.keys(metadata.components).sort()` が `["../shared/x.json", "parts/leaf.json", "parts/mid.json", "rpc.json"]`、各 `url` のファイルが `out/packages/<rev>/` に存在し `sha256` / `size` が一致。生成物を `responses` に載せた `ApplicationLoader` の network-first が通り、`candidate.components` のキー = 子キーを `httpUrl(key, rootUrl)` で絶対化した集合（**生成側のキーとローダーが絶対化した href の一致**）。`save` → `restore` が往復する
-      - (b) 受け入れ 3: 循環（`mid` → `root.json`）→ `循環参照`、深さ 4 → `入れ子が3段を超えています`、8 子を全部置いた root（9 Instance）→ `コンポーネントの数が8を超えています（rootを含む）`、`source` 1,000,000 バイト × 2 + 1 の木 → `配信ファイルの合計が2 MBを超えています（合計 …。最大の子: …）`。いずれも `out/` に `packages/` も `.manifest.json` も作られない
-      - (c) P1: 子キーの宣言順を逆にした root（`components` の挿入順だけ違う）で、**子キー・`component-<i>-*` のスロット番号・各ファイルの sha256 / size が一致**（`revision` 自身は root の DSL テキストが変わるので一致しない）。生成した `metadata` に `manifestRevision` を掛け直しても同じ値で、`components` のキーを逆順に入れ替えた `metadata` でも `manifestRevision` が同値（式が挿入順に依存しない）
-      - (d) 受け入れ 7 / §7-7: `bun run build:wasm` の生成物（`bun run test` が先に回す）`public/screens/order-dashboard.json.manifest.json` が version 2 で `components` のキーが `["parts/order-list.json"]`、`parts-lab.json.manifest.json` が `["http-grid.json", "parts/approval.json", "parts/note-pad.json"]`、`http-grid.json.manifest.json` が `components: {}`。3 つとも `ApplicationLoader` の `manifest()`（`fetch(network-first)` 経由。ファイルは `readFile` で `responses` に載せる）を通る。`.gitignore` の `public/screens/*.manifest.json` と `public/screens/packages/` が残っている（`git check-ignore` で確認して PROGRESS に書く）
-      - (e) 子の `url` が `https://…` / `/abs.json` → `配信用ビルダーにはローカルの相対パスを指定してください`
-    - `bun run build:wasm` → `bunx vp test run tests/publish-packages.test.js tests/components-loader.test.js tests/files-cache-rpc.test.js tests/distribution.test.js` が green
-  - 対象: `scripts/publish-packages.mjs`, `tests/publish-packages.test.js`（新規）
-  - 依存: T5（`save` / `restore` の往復を (a) で使う）
+    - `src/ui-tools.js:134-147` の `ui_get_screen` 戻りに `components: snapshot.scene.components ?? []` を足す（`preview()` を通さない。P21。`widgets` の `offset` / `limit` に影響されない）。`describe()` / `snapshot()`（`src/runtime.js:466-482`）は無改修
+    - デモ（R2b。決めた事項 7 の文言）: `public/screens/parts/note-pad.json`（パッケージ直下 `webmcp` + `text` / `save` に部品の `webmcp`）、`parts/approval.json`（直下 + `ask`）、`parts/order-list.json`（直下 + `orders`）。上限内（label ≤ 160 バイト / description ≤ 2,000 バイト / tags ≤ 8・各 ≤ 80 バイト・重複なし。P20: 生成スクリプトは検証しないので `load` で確かめる）
+    - JS テスト（既存ファイルへ追記。新規ファイルを作らない）:
+      - `tests/components-demo.test.js`（raw ABI、order-dashboard）: `layout` 応答の `components` が `[{instance:"open", id:"order-list", …}, {instance:"shipped", …}]` の順で、両方の `webmcp` が deep-equal、`hidden` false。`open/orders` と `shipped/orders` の widget `config.webmcp` が等しい。`data.webmcp` が root のまま（order-dashboard は `webmcp` 未宣言なので無い）
+      - `tests/parts-lab.test.js`（`UiRuntime`）: `runtime.snapshot().scene.components` が `[approval, note, products]`（バイト順）、`products`（http-grid）は `webmcp` キー無し、`note` / `approval` にデモの文言。`createUiTools(runtime)` 相当の host で `ui_get_screen` を呼び `components` と `widgets[]` の `note/text` の `metadata.webmcp` が出る。`stateKeys` が root の `["notice"]` だけで子の `text` / `result` が無い（R3 回帰）
+      - `tests/webmcp.test.js`: 子の無い `grid` で `components` が `[]`。`ui_load_screen` 後も `[]`（P22）。`offset` / `limit` を変えても `components` が同じ（R4）。`ui_get_screen` を `{offset: -1}` / `{limit: 0}` / `{limit: 1000}` / `{extra: 1}` で呼んでも `{ok:false, error:{code, message}}` で例外が漏れない（既存の `integer` / `INVALID_INPUT` 経路の回帰）
+      - 非表示の子（6b）を JS から: `tests/components-loader.test.js:1199-` の `WasmEngine / UiRuntime の components` 群か `tests/parts-lab.test.js` で、`visibleBind` を持つ親 fixture を `engine.load(…, { components })`（`src/engine.js:77-109`）で読み、`layout(500).components[0].hidden === true`、親 state を動かす dispatch の後 `false` かつ `widgets` に接頭辞付き key が出る（P23: `render()` / `layout()` を明示的に呼んでから読む）
+    - `bun run build:wasm` → `bunx vp test run` green（全部）、`bun run check` green。マニフェストの再生成は `build:wasm` が行う（gitignore 済み）
+    - 担う落とし穴: P20 / P21 / P22 / P23
+  - 対象: `src/ui-tools.js`, `public/screens/parts/note-pad.json`, `public/screens/parts/approval.json`, `public/screens/parts/order-list.json`, `tests/webmcp.test.js`, `tests/components-demo.test.js`, `tests/parts-lab.test.js`, `tests/components-loader.test.js`
+  - 依存: T4
   - 並列サブ作業:
-    - A: `scripts/publish-packages.mjs` の書き換え（対象: `scripts/publish-packages.mjs`）
-    - B: `tests/publish-packages.test.js` の (a)〜(e)（対象: `tests/publish-packages.test.js`。マニフェストの形・命名・文言は本 PLAN の「決めた事項」3〜5 を正とし、変えない）
-    - 親: `bun run build:wasm` → Vitest → `bun run check` → コミット
+    - A: `ui-tools.js` と `tests/webmcp.test.js` / `tests/components-loader.test.js` の非表示ケース（対象: `src/ui-tools.js`, `tests/webmcp.test.js`, `tests/components-loader.test.js`）
+    - B: デモ 3 ファイルの `webmcp` と `tests/components-demo.test.js` / `tests/parts-lab.test.js`（対象: `public/screens/parts/*.json`, `tests/components-demo.test.js`, `tests/parts-lab.test.js`。文言は決めた事項 7 を正とする）
+    - 親: `bun run build:wasm` と全体 Vitest はサブエージェントに禁止し、親がまとめて回す（前回 reflect の運用）
 
-- [x] T7: 契約文書の追従（R9。追従先チェックリスト 行 1〜14）
+- [x] T6: probe 列の置き換え（`child-webmcp-published`）、変異 M8、証跡の再生成、数字の追従
   - 完了基準:
-    - 追従先チェックリストの行 1〜14 をすべて実施し、各行の「確かめ方」の `git grep` を**行番号つきで全行**再実行して PROGRESS に「行 1 … 行 14」の表で書く（無改修と判定した行 10・11 は理由を書く）
-    - `docs/components.md`: 状態行（段階5）、「据え置きの拒否」から配信キャッシュを外して「3つ」、新節「子パッケージのメモリ共有」、「エラー文言」に JS 3 文言（T1 の英語 1 文言は再確認）、制限表の 2 MB 行と `instance` 行、「2MBの段構え」の 3 段化、「段階5以降の課題」から配信キャッシュを外す。`docs/files-cache-rpc.md:82-110`: 手順（木の取得・検証・保存・復元）、生成物の命名、マニフェスト version 2 の形と revision の式、子キーの基準、子の上限、`components/<i>/` の配置、3 文言、メモリ共有への参照、`:185`。`docs/components-plan.md:3,87,100`。`docs/ai-development.md:26`。`docs/architecture.md:84`。`docs/testing.md:41,43` + `publish-packages.test.js` の行。`docs/opfs-cache-rpc-investigation.md`。`README.md:116`。`skills/uivolve-web-app-dev/references/components-layout.md:30`、`skills/uivolve-web-engine-dev/references/components.md:12`
-    - 文書の断言（文言・ファイル名・件数・式）は `src/application-loader.js` / `scripts/publish-packages.mjs` / `engine/src/abi.rs` を `git grep -n -F` で引いて書く（記憶から書かない）。並列サブ作業の成果物をマージした直後に、親が本タスクの完了基準に出てくる `git grep` 条件を**全部**再実行してから PROGRESS を書く
-    - `bunx vp fmt <編集した Markdown>` を掛け、`bun run check` と `bun run docs:check` が green
-  - 対象: `docs/components.md`, `docs/files-cache-rpc.md`, `docs/components-plan.md`, `docs/ai-development.md`, `docs/architecture.md`, `docs/testing.md`, `docs/opfs-cache-rpc-investigation.md`, `README.md`, `skills/uivolve-web-app-dev/references/components-layout.md`, `skills/uivolve-web-engine-dev/references/components.md`
+    - `scripts/probe-composition.mjs`: `child-webmcp-refused` を `child-webmcp-published` に置き換える。親 fixture `WEBMCP_PARENT`（`EFFECT_PARENT` を元に `state: {shown: false}`、`items: [{xtype:"effectPart", itemId:"part", visibleBind:"shown"}, {xtype:"button", itemId:"show", text:"表示", handler:"show"}]`、script `fn init(s) { s } fn show(s, e) { s.shown = true; s }`）、子 `CHILD_WITH_WEBMCP`（パッケージ直下 `webmcp: {description: "部品"}` + `fire` ノードに `webmcp: {description: "呼ぶ"}`）。ステップ: `load`（`isOk`）→ `layout:800`（`data.components` が `[{hidden:true, id:"effect-part", instance:"part", title:"効果関数を呼ぶ部品", webmcp:{description:"部品"}}]` と deep-equal、`part/` で始まる key が無い、`data.webmcp` が `undefined`）→ `event:show`（`isOk`、revision 1）→ `layout:800:shown`（`components[0].hidden === false`、`part/fire` の `config.webmcp` が `{description:"呼ぶ"}`）。コメント `:273`「still refused at load」を書き換える
+    - `scripts/build-engine-variant.mjs` の `MUTATIONS` に M8 `{ name: "components-omitted", probe: "composition", file: "engine/src/lib.rs", from: "components: self.component_summaries()?,", to: "components: Vec::new(),", diff: "child-webmcp-published の layout:800 の data.components" }` を足す。`bun scripts/build-engine-variant.mjs --mutation components-omitted --out target/engine-compare/mutant-components-omitted.wasm` → `probe-composition.mjs --candidate <それ>` が exit 1
+    - `bun scripts/probe-composition.mjs --candidate public/engine.wasm` exit 0。`target/engine-compare/composition.json` の `steps` / `sequences` を実測し（見込み 57 / 6）、`docs/components.md:281` と `docs/testing.md:91`（「3つの列」→ 実測の列数、「子の`webmcp`はload時に拒否される」→「子の`webmcp`が`components[]`と`widgets[].metadata.webmcp`に公開され、非表示の子は`hidden: true`で出る」、「変異7本」→「変異8本」）に書く。`scripts/verify-instance-refactor.mjs:5` のコメント「変異 7 本」→「8 本」
+    - チェックリスト行 4 / 5 / 13 の `git grep` が条件どおり
+    - `bun run check` green（probe / build-engine-variant / docs を `bunx vp fmt` してから）
+    - 担う落とし穴: P9 / P10 / §7-6
+  - 対象: `scripts/probe-composition.mjs`, `scripts/build-engine-variant.mjs`, `scripts/verify-instance-refactor.mjs`（コメント 1 行）, `docs/components.md:281`, `docs/testing.md:91`
+  - 依存: T5
+  - 並列サブ作業: なし（数字は probe の実測に依存）
+
+- [x] T7: 契約文書の追従（受け入れ 7 + `docs/testing.md` + `docs/files-cache-rpc.md`）
+  - 完了基準:
+    - `docs/components.md`: `:108`「残る`webmcp`だけが据え置き」→ 7 種とも子で宣言できる（`webmcp` は `components[]` に instance 別で公開）。`:166`「据え置きの拒否」節を「子に許していないもの」に改め、`webmcp` の項を削除して `window`（新文言）と「変更を適用」の 2 つに。`:197` の英語一覧を `Component {path}: webmcp: description/label/tags exceed limits or have duplicate tags` に差し替え。`:272`「段階6以降の課題」→「段階7以降の課題」で `webmcp` の項を削除。新節「子の `webmcp`」（R1 / R2 の契約: 部品の `webmcp` は接頭辞付き key の widget に出る、パッケージの `webmcp` は `ui_get_screen.components[]`、`screen.webmcp` は root のみ、上限は root と同じで文言は `Component {path}: ` 前置、itemId の無いノードの `webmcp` は出ない（P3 の既存挙動を仕様として明記））
+    - `docs/webmcp.md`: `ui_get_screen` の説明（`:14` の表と `:21`）に `components` を足す。「次の拡張点」`:65` の段落に `components[]` の形 `{instance, id, title, webmcp, hidden}`、順序（`instance` 文字列のバイト順 = `BTreeMap` の順。ASCII なら辞書順。§7-7）、`hidden` の定義（親の `visibleBind` による非表示だけ。折りたたみ・非アクティブタブ・モーダル背後は `widgets[]` の有無と `blocked` で判断。§7-2）、突き合わせ規則（`widgets[].key` を末尾の `/` で割った左側が `components[].instance`。`/` を含まない key は root。`a/b/c` は instance `a/b`。§7-9）、`id` / `title` はパッケージのもので WebMCP 草案の `ModelContextTool.title` とは別（§7-8）、説明情報であり許可 action・入力 schema・認可を変えない（R2）。`:5` の草案確認日を `2026-10-09` に更新（RESEARCH §2）。**この行の `hidden` の定義と突き合わせ規則は F1 で改めた**（正は F1 の (2) / (3)。T7 時点の語を残した履歴）
+    - `docs/platform-features.md:131`: `widgets[].metadata.webmcp` は子 Instance の部品にも出る（key は接頭辞付き）、子パッケージの `webmcp` は `components[]` の 1 文
+    - `docs/components-plan.md:101`: 「段階6（WebMCP）。本マイルストーンで完了。子ノードの`webmcp`を接頭辞付きkeyのwidgetに載せ、子パッケージの`webmcp`を`ui_get_screen.components[]`にinstance別で公開した。ツールは画面1登録のまま」
+    - `docs/ai-development.md:26`: 「子の`window`は段階7以降の将来設計で、子に`window`を書くコードを生成しない。子の`webmcp`（パッケージ直下・部品）は生成してよく、`ui_get_screen.components[]`と`widgets[].metadata.webmcp`に出る」
+    - `docs/testing.md:91`: T6 で直した数字と句が残っていること（再確認）
+    - チェックリスト行 1 / 2 / 3 / 6 / 7 / 8 / 9 / 12 の `git grep` が条件どおり。`bun run docs:check` green
+    - **断言 → 実装シンボルの対応表**を PROGRESS に 1 つ書く（最低 5 行）: 「`components[]` の順序はバイト順」→ `BTreeMap<String, instance::Instance>`（`lib.rs:379`）/ 「`hidden` は親の `visibleBind`」→ `hidden_component`（`lib.rs:1854`）/ 「key を末尾の `/` で割る」→ `rsplit_once('/')`（T3 / T4 の実装行）/ 「上限は root と同じ」→ `Metadata::validate`（`metadata.rs:18`）/ 「文言の前置」→ `Component {path}: `（`lib.rs` `Composing::load` の `map_err`）/ 「`components` が無ければ `[]`」→ `snapshot.scene.components ?? []`（`ui-tools.js`）
+  - 対象: `docs/components.md`, `docs/webmcp.md`, `docs/platform-features.md`, `docs/components-plan.md`, `docs/ai-development.md`, `docs/testing.md`
   - 依存: T6
   - 並列サブ作業:
-    - A: `docs/components.md` と `docs/components-plan.md`（行 1・2・4・5・6・7・13）
-    - B: `docs/files-cache-rpc.md`、`docs/opfs-cache-rpc-investigation.md`、`docs/testing.md`、`docs/architecture.md`（行 3・4・7・8・9）
-    - 親: `docs/ai-development.md`、`README.md`、スキル 2 ファイル（行 10・14）、行 11 の無改修判定、全行の `git grep` 再実行、`vp fmt`、`check`、`docs:check`、コミット
+    - A: `docs/components.md` + `docs/components-plan.md` + `docs/ai-development.md`（対象: その 3 ファイル）
+    - B: `docs/webmcp.md` + `docs/platform-features.md`（対象: その 2 ファイル）
+    - 親: 対応表と `git grep` の再実行
 
-- [x] T8: 最終判定と受け入れ基準の総点検
+- [x] T8: 最終判定と総点検（R4 の堅牢性格子を含む）
   - 完了基準:
-    - `bun scripts/verify-instance-refactor.mjs` が OK（所要の表を PROGRESS に写す。`BASE_CHECKS` 6 本 → base 照合 差分 0 → probe → 変異 7 本が各 exit 1）
-    - 追従先チェックリストの行 1〜14 を**行番号つきで全行**再実行し、PROGRESS に「行 1 … 行 14」の表で書く（表の行数が 14 でなければ未完了）
-    - REQUIREMENTS の受け入れ基準 1〜9 を 1 行ずつ「どのテスト / どのコマンドで満たしたか」の表にして PROGRESS に書く（受け入れ 2 は (a)〜(h) の 8 行、受け入れ 4 は 4 契機の 4 行に展開）。RESEARCH §6 の落とし穴 P1〜P17 を「どのタスクのどのテストで検証したか」の表にする（P18 は恒常注意なので除く）
-    - `git diff main --stat -- engine/src/lib.rs` が 0 行、`git grep -n -F 'withoutComponents' -- src tests docs` が 0 件、`git grep -n -F 'componentsを持つ画面' -- src tests docs skills README.md` が 0 件
-    - `bun run build:wasm` 後の `public/screens/{order-dashboard,parts-lab,http-grid}.json.manifest.json` が version 2（T6 (d) のテストが green であることで確認）、`git status --short` に生成物が出ない
-    - `bunx vp fmt .gsd-lite/PLAN.md .gsd-lite/PROGRESS.md .gsd-lite/DECISIONS.md` 済みで `bun run check` が green
-  - 対象: `.gsd-lite/PROGRESS.md`（コードの変更は想定しない。見つけた不備は本タスクで直し、PLAN 訂正として記録する）
+    - `bun scripts/verify-instance-refactor.mjs` が exit 0（照合 差分 0、probe exit 0、変異 8 本すべて exit 1）。所要の表を PROGRESS に写す
+    - 堅牢性格子（R4。scratch スクリプト `scratch/turn-<N>-robustness.mjs` で実 WASM + `createUiTools` を回し、結果表を PROGRESS に）: 画面状態 5 種（子なし / 子あり / 非表示の子 / 2 か所に置いた子 / `ui_load_screen` で入れ替えた直後）× ツール呼び出し（`ui_get_screen` の `offset` / `limit` 境界 4 通り + `ui_get_state` の root キー / 子のキー名（`NOT_FOUND` 系の `{ok:false}`）+ `ui_dispatch` の接頭辞付き key / 非表示の子の key（`NOT_VISIBLE`）/ 存在しない instance の key）で、どのセルも未捕捉例外が無く、`revision` と root `state` が失敗セルで不変
+    - 追従先チェックリスト 1〜14 を行番号つきで再実行し、PROGRESS に「行 1 … 行 14」の表（条件・結果）を書く。全行 OK
+    - `git status --porcelain` が空（成果物以外の変更を残さない）。`git grep -n -F 'reserved for a later stage' -- src engine docs scripts tests` 0 件を再確認
+  - 対象: `.gsd-lite/PROGRESS.md`, `.gsd-lite/logs/component-webmcp/scratch/`
   - 依存: T7
   - 並列サブ作業: なし
 
-- [x] F1: 契約文書の 4 か所の言い切り・帰属・欠落を直す（verify round 1 の指摘。文書のみ。コードとテストは触らない）
-  - 完了基準（4 件すべて。行番号は HEAD `844162e` のもの。`git grep -n -F` で引き直す）:
-    1. `docs/components.md:181`「マニフェストが約束するsha256 / sizeが…すべてで一致するときだけ」→ `size` を外し「sha256 が source・script・descriptor（キー集合と各 sha256）のすべてで一致するときだけ」にする（根拠: `src/application-loader.js` の `sameHashes` は sha256 だけを比べる。REQUIREMENTS R5 も sha256 だけ）
-    2. `docs/components.md:205` と `docs/files-cache-rpc.md:109` の「`components`の形・子の件数・…が外れたとき」→ 「子エントリの形・子の件数・子のファイル情報・絶対化後の重複が外れたとき。`components` 自体が無い・`null`・配列・object 以外のときは `配信マニフェストが不正です`」にする（根拠: `manifest()` の先頭の判定 `application-loader.js:46-52` と `tests/components-loader.test.js:394`）
-    3. `docs/components.md:202`「ローダーと`UiRuntime`の両方が出す」→ 生成スクリプト（`scripts/publish-packages.mjs`）も出すことを足す。同 `:256` の「JS側は取得中に日本語（…）」の 3 文言は**3 つとも**生成スクリプトも出し、そのとき `{URL}` の位置は絶対ファイルパスであることを 1 句足す（F1 訂正: `コンポーネントの数が8を超えています（rootを含む）` も生成スクリプトが `instanceTable` 経由で出すので 2 文言ではなく 3 文言。根拠: `publish-packages.mjs:44,51,52` と `:60` が呼ぶ `src/component-tree.js:15`。DECISIONS「plan が決めた細部」15 も 3 文言で書かれている）
-    4. `docs/components.md` の「エラー文言」日本語の列挙に `通信に失敗し、利用できる保存版もありません` と括弧付きの派生 `通信に失敗し、利用できる保存版もありません（{最後に試した版の失敗文言}）`（ポインタが 1 つも無いときは括弧なし）を足し、`docs/files-cache-rpc.md:93` の「画面へ復元理由を表示する」の直後にも同じ 2 形を書く（根拠: `application-loader.js:581-585`。DECISIONS「plan が決めた細部」9）
-  - 期待結果（`git grep` の条件。文書のみなのでテストは無い）:
-
-    | 条件                                                                                                        | 期待           |
-    | ----------------------------------------------------------------------------------------------------------- | -------------- |
-    | `git grep -n -F 'sha256 / size' -- docs`                                                                    | 0 件           |
-    | `git grep -n -F '`components`の形' -- docs/components.md docs/files-cache-rpc.md`                           | 0 件           |
-    | `git grep -c -F '通信に失敗し、利用できる保存版もありません' -- docs/components.md docs/files-cache-rpc.md` | 両方 1 以上    |
-    | `git grep -n -F 'publish-packages' -- docs/components.md`                                                   | 2 件以上       |
-    | `bun .gsd-lite/logs/component-loader/scratch/turn-009-checks.mjs`                                           | 行数 14 / NG 0 |
-    | `bun run check` と `bun run docs:check`                                                                     | exit 0         |
-
-  - 対象: `docs/components.md`, `docs/files-cache-rpc.md`
-  - 依存: T8
-  - 並列サブ作業: なし
-
-- [x] F2: マニフェストの子キーの絶対化の基準を `fetch` / `save` / `restore` で揃える（verify round 1 の指摘。コード 1 行 + テスト 1 本 + 文書 1 句）
-  - 背景: `fetch` の network-first は `#childIndex(metadata, sidecar)`（`application-loader.js:412`）でキーを sidecar URL 基準に絶対化し、`save`（`:459`）と `restore`（`:565`）は画面 URL 基準。通常の相対パスでは同じ href になるが、基準に依存するキー（`""` / `?x` / `#f`）は `fetch` が通した木を `save` が `マニフェストに無い子` で拒否する（root のファイルを書いた後に失敗し、ポインタは更新されない）。生成スクリプトはそのキーを出さないが、ローダー内で 1 つのマニフェストに 2 つの解釈があるのは契約の穴
+- [x] F1: verify round 1 の指摘 — root ノードの `webmcp` の漏れを止め、契約文書の 3 断言を実装に合わせる（文書の指摘は 1 つにまとめる）
+  - 指摘の根拠（verify turn 11 の実測。scratch `turn-011-rootnode-webmcp.mjs` / `turn-011-gridkey2.mjs` / `turn-011-window-child.mjs`）:
+    1. `docs/components.md:181` / `docs/webmcp.md:73`「`itemId`を持たないノードの`webmcp`は**どこにも出ない**」が偽。root の UI ノード（itemId なし）に `webmcp` を書くと、target が空の widget 全部（root の `root.0` も子の `a/root.0` も。label 等）の `config.webmcp` に載る（`lib.rs:1353-1357`: 空 target → `find_path(root.ui, "")` が root ノード自身に一致する）。base `52ec888` でも同じ（既存挙動）だが、本マイルストーンが契約として明記した文が実態と違う
+    2. `docs/components.md:179` / `docs/webmcp.md:71`「`widgets[].key`を末尾の`/`で割った左側が`components[].instance`」が advanced grid（`pageSize` 等。`grid.rs:5`）の行 key で壊れる: 行 id が文字列 `"x/y"` のとき key は `a/g:row:"x/y"`（`grid.rs:523` `id_key(row)` = JSON 表記）で、末尾の `/` で割ると `a/g:row:"x`。実装は `target`（`a/g`）を割っている（`lib.rs:1353`）
+    3. `docs/components.md:175` / `docs/webmcp.md:69`「`hidden`は親の`visibleBind`による非表示だけ」は、実装（`hidden_component`）が**配置ノード（component ノード）自身の `visibleBind`** だけを見ることを言い切れていない。root の `window`（これも `visibleBind` を持つ）の中に置いた子は、window が閉じていても `hidden: false` で widgets に出ない（実測: `components=[{hidden:false,…}] keys=["o"]`）
+    4. `docs/components.md:180`「その**全widget**に載る（実測: header / row:0 / row:1 の 3 つとも）」に対し、`tests/components-demo.test.js:153-163` は `find` で 1 つしか確かめていない
+  - 期待結果（完了基準・テストはこの表だけを参照する。exit / 件数をほかに書かない）:
+    | 条件                                                                                                                        | 結果                                                                                                                                    |
+    | --------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+    | root の UI ノード（itemId なし）が `webmcp` を宣言し、root と子（`a`）に itemId の無い `label` と itemId 付きの `textfield` | `root.0` / `a/root.0` の `config` に `webmcp` キーが無い。itemId を持つノードの `webmcp` は従来どおり出る                               |
+    | itemId の無い子孫ノード（root / 子のどちらでも）が `webmcp` を宣言                                                          | どの widget にも出ない（従来どおり）                                                                                                    |
+    | `bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-52ec888.wasm --candidate public/engine.wasm`     | 差分 0（同梱デモの root UI ノードは `webmcp` を宣言していない。turn 11 の grep で確認）                                                 |
+    | `bun scripts/probe-composition.mjs --candidate public/engine.wasm`                                                          | exit 0・57 歩・問題 0                                                                                                                   |
+    | order-dashboard の `layout` で key が `open/orders` / `shipped/orders` で始まる widget                                      | それぞれ 3 件以上（header + row 2 件）あり、**全部**が `config.webmcp` を持ち、互いに deep-equal。`open` 側と `shipped` 側も deep-equal |
+    | `scratch/turn-<N>-mutation-from.mjs`                                                                                        | 変異 8 本すべて `from` が `engine/src/lib.rs` にちょうど 1 回（チェックリスト行 13）                                                    |
   - 完了基準:
-    - `fetch` の network-first で索引を `this.#childIndex(metadata, url)`（画面 URL 基準）にする。`manifest(value, sidecar)` と `#fromManifest(index, sidecar, signal)` の `open`（配信ファイルの `url` の基準）は sidecar のまま。`save` / `restore` は無改修
-    - テスト（`tests/components-loader.test.js` の `describe("ApplicationLoader の木のマニフェスト")` に 1 本）: 子キー `"?x"` を持ち、宣言が `parent.json.manifest.json?x` を指す木（sidecar 基準なら一致、画面 URL 基準なら不一致）を network-first で取得 → 下の表の文言で拒否され、`reads` に `?x` 付きの配信ファイルは無い。あわせて通常の相対キー（`a.json` / `parts/b.json` / `../x.json`）の既存テストが期待値不変
-    - `docs/files-cache-rpc.md:105` の「ローダーは子キーを`httpUrl(key, base)`で絶対化し」の `base` を「rootの画面URL（`save` / `restore` と同じ基準）」と明記する
-  - 期待結果:
-
-    | 条件                                                                                                            | 期待                                                                                                                    |
-    | --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-    | 子キー `"?x"` + 宣言 `parent.json.manifest.json?x`                                                              | `fetch` が `マニフェストのコンポーネント情報が不正です（マニフェストに無い子: …parent.json.manifest.json?x）` で reject |
-    | 既存の木のテスト（相対キー）                                                                                    | 期待値不変で green                                                                                                      |
-    | `bunx vp test run tests/components-loader.test.js tests/publish-packages.test.js tests/files-cache-rpc.test.js` | green                                                                                                                   |
-    | `bun run check`                                                                                                 | exit 0                                                                                                                  |
-
-  - 対象: `src/application-loader.js`, `tests/components-loader.test.js`, `docs/files-cache-rpc.md`
-  - 依存: F1
-  - 並列サブ作業: なし
+    - A（engine + テスト）: `engine/src/lib.rs` の metadata 後処理（`for widget in &mut widgets` の冒頭、`:1352`）で `widget.target.is_empty()` なら `continue`（空 target は itemId の無いノードの widget。`find_path(…, "")` を呼ばない）。`MUTATIONS[*].from` の 8 文字列は触らない。Rust テスト 1 本を `composition_tests.rs` に追加（表の 1〜2 行目。`widget_at` / `keys` の雛形）。`tests/components-demo.test.js:153-163` の `find` を `filter` に変える（表の 5 行目）。`cargo test` → `bun run build:wasm` → `bunx vp test run` → `bun run check` → 照合 → probe の順に回し、表の 3・4・6 行目を満たす
+    - **照合が差分 0 でない場合の規則**（推測で進めない）: 差分の step を PROGRESS に列挙し、A の `continue` を戻してコードは base と同じ挙動のままにする。その場合 B の (1) は「root の UI ノード（itemId なし）の `webmcp` は target を持たない widget（label 等。子のものも含む）の `metadata.webmcp` に載る。それ以外の itemId の無いノードの `webmcp` は出ない」と実態を書く
+    - B（文書。1 つにまとめる）: (1) `docs/components.md:181` / `docs/webmcp.md:73` は A 後に真になるので趣旨は変えず、「root の UI ノード自身も同じ（target を持たない widget に載らない）」を 1 文足す。(2) 突き合わせ規則（`docs/components.md:179` / `docs/webmcp.md:71`）を「`widgets[].key` の**最初の `:` より前**（`:` が無ければ全体）を末尾の `/` で割った左側が `components[].instance`。itemId は `:` と `/` を含めないので一意。advanced grid の行 key `a/g:row:"x/y"` のように `:` より後ろには `/` が入り得る」に改める。(3) `hidden` の定義（`docs/components.md:175` / `docs/webmcp.md:69`）を「配置ノード（component ノード）自身の `visibleBind`」と言い切り、「root の `window` の中に置いた子は window が閉じていても `hidden: false`（widgets に出ず、`blocked` と同じ側で読む）」を 1 文足す。(4) `docs/components.md:180` の「実測」は A のテストが 3 件を確かめるので残す。`bun run docs:check` green
+    - 追従先チェックリスト行 6 の「確かめ方」の文言（「`widgets[].key` を末尾の `/` で割った左側」）を (2) の新しい語（「最初の `:` より前」）に書き換え、`docs/webmcp.md` に 1 か所であることを `git grep` で確認する（行 6 の条件は webmcp.md 側。`components.md:179` の並記はそのままでよい）
+    - 既存テストの期待値変更があれば PROGRESS に列挙する（想定: 0 件）
+  - 対象: `engine/src/lib.rs`, `engine/src/composition_tests.rs`, `tests/components-demo.test.js`, `docs/components.md`, `docs/webmcp.md`, `.gsd-lite/PLAN.md`（行 6 の文言）
+  - 依存: T8
+  - 並列サブ作業: A（engine + 2 テスト。対象: `engine/src/lib.rs`, `engine/src/composition_tests.rs`, `tests/components-demo.test.js`）/ B（文書。対象: `docs/components.md`, `docs/webmcp.md`。文言は上の (1)〜(3) を正とする）。`bun run build:wasm` / `cargo` / 全体 Vitest / 照合 / probe は親
 
 ## 決めた事項
 
-要件・決定の範囲で plan が確定した細部。impl はこれを再議論しない。
-
-1. **2 MB の前段の「合計」は全パッケージの `source.size + script.size` の和で、descriptor を含めない**（RESEARCH §7-1 の推奨を採用）。根拠: `load` のリクエストに入るのは package と script だけで descriptor は buffer ABI（`src/engine.js:81-90` の `storeBuffer`、`:104-111` の `request`）。含めると現状 load できる「root 1 MB + descriptor 8 × 1 MB」を前段が拒否する。descriptor には 1 MB / 8 件 / 16 MB の上限が既にある（`manifest():47-50`、`docs/files-cache-rpc.md:181`）。「最大の子」も同じ和で選ぶ。文書には「マニフェスト段階は生バイトの粗い前段、load 時（JSON 化後。`engine.js:115`）が正」と書く（追従先 行 5）
-2. **`instance` の 256 バイト上限は完了 op（`take_instance`）だけに掛け、load 時の対称検査は入れない**（RESEARCH §7-2 の (b)）。根拠: REQUIREMENTS R6 の範囲が「`take_instance` で `valid_instance_path` より先に長さを見る」「Rust のテストを 1 本」「既存文言は変えない」で、load 時の検査は要件に無い防壁（新しい文言 2 つ・probe・文書が増える）。代わりに制限表に「完了opの`instance` は 256 バイト。超える接頭辞付きパスの子は完了を受け取れないので itemId はその範囲に収める」と書く（追従先 行 6）。verify が残留リスクとして記録してよい
-3. **マニフェスト version 2 の形**: `{ version: 2, revision, source, script, descriptors, components: { "<root の画面 URL 基準の相対パス>": { source, script, descriptors } } }`。子の無い画面も `components: {}`。子キーはローダーが `httpUrl(key, base)`（`base` = root の画面 URL。`fetch` / `save` / `restore` の 3 経路すべて。F2 訂正: plan 当初は「`manifest()` に渡す URL（`fetch` では sidecar）。どちらも同じディレクトリなので相対解決は同じ」としていたが、`?x` / `#f` のような基準に依存するキーでは sidecar と画面 URL で別の href になり、`fetch` が通した木を `save` が拒否する。F2 で `fetch` も画面 URL に揃えた）で絶対化する。子の `descriptors` のキーはその子の DSL に書いた descriptor URL（root と同じ規則 `:82-87`）
-4. **配信側のファイル命名**: `packages/<revision>/source` / `script` / `descriptor-<n>`（root。既存 `publish-packages.mjs:43-49`）、`packages/<revision>/component-<i>-source` / `component-<i>-script` / `component-<i>-descriptor-<n>`（子。`i` = 子キーを `Object.keys(...).sort()` した添字、`n` = その子の descriptor キーをソートした添字）。ローダーはマニフェストの `url` を見るだけなので命名はマニフェストと配信物の間だけで一致させる
-5. **OPFS の配置**: `versions/<revision>/components/<i>/{source,script,descriptor-<n>}`（`i` / `n` は 4 と同じソート。REQUIREMENTS R3）。`OpfsDirectory.write` は親ディレクトリを作らない（`src/opfs.js:130-135`）ので子ごとに `mkdir` する。`relativePath` の制約（1,024 バイト・16 区間・各 255 バイト `opfs.js:3-19`）に収まる
-6. **version 2 の revision の式**は R1 のとおり `manifestRevision` に 1 か所で実装し、生成スクリプトは同じ関数を import する（P1。`scripts/publish-packages.mjs` は既に `../src/package-format.js` を import している `:6`。`src/application-loader.js` の import 先 `opfs.js` / `package-format.js` / `http-policy.js` / `component-tree.js` は純 JS で Node から読める。`crypto.subtle` は Node 20+ / Bun にある）。比較子は `<` / `>`（`application-loader.js:20`）
-7. **共有エントリの `screen` は clone も凍結もしない**（P5）。根拠: 走査の `declaration.url = child.href`（`:131`）は絶対 URL に対して冪等、`runtime.js:45-70` は `prepareScreen` で `structuredClone` してから書く。テスト T4 (a) で `toEqual` と `toBe` を固定する
-8. **無効化の判定**: `fetch(value, { mode, signal, refresh })` の冒頭で `refresh === true` / `mode` の前回値との不一致 / `JSON.stringify(resources.getAuthentication())` の前回値との不一致（`resource-client.js:61-67` は毎回新しいオブジェクトを返すので参照比較は使えない P12。`main.js:201` は毎回代入するので代入ではなく値比較 P11）。`UiRuntime.load` は `refresh: refreshEngine` を渡す（`runtime.js:403,419-422`）。トークンだけの差し替えは検知しない（契約文書に 1 行。追従先 行 7）
-9. **新しい日本語文言（3 つ。追従先 行 4）**: `マニフェストのコンポーネント情報が不正です`（形の不正。走査後の不一致は `（宣言に無い子: {URL}）` / `（マニフェストに無い子: {URL}）` を添える）、`配信ファイルの合計が2 MBを超えています（合計 {総バイト数} バイト。最大の子: {URL} {バイト数} バイト）`（ローダーは絶対 URL、生成側は子キー）、`配信ファイルのサイズ・ハッシュが一致しません（{URL}）`（子のみ。`{URL}` は子パッケージの絶対 URL。root は既存文言のまま）。復元が全部失敗したときは `通信に失敗し、利用できる保存版もありません（{最後の失敗の文言}）`（ポインタが無いだけなら括弧なし）
-10. **新しい英語文言（1 つ）**: `Component instance path exceeds 256 bytes`（`abi.rs` の `take_instance`。値は載せない）
-11. **テストの置き場所**（RESEARCH §7-8）: 木の検証・取得・共有・保存・復元は `tests/components-loader.test.js`（受け入れ 2 の指定どおり `:190-214` を置き換える。`memoryOpfs` を import する）。生成スクリプトは新規 `tests/publish-packages.test.js`。残留リスク 3 は `tests/components-effects.test.js`。残留リスク 1 は `engine/src/composition_tests.rs` + `tests/abi.test.js:194-203`。`tests/files-cache-rpc.test.js` は無改修（version 1 の回帰）
-12. **`manifest()` で子が 8 件を超えたら `マニフェストのコンポーネント情報が不正です`**。根拠: Rust `At most 8 component packages`（`abi.rs:68`）と同じ上限で、descriptors の 8 件検査（`manifest():47`）と同じ場所に置くとファイル取得前に止まる
-13. **network-first の処理順**: manifest → root files → root parse → 子の走査（共有 → 取得 + verify）→ 一致検査 → abort → 認証再確認 → return。子の取得失敗で `e.code === "NETWORK"` なら root と同じ `restore` 経路（`:198-206` は無改修）
-14. **復元の `fallbackReason`** は既存どおり通信エラーの `message`（`:204`）。どの子で失敗したかは復元が全部失敗したときの文言に添える（決めた事項 9）。`main.js:171-180` の表示は無改修
-15. **生成スクリプトの循環 / 深さ / Instance 数の文言**は JS ローダーと同じ（`コンポーネント {名前} の循環参照: {path}`、`コンポーネントの入れ子が3段を超えています: {path}`、`コンポーネントの数が8を超えています（rootを含む）: {path}`。`{path}` は絶対ファイルパス）。「8 パッケージ」は `instanceTable` の Instance 数（root 含む 8）で数える。scope 検査は生成側では掛けない（ローダーと Rust が掛ける）
-16. **`restore` の走査で `abort`** は `catch (e) { signal?.throwIfAborted(); last = e }` の形で `AbortError` を握りつぶさない（P7）
+1. **`Scene.components` の直列化**は `#[serde(skip_serializing_if = "Vec::is_empty")]`。子の無い画面の `layout` 応答は 1 バイトも変わらず、base `52ec888` との照合（`scripts/compare-engine-behavior.mjs` の正規化は http の `kind` 1 か所のみ。`docs/testing.md:91`）が差分 0 のまま。JS は `ui_get_screen` で `snapshot.scene.components ?? []` と埋める（出所は WASM、JS は推測しない。RESEARCH §5-A 採用）
+2. **子 widget の metadata 付与の分割規則**は `widget.target.rsplit_once('/')`（末尾 1 回）。itemId は `/` を含めない（`engine/src/lib.rs:1758-1760` の `itemId must not contain '/'`）ので一意。Grid セルの target は `products/productsGrid`（`:row:1` は key にだけ付く。RESEARCH §1.1）。同じ規則を `components[]` の親パス算出と `docs/webmcp.md` の突き合わせ規則に使う（基準は 1 つ）
+3. **`components[].hidden`** は `hidden_component(node, parent_state)`（`lib.rs:1854-1856`）を親 Instance の state に掛け、祖先の `hidden` を OR する。`BTreeMap` の順序で親が先に処理済み（`"a"` < `"a/b"`）。`route()` の `blocked`（無効・折りたたみ・非アクティブタブ・モーダル背後）は含めない（REQUIREMENTS R2 の定義。RESEARCH §5-C / §7-2 の「広げる案」は却下: `hidden` は「layout に出ない理由が親の `visibleBind`」だけを意味し、それ以外は `widgets[]` の有無と `blocked` で読める）
+4. **子の `webmcp` 上限超過の文言**は `Component {path}: webmcp: description/label/tags exceed limits or have duplicate tags`（`Composing::load` の `map_err` 前置 + `metadata.rs:26` の本文）。受け入れ 2 の「root と同じ文言」はこの形で満たす（RESEARCH §7-3）。Rust テストは `starts_with` + `ends_with` の 2 条件
+5. **`window` の拒否文言**は `window is not available in components`（括弧を落とすだけ。`reject_windows` の判定・テスト対象・文書の位置は不変）。受け入れ 7 の「`reserved for a later stage` が残らない」を満たすため（RESEARCH §1.3 / §7-1。DECISIONS D11）
+6. **`Component` 構造体**: フィールドは `instance` / `id` / `title` / `webmcp`（`skip_serializing_if = Metadata::is_empty`）/ `hidden`。JSON のキー順は `abi.rs:155` の `serde_json::to_value` によりアルファベット順（`hidden, id, instance, title, webmcp`）。生成関数名は `component_summaries`（T6 の変異 M8 がこの行を置換する）
+7. **デモの `webmcp` 文言**（R2b。すべて上限内）:
+   - `note-pad.json`: 直下 `{label: "メモ", description: "メモを入力してこのブラウザに保存する部品。", tags: ["memo", "storage"]}`、`text` に `{description: "保存するメモの本文。"}`、`save` に `{description: "メモをIndexedDBへ保存し、親へsavedを通知する。", tags: ["write"]}`
+   - `approval.json`: 直下 `{label: "承認", description: "承認ダイアログで確認し、結果を親へ返す部品。", tags: ["approval", "dialog"]}`、`ask` に `{description: "承認を確認するダイアログを開く。", tags: ["dialog"]}`
+   - `order-list.json`: 直下 `{label: "受注一覧", description: "親から受け取ったstatusとqueryで絞り込んだ受注を一覧する部品。", tags: ["orders", "list"]}`、`orders` に `{description: "行を選ぶと親へselectedを通知する。", tags: ["select"]}`。`metric` は itemId が無いので書かない（P3）
+8. **R0 の置き場所**は `src/application-loader.js` の非公開関数で、`parsed()` と `#download()` の両方から呼ぶ（`package-format.js` には入れない。`src/mock-api-client.js:4` が画面でない定義を通す。RESEARCH §5-H / P12）。**turn 3 訂正**: 「`rpc` 自体が配列のときは現状どおり通す（P13 / §7-10）」を撤回し、配列も各値を同じ規則で見る（`rpc: [null]` に `TypeError` が残り REQUIREMENTS R0「`TypeError` を出さない」に反することを実測した。`.gsd-lite/logs/component-webmcp/scratch/turn-003-rpc-array.mjs`）。`rpc: []` は値を持たないので従来どおり通り、却下項目「`rpc: []` を拒否する」は却下のまま。文言は `画面idは文字列で指定してください` / `RPC {名前} の定義が不正です（object で指定してください）`
+9. **R0 のポインタ**: `save` は object でないポインタを `NotFoundError` と同じく読み飛ばす（`keep` も同じ型検査）。`restore` は `キャッシュの管理情報が不正です` を `last` に入れる（`docs/files-cache-rpc.md:107` の「破損した管理情報は『保存版を削除』で消してから再取得できる」と対応。RESEARCH §7-5 / P15）
+10. **R0b の文言**は `コンポーネントの宣言が8件を超えています: {URL}`（既存 3 文言 `docs/components.md:257` と同じ形。`{URL}` はローダーでは宣言を持つパッケージの href、生成スクリプトでは絶対ファイルパス）。検査位置は `visit` の冒頭（ループ前）で 3 経路（network-only `:372` / network-first `:416` / restore `:569`）に同時に効く。Rust（`composition.rs:22-41` `validate_declarations`）と `src/runtime.js` の `resolveComponents` には足さない（REQUIREMENTS R0b の範囲）
+11. **`manifest()` の署名**は `manifest(value, screenUrl)`（第 2 引数を画面 URL に統一。sidecar は内部で `pathname += ".manifest.json"` で組み、配信ファイルの `url` の形検査にだけ使う）。呼び出し 4 か所（`fetch:407` / `save:516,529` / `restore:570`。turn 4 訂正: 「3 か所」は `save` の 2 行を 1 つに数えた誤り）がすべて画面 URL を渡す。基準に依存する境界値（`""` / `?x` / `#f` / `parent.json`）は T2 のテスト行に置く（RESEARCH §5-G）
+12. **probe の列 ID**は `child-webmcp-published`。ステップ数は実測で書く（見込み 54 − 1 + 4 = 57）。変異 M8 `components-omitted` を足し、`docs/testing.md:91` / `verify-instance-refactor.mjs:5` の本数を 8 にする（RESEARCH §7-6 採用）
+13. **文書の追従先**は受け入れ 7 の 5 文書 + `docs/testing.md:91` + `docs/files-cache-rpc.md`（チェックリスト行 4 / 8 / 9 / 10）。`docs/screen-format.md:5` の「`webmcp`は画面や部品の説明メタデータ」は現状のままで可（RESEARCH §5-J）
+14. **新規テストファイルは作らない**（`docs/testing.md:20-45` の表への追従を避ける）。Rust は `composition_tests.rs`、JS は `components-loader` / `components-demo` / `parts-lab` / `webmcp` / `publish-packages` の各 `.test.js` に追記する
+15. **`ui_get_screen.components` は `preview()` を通さない**（最大 7 件 × description 2,000 バイト。Rust で上限済み。P21）。`offset` / `limit` は `widgets` だけに掛かる
 
 ## メモ
 
-### 前回・前々回の reflect の「次回への提案」の反映
+### 前回 reflect（20261009-1151-component-loader.md）の提案の反映
 
-| 提案（20261009-0342 component-effects）                                                    | 反映                                                                                                                                                |
-| ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 最終判定型タスクは追従先チェックリストを行番号つきで全行再実行（行数が合わなければ未完了） | T7 / T8 の完了基準と追従先チェックリストの連番（14 行）                                                                                             |
-| サブエージェントの成果物マージ直後に親が `git grep` 条件を全部再実行                       | T1 / T6 / T7 の「親」の手順                                                                                                                         |
-| discuss のスキル編集を整形してからコミット                                                 | 対象外（本マイルストーンの discuss は済み。`bun run check` は plan の turn 2 で HEAD `bae3026` に対して green を確認した）                          |
-| PLAN 訂正の旧文字列を PLAN 全体で引く                                                      | impl スキルに入っている。PLAN 側は「置き換え後の名前で書く」: T3 で `withoutComponents` を消すので T5 以降は `withoutComponents` を名指ししていない |
-| 文言より手前の防壁を確かめる                                                               | T1 到達性の行、決めた事項 2（load 時の対称検査を入れない）                                                                                          |
-| 旧契約の言い回しを `git grep`                                                              | 追従先 行 1・2 の条件（`componentsを持つ画面` / `network-firstで配信できない` / `1パッケージ1本` / `段階5で決める` / `段階5以降`）                  |
-| MCP 未接続を PROGRESS に書かない                                                           | 本 turn から遵守                                                                                                                                    |
-| verify のサブエージェントを「契約文書 ↔ 実装の一対一」に                                   | 「verify への申し送り」に書く（下）                                                                                                                 |
-| 並列サブ作業の運用（共有ファイルを先に確定・ビルド系を禁止）                               | T1 / T6 / T7 の「親」の手順                                                                                                                         |
-| `bunx vp check` に Markdown だけを渡すと非 0                                               | 「検証コマンド」の注意                                                                                                                              |
-| 段階 5 の research は残留リスク 1・3・5 を入力に、3 を最初のテストタスクへ                 | T1（残留リスク 1・3）。残留リスク 5 は REQUIREMENTS スコープ外                                                                                      |
+| 提案                                                                            | 反映                                                                                                                          |
+| ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `bun run check` の前に `bunx vp fmt`、整形後に対象テストをもう 1 度             | 採用。「検証コマンド」の 2 行目                                                                                               |
+| 追従先の「確かめ方」に文書の述語（比較対象・出し手）→ 実装シンボルの照合を足す  | 採用。チェックリスト行 12 と T7 の対応表                                                                                      |
+| 最終判定スクリプトを plan のターンで base HEAD に対して 1 回回す                | 採用。turn 2 で exit 0（冒頭の「前提の実測」）。T1 に直す行は不要                                                             |
+| turns.jsonl の `usage_total` / reflect の注記                                   | plan の範囲外（ループ側・reflect スキルの話）。反映しない                                                                     |
+| 残留リスク 1・3・5・10 を research の入力にし、3・5 を T1 に                    | 採用。REQUIREMENTS R0 / R0b / R0c、T1 = R0、T2 = R0b + R0c                                                                    |
+| （前々回 20261009-0342）同じ値を 2 か所で導出する設計に「同じになる」と書かない | 採用。決めた事項 2（分割規則は `rsplit_once` 1 つ）と 11（`manifest()` の基準は画面 URL 1 つ）。境界値は T2 / T3 のテスト行に |
+| （前々回）契約先行のサブエージェント運用、`build:wasm` / 全体 Vitest は親だけ   | 採用。T5 の「親:」行。T1 / T2 / T7 のサブ作業は文言・構造体を「決めた事項」で先に確定                                         |
 
-| 提案（20261008-0114 component-composition） | 反映                                                                         |
-| ------------------------------------------- | ---------------------------------------------------------------------------- |
-| scratch を消さない・`rm -rf` 禁止           | スキルに入っている。impl への注意に再掲                                      |
-| 既存の入口 × 新しい状態の直交表             | T3 (f) / T5 (j)（`fetch` × 2 / `save` / `restore` / `clear` の 5 入口 × 木） |
-| スキル改修は discuss で                     | 済み（DECISIONS 前提）                                                       |
-| `gh pr create --head`                       | verify スキル                                                                |
-| Rhai 予約語                                 | RESEARCH §3。本マイルストーンで新しい Rhai は `fn init(s) { s }` 程度        |
-| `rg -l` でソースを読むテストを拾う          | 追従先 行 12                                                                 |
-| サブエージェントの本数を PROGRESS に        | impl スキル                                                                  |
-| F 系で文言列挙節にも足す                    | T1 (C) で本編から先回り（残留リスク 1 の文言を同じタスクで列挙節へ）         |
+### RESEARCH「盗める点」の採否
 
-### RESEARCH §4「盗める点」の採否
-
-| #   | 規則                                                    | 採否 | 理由                                                                                        |
-| --- | ------------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------- |
-| S1  | `{url, digest, size}` 三つ組・size を先に検証           | 採用 | 既存 `verify`（`:55-59`）をそのまま子に使う（T3 / T5）                                      |
-| S2  | root 相対パスをキーにしたフラットなマップ・重複はエラー | 採用 | R1 の形。絶対化後の重複は `manifest()` で拒否（T2 (c)、P3）                                 |
-| S3  | 同一依存は 1 回                                         | 採用 | 既存の `packages[href]`（`:136`）と保存のマニフェストキー回し（T5 (e)、P15）                |
-| S4  | 名前でソートした一覧のハッシュ                          | 採用 | R1 の式。生成側と同じ関数を使う（決めた事項 6、T6 (c)）                                     |
-| S5  | `schemaVersion` 整数固定・後方互換を文書化              | 採用 | version 1 / 2 両受け（T2）、文書（追従先 行 3）                                             |
-| S6  | 1 つでも失敗したら更新全体を失敗・blob 先 manifest 後   | 採用 | `save` の順序（T5）、`restore` の all-or-nothing（T5 (c)(d)）                               |
-| S7  | 起動時に実ファイルを digest で再検証                    | 採用 | `restore` の `verify`（既存）を子に広げる（T5）                                             |
-| S8  | 更新検知は manifest のバイト差分だけ                    | 採用 | `cache: "no-cache"`（既存）、共有の sha256 一致（T4 (d)）                                   |
-| S9  | module map は完成したものだけ・失敗は入れない・寿命     | 採用 | `#share` は検証後にだけ入れる（T4、P6）                                                     |
-| S10 | AppCache の「常にキャッシュ優先」の不満                 | 採用 | `network-only` の共有は「再読込」で取り直せることを文書に（追従先 行 7）。UI 文言は変えない |
-| —   | OPFS のフェイク `memfs/lib/fsa`                         | 却下 | `tests/helpers/opfs.js` で足りる（§2-6、§4.2）                                              |
-| —   | `fetch` の `integrity`（SRI）                           | 却下 | `ResourceClient` が `fetch` を包み、テストが fetcher を差し替える（§4.2）                   |
-| —   | 一時ディレクトリに書いて rename                         | 却下 | `FileSystemHandle.move()` はディレクトリ不可（§2-7）。版ディレクトリ + ポインタ方式を維持   |
-| —   | 復元専用の走査を別に書く                                | 却下 | 検査の重複と差分の温床（§5-A）。供給元で抽象化した 1 本の走査（T3）                         |
-
-### 落とし穴（RESEARCH §6）の担当
-
-P1 → T2 (e) / T6 (c)、P2 → T6 (a)、P3 → T2 (c)、P4 → T4 (f)（深さのみ。循環は構成不能。理由は T4 (f) に記載）、P5 → T4 (a)、P6 → T4 (g)、P7 → T5 (d)(g)、P8 → T5 (f)、P9 → T5 (h)、P10 → T2 (d)、P11 → T4 (b)、P12 → T4 (c)、P13 → T1 (A)、P14 → T1 (A)、P15 → T5 (e)、P16 → T2 (b)、P17 → T2 (f) / T3 (b)、P18 → 恒常注意（下）
-
-### 並行性・境界値・異常系の担当
-
-- 並行: 別タブの同時 `save`（`ifAvailable` → `BUSY`。既存。T5 で無改修を確認）、load 中の abort（T4 (g)、T5 (g)）
-- 境界値: 合計 2,000,000 / 2,000,001（T2 (d)）、`instance` 256 / 257 バイト・258 バイトの 3 バイト文字（T1）、子 8 件 / 9 件（T2 (c)）、Instance 8 / 9（T6 (b)）、深さ 3 / 4（T3 (e)、T4 (f)、T6 (b)）、descriptor 8 / 9 件（T2 (c)）、`OpfsDirectory.limit` 1,000,000 ちょうど（source 1 MB は通る。既存）
-- 異常系: 壊れたマニフェスト（T2）、子だけ欠けた版（T5 (c)）、途中で中断した保存（T5 (g)）、容量不足（T5 (g)）、循環する子（T3 (e)、T6 (b)）、`__proto__` キー（T2 (f)、T3 (b)）
-
-### タスク数
-
-8 タスク。T3〜T5 は `src/application-loader.js` の同じ構造（走査・供給元・共有）を順に積むので分割を保つ。T1 は「前回の残留リスク」2 件を 1 ターンにまとめた（Rust 1 腕 + テスト 3 本）。T6 は生成とテストを並列サブ作業で 1 ターンに収める
+| 盗める点                                                                  | 採否 | 理由                                                                                                     |
+| ------------------------------------------------------------------------- | ---- | -------------------------------------------------------------------------------------------------------- |
+| `find_path` / `component_node` / `hidden_component` / `Runtime::instance` | 採用 | T3 / T4 の実装部品。新しい探索を書かない                                                                 |
+| `metadata::Metadata`（`Clone` + `skip_serializing_if`）                   | 採用 | `Component.webmcp` にそのまま載せる                                                                      |
+| `composition::prefix_widgets` 無改修                                      | 採用 | key / target の接頭辞は既にある                                                                          |
+| probe の `loadStep` / `layoutStep` / `eventStep` / `equals`               | 採用 | T6 の新列                                                                                                |
+| `tests/components-loader.test.js` の `fixture` / `treeManifest`           | 採用 | T1 / T2                                                                                                  |
+| `tests/publish-packages.test.js` の `workspace` / `untouched`             | 採用 | T2-B                                                                                                     |
+| 前回の `turn-014-lattice-f2.mjs`（基準依存キーの格子、revision 再計算）   | 採用 | T2 の (b) / (c) の雛形。scratch にコピーして使う（前のマイルストーンのファイルは読むだけ、書き換えない） |
+| `tests/platform-features.test.js:195-232` の host モック                  | 採用 | T5 の `createUiTools` 経由テスト                                                                         |
+| a11y ツリーの「親の非表示は子孫に伝播」                                   | 採用 | 決めた事項 3                                                                                             |
+| Playwright の「スナップショットは操作のたびに取り直す」                   | 採用 | `docs/webmcp.md` の既存手順 4 を変えない                                                                 |
+| `hidden` を `route()` の `blocked` と同じ基準に広げる（§5-C 代替）        | 却下 | REQUIREMENTS R2 の定義（`visibleBind` のみ）。意味が混ざる。文書で区別を書く                             |
+| `components` を常に出して照合に正規化を足す（§5-A (b)）                   | 却下 | `docs/testing.md:91`「正規化はこの1か所だけ」を崩す                                                      |
+| `Scene` の `components` を JS で `instanceTable` から推測する             | 却下 | R2「出所は WASM」                                                                                        |
+| `rpc: []` を拒否する（§7-10）                                             | 却下 | 挙動不変の最小。`Object.values([])` は空                                                                 |
 
 ### impl への注意
 
-- **1 Bash 1 コマンド**。読みは `Read`、検索は `git grep -n -E '<pattern>' -- <paths>`、native `Read` が「unchanged」を返したら `git show HEAD:<path>`（P18）。scratch は `.gsd-lite/logs/component-loader/scratch/turn-NNN-*` に置き、**消さない**。`rm -rf` を使わない
-- `bun run check` は plan の turn 2 で HEAD（`bae3026`）に対して green（赤だったのは整形前の PLAN.md だけ）。各ターンの最後に `bun run check` を回し、赤のままコミットしない（前回は 11 ターン赤のままだった）
-- Rhai の予約語（RESEARCH §3）: テストの fixture の handler 名に `go` / `call` / `exit` / `match` / `new` / `use` / `with` / `package` 等を使わない。本マイルストーンの新しい Rhai は `fn init(s) { s }` 程度
-- `tests/components-loader.test.js` の既存 fixture（`:48-67`）は `reads` Map で URL ごとの回数を数える。T2〜T5 の補助関数 `treeManifest(list)` はここに足し、`memoryOpfs` を `./helpers/opfs.js` から import する。`ApplicationLoader` は `{ resources, storage: fs.storage, locks: null }` で作る（Node 22 に `navigator.locks` は無い）
-- `manifest()` は `save` が `previous.json` の検証にも使う（`:238,:251`）ので、version 2 を**木の一致検査なしで**通せる形に保つ（§5-B）
-- 走査の `declaration.url` 書き換えは root の `screen` を直接書く（既存）。共有エントリの `screen` は clone しない（決めた事項 7）。`runtime.js` の `resolveComponents` が clone する
-- `save` の子の `mkdir` は `directory.mkdir(`${path}/components/${i}`)`（多段を作れる `opfs.js:154-156`）。`write` は親を作らない
-- `Object.keys(...).sort()`（引数なし。UTF-16 code unit 順）で子キー・descriptor キーを並べる。`opfs.js:165` の `list` は `localeCompare` なので使わない（P8）
-- サブエージェントへの依頼文（T1 / T6 / T7）: 対象ファイルと禁止事項（他ファイルを触らない・`git checkout` / `git stash` / `rm -rf` をしない・`bun run build:wasm` / `cargo` / 全体 Vitest を回さない・scratch を消さない）、結果はファイルに書いて返す、共有する表（T6 のマニフェストの形と文言、T7 の文言）は親が起動前に確定し「内容を変えるな」と渡す
-- PROGRESS は固定項目（やったこと / 想定外 / やり直し / 次への注意）で、前ターンのエントリを編集しない。サブエージェントを使ったら「やったこと」の先頭に本数と担当
-- PLAN 訂正は実測を正とし、旧文字列を `git grep -n -F '<旧文字列>' -- .gsd-lite/PLAN.md` で引いて後続タスクの同じ条件を同じターンで直す
+- **タスク数 8**。T3 → T4 → T5 → T6 → T7 → T8 は直列（`lib.rs` → WASM → JS → probe → 文書 → 判定）。T1 / T2 はローダー側で独立だが、impl は PLAN の順（T1 → T2 → T3 …）に取る
+- **Rust を触ったターン（T3 / T4）は必ず `bun run build:wasm` → `bunx vp test run` まで回す**。`tests/*.test.js` は `public/engine.wasm` を読むので、WASM が古いと JS テストが旧挙動で通ってしまう
+- **T3 で probe が落ちる**のは想定内（`child-webmcp-refused` の load が通る）。T3 の中で列を最小形に書き換え、T6 で本置き換え。T3 / T4 のコミット時点で `probe-composition.mjs` が exit 0 であること
+- **`lib.rs` を編集したら `MUTATIONS[*].from` の残存を確かめる**（チェックリスト行 13）。特に M1 `arrange(&self.root.ui, &state, 16.0,` と M4〜M7 の周辺（`node.listeners.get(&name)` / `config == resolve(&committed)?` / `object.insert("instance"…)`）を動かさない
+- **`Scene` に `Debug` は無い**。Rust テストは `serde_json::to_value(&scene)` で JSON として見る
+- **`BTreeMap` の順序は UTF-8 バイト順**。parts-lab の `components[]` は `approval` / `note` / `products`（`a` < `n` < `p`）。JS の期待値をこの順で書く
+- **サブエージェントの運用**（前回どおり）: 親が起動前に文言・構造体・順序を「決めた事項」で確定して「内容を変えるな」と渡す。サブエージェントに `bun run build:wasm` / `cargo` / 全体 Vitest を禁止し、親がまとめて回す。契約外の提案は PROGRESS に件数と内容を残して親が採否を決める
+- **Rhai 予約語**（デモに handler を足す場合。本計画は `.rhai` を変えない）: RESEARCH §6 末尾の一覧。T6 の probe の `show` は予約語ではない
+- **`docs/components.md:172`（`window` 行）は T3 で文言だけ直す**。節の構成替え（「据え置きの拒否」→「子に許していないもの」）は T7。T3 の時点でチェックリスト行 2 を満たす
+- 整形で行がずれるので、`bunx vp fmt` の後に `Edit` する前は必ず読み直す（前回 turn 2 の失敗）
 
 ### verify への申し送り
 
-- 受け入れ基準 1〜9 と T8 の表を突き合わせる。サブエージェントは「契約文書 ↔ 実装の一対一（追従先チェックリスト 14 行 + `docs/components.md` の文言列挙節 + `docs/files-cache-rpc.md` のマニフェストの形と式）」の 1 本と「セキュリティ（`__proto__` キー、`javascript:` の子キー、認証中の共有、2 MB の前段を迂回する組み方）」の 1 本に分ける（汎用コードレビューは前回・前々回で親の `git grep` と重複した）
-- 堅牢性（R8）は T5 (g) の 3 経路（quota / abort / `save-error` の表示）と、verify 自身の格子（壊れたマニフェスト 7 種 × 保存版の状態 3 種）で見る
-- 決めた事項 2（load 時の 256 バイト検査を入れない）は要件どおりだが「load できたものが完了できない」非対称が残る。残留リスクとして記録してよい
-- 決めた事項 1（descriptor を合計に含めない）は R4 の「木のファイルの `size` 合計」を狭めている。REQUIREMENTS と文書の整合を見る
+- 受け入れ 5 は `bun scripts/verify-instance-refactor.mjs` exit 0 と `target/engine-compare/composition.json` の `problems: 0`、文書の数字（行 4 / 5）との突き合わせで判定する
+- 受け入れ 6b は Rust（T4 の直交表「親の `visibleBind`」行）/ JS（T5 の非表示ケース）/ probe（T6 の `layout:800` → `layout:800:shown`）の 3 経路
+- 受け入れ 7 の `reserved for a later stage` は `window` 由来の 3 件も含めて 0 件（決めた事項 5）
+- 観点別に分ける（前々回からの持ち越し）: (a) Rust の `components[]` / `hidden` の並行性・境界値（深さ 3、2 か所配置、再 load）、(b) ローダー R0 / R0b / R0c の基準依存キー格子、(c) 文書の断言 → 実装シンボル（T7 の表）、(d) 堅牢性格子（T8）
