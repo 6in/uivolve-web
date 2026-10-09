@@ -193,6 +193,31 @@ bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-52ec88
   - 依存: T7
   - 並列サブ作業: なし
 
+- [ ] F1: verify round 1 の指摘 — root ノードの `webmcp` の漏れを止め、契約文書の 3 断言を実装に合わせる（文書の指摘は 1 つにまとめる）
+  - 指摘の根拠（verify turn 11 の実測。scratch `turn-011-rootnode-webmcp.mjs` / `turn-011-gridkey2.mjs` / `turn-011-window-child.mjs`）:
+    1. `docs/components.md:181` / `docs/webmcp.md:73`「`itemId`を持たないノードの`webmcp`は**どこにも出ない**」が偽。root の UI ノード（itemId なし）に `webmcp` を書くと、target が空の widget 全部（root の `root.0` も子の `a/root.0` も。label 等）の `config.webmcp` に載る（`lib.rs:1353-1357`: 空 target → `find_path(root.ui, "")` が root ノード自身に一致する）。base `52ec888` でも同じ（既存挙動）だが、本マイルストーンが契約として明記した文が実態と違う
+    2. `docs/components.md:179` / `docs/webmcp.md:71`「`widgets[].key`を末尾の`/`で割った左側が`components[].instance`」が advanced grid（`pageSize` 等。`grid.rs:5`）の行 key で壊れる: 行 id が文字列 `"x/y"` のとき key は `a/g:row:"x/y"`（`grid.rs:523` `id_key(row)` = JSON 表記）で、末尾の `/` で割ると `a/g:row:"x`。実装は `target`（`a/g`）を割っている（`lib.rs:1353`）
+    3. `docs/components.md:175` / `docs/webmcp.md:69`「`hidden`は親の`visibleBind`による非表示だけ」は、実装（`hidden_component`）が**配置ノード（component ノード）自身の `visibleBind`** だけを見ることを言い切れていない。root の `window`（これも `visibleBind` を持つ）の中に置いた子は、window が閉じていても `hidden: false` で widgets に出ない（実測: `components=[{hidden:false,…}] keys=["o"]`）
+    4. `docs/components.md:180`「その**全widget**に載る（実測: header / row:0 / row:1 の 3 つとも）」に対し、`tests/components-demo.test.js:153-163` は `find` で 1 つしか確かめていない
+  - 期待結果（完了基準・テストはこの表だけを参照する。exit / 件数をほかに書かない）:
+    | 条件                                                                                                                        | 結果                                                                                                                                    |
+    | --------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+    | root の UI ノード（itemId なし）が `webmcp` を宣言し、root と子（`a`）に itemId の無い `label` と itemId 付きの `textfield` | `root.0` / `a/root.0` の `config` に `webmcp` キーが無い。itemId を持つノードの `webmcp` は従来どおり出る                               |
+    | itemId の無い子孫ノード（root / 子のどちらでも）が `webmcp` を宣言                                                          | どの widget にも出ない（従来どおり）                                                                                                    |
+    | `bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-52ec888.wasm --candidate public/engine.wasm`     | 差分 0（同梱デモの root UI ノードは `webmcp` を宣言していない。turn 11 の grep で確認）                                                 |
+    | `bun scripts/probe-composition.mjs --candidate public/engine.wasm`                                                          | exit 0・57 歩・問題 0                                                                                                                   |
+    | order-dashboard の `layout` で key が `open/orders` / `shipped/orders` で始まる widget                                      | それぞれ 3 件以上（header + row 2 件）あり、**全部**が `config.webmcp` を持ち、互いに deep-equal。`open` 側と `shipped` 側も deep-equal |
+    | `scratch/turn-<N>-mutation-from.mjs`                                                                                        | 変異 8 本すべて `from` が `engine/src/lib.rs` にちょうど 1 回（チェックリスト行 13）                                                    |
+  - 完了基準:
+    - A（engine + テスト）: `engine/src/lib.rs` の metadata 後処理（`for widget in &mut widgets` の冒頭、`:1352`）で `widget.target.is_empty()` なら `continue`（空 target は itemId の無いノードの widget。`find_path(…, "")` を呼ばない）。`MUTATIONS[*].from` の 8 文字列は触らない。Rust テスト 1 本を `composition_tests.rs` に追加（表の 1〜2 行目。`widget_at` / `keys` の雛形）。`tests/components-demo.test.js:153-163` の `find` を `filter` に変える（表の 5 行目）。`cargo test` → `bun run build:wasm` → `bunx vp test run` → `bun run check` → 照合 → probe の順に回し、表の 3・4・6 行目を満たす
+    - **照合が差分 0 でない場合の規則**（推測で進めない）: 差分の step を PROGRESS に列挙し、A の `continue` を戻してコードは base と同じ挙動のままにする。その場合 B の (1) は「root の UI ノード（itemId なし）の `webmcp` は target を持たない widget（label 等。子のものも含む）の `metadata.webmcp` に載る。それ以外の itemId の無いノードの `webmcp` は出ない」と実態を書く
+    - B（文書。1 つにまとめる）: (1) `docs/components.md:181` / `docs/webmcp.md:73` は A 後に真になるので趣旨は変えず、「root の UI ノード自身も同じ（target を持たない widget に載らない）」を 1 文足す。(2) 突き合わせ規則（`docs/components.md:179` / `docs/webmcp.md:71`）を「`widgets[].key` の**最初の `:` より前**（`:` が無ければ全体）を末尾の `/` で割った左側が `components[].instance`。itemId は `:` と `/` を含めないので一意。advanced grid の行 key `a/g:row:"x/y"` のように `:` より後ろには `/` が入り得る」に改める。(3) `hidden` の定義（`docs/components.md:175` / `docs/webmcp.md:69`）を「配置ノード（component ノード）自身の `visibleBind`」と言い切り、「root の `window` の中に置いた子は window が閉じていても `hidden: false`（widgets に出ず、`blocked` と同じ側で読む）」を 1 文足す。(4) `docs/components.md:180` の「実測」は A のテストが 3 件を確かめるので残す。`bun run docs:check` green
+    - 追従先チェックリスト行 6 の「確かめ方」の文言（「`widgets[].key` を末尾の `/` で割った左側」）を (2) の新しい語（「最初の `:` より前」）に書き換え、`docs/webmcp.md` に 1 か所であることを `git grep` で確認する（行 6 の条件は webmcp.md 側。`components.md:179` の並記はそのままでよい）
+    - 既存テストの期待値変更があれば PROGRESS に列挙する（想定: 0 件）
+  - 対象: `engine/src/lib.rs`, `engine/src/composition_tests.rs`, `tests/components-demo.test.js`, `docs/components.md`, `docs/webmcp.md`, `.gsd-lite/PLAN.md`（行 6 の文言）
+  - 依存: T8
+  - 並列サブ作業: A（engine + 2 テスト。対象: `engine/src/lib.rs`, `engine/src/composition_tests.rs`, `tests/components-demo.test.js`）/ B（文書。対象: `docs/components.md`, `docs/webmcp.md`。文言は上の (1)〜(3) を正とする）。`bun run build:wasm` / `cargo` / 全体 Vitest / 照合 / probe は親
+
 ## 決めた事項
 
 1. **`Scene.components` の直列化**は `#[serde(skip_serializing_if = "Vec::is_empty")]`。子の無い画面の `layout` 応答は 1 バイトも変わらず、base `52ec888` との照合（`scripts/compare-engine-behavior.mjs` の正規化は http の `kind` 1 か所のみ。`docs/testing.md:91`）が差分 0 のまま。JS は `ui_get_screen` で `snapshot.scene.components ?? []` と埋める（出所は WASM、JS は推測しない。RESEARCH §5-A 採用）
