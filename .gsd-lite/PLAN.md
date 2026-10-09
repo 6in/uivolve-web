@@ -112,7 +112,7 @@ bun scripts/compare-engine-behavior.mjs --base target/engine-compare/base-52ec88
   - 依存: なし（T1 / T2 と独立。impl は PLAN の順に取る）
   - 並列サブ作業: なし（`lib.rs` / `composition.rs` / テストが互いに依存）
 
-- [ ] T4: R2 後半 — `Scene.components[]`（instance / id / title / webmcp / hidden）を WASM で作る（Rust）
+- [x] T4: R2 後半 — `Scene.components[]`（instance / id / title / webmcp / hidden）を WASM で作る（Rust）
   - 完了基準:
     - `engine/src/lib.rs` に `#[derive(Serialize)] pub struct Component { pub instance: String, pub id: String, pub title: String, #[serde(skip_serializing_if = "metadata::Metadata::is_empty")] pub webmcp: metadata::Metadata, pub hidden: bool }` と、`Scene` に `#[serde(skip_serializing_if = "Vec::is_empty")] pub components: Vec<Component>` を足す（決めた事項 1）。`layout()` の `Scene { … }` 生成で `components: self.component_summaries()?,` と書く（この 1 行が T6 の変異 M8 の置換点。文字列を変えない）
     - `fn component_summaries(&self) -> Result<Vec<Component>, String>`: `self.components`（`BTreeMap`。親は子より先に来る）を順に回し、`path.rsplit_once('/')` で `(parent_path, item_id)`（`None` → `("", path)`）。`hidden = hidden[parent_path] || hidden_component(component_node(parent, item_id).ok_or(unknown_item(path))?, &parent_state)`。`parent_state` は root なら `self.root.state_json()?`、子なら `self.instance(parent_path)?.state_json()?`（決めた事項 3。`layout_scope()` の後ろで呼ぶ。P7）。`id` / `title` / `webmcp` は `instance.package` のクローン

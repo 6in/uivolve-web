@@ -360,9 +360,25 @@ pub struct Scene {
     pub width: f64,
     pub height: f64,
     pub widgets: Vec<Widget>,
+    /// The component instances of the screen, in the order they are keyed. Left out of the
+    /// response of a screen without children, so a plain screen answers exactly as before.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub components: Vec<Component>,
     pub modal: Option<Modal>,
     pub popup: Option<Value>,
     pub dialog: Option<Value>,
+}
+
+/// One component instance as the host reads it: where it sits, which package it is, the tool
+/// surface that package declared and whether the parent is hiding it right now.
+#[derive(Serialize)]
+pub struct Component {
+    pub instance: String,
+    pub id: String,
+    pub title: String,
+    #[serde(skip_serializing_if = "metadata::Metadata::is_empty")]
+    pub webmcp: metadata::Metadata,
+    pub hidden: bool,
 }
 
 #[derive(Serialize)]
@@ -1167,6 +1183,36 @@ impl Runtime {
         Ok(Some(composition::enter_layout(instances)))
     }
 
+    /// One summary per component instance, in path order. `components` is a `BTreeMap`, so a
+    /// parent is always summarized before the children under it and the `hidden` of an
+    /// ancestor is already known when a descendant asks for it: a child the parent hides is
+    /// hidden however its own placement is bound.
+    fn component_summaries(&self) -> Result<Vec<Component>, String> {
+        let mut hidden: BTreeMap<&str, bool> = BTreeMap::new();
+        let mut summaries = Vec::new();
+        for (path, instance) in &self.components {
+            // An itemId holds no `/`, so the last one splits the parent instance from the node
+            // that placed this child; an empty parent path is the root.
+            let (parent_path, item_id) = match path.rsplit_once('/') {
+                Some((parent_path, item_id)) => (parent_path, item_id),
+                None => ("", path.as_str()),
+            };
+            let parent = self.instance(parent_path)?;
+            let node = component_node(parent, item_id).ok_or_else(|| unknown_item(path))?;
+            let is_hidden = hidden.get(parent_path).copied().unwrap_or(false)
+                || hidden_component(node, &parent.state_json()?);
+            hidden.insert(path.as_str(), is_hidden);
+            summaries.push(Component {
+                instance: path.clone(),
+                id: instance.package.id.clone(),
+                title: instance.package.title.clone(),
+                webmcp: instance.package.webmcp.clone(),
+                hidden: is_hidden,
+            });
+        }
+        Ok(summaries)
+    }
+
     pub fn layout(&self, width: f64) -> Result<Scene, String> {
         if !width.is_finite() || !(240.0..=4096.0).contains(&width) {
             return Err("Viewport width must be between 240 and 4096".into());
@@ -1324,6 +1370,7 @@ impl Runtime {
             width,
             height,
             widgets,
+            components: self.component_summaries()?,
             modal,
             popup,
             dialog: self.dialogs.snapshot(),
