@@ -1,0 +1,68 @@
+name: Release runtime and WASM engine
+
+on:
+  push:
+    tags: ["runtime-v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Runtime version (for example 0.1.0)
+        required: true
+        default: "0.1.0"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-release-${{ inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.12"
+      - name: Install Rust and WASM target
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal --component rustfmt --target wasm32-unknown-unknown
+          rustup default 1.95.0
+      - run: bun install --frozen-lockfile
+      - name: Check and test
+        run: |
+          bun run check
+          bun run docs:check
+          bun run test
+      - name: Package runtime, minimal app and engine
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          VERSION="${INPUT_VERSION:-${GITHUB_REF_NAME#runtime-v}}"
+          export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct "$GITHUB_SHA")
+          bun run runtime:release -- "$VERSION"
+      - name: Publish immutable release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=$(jq -r .tagName .runtime-release/release-info.json)
+          VERSION=$(jq -r .version .runtime-release/release-info.json)
+          mapfile -t ASSETS < <(jq -r '.assets[].name' .runtime-release/release-info.json)
+          if [[ "$VERSION" == *-* ]]; then
+            RELEASE_FLAGS=(--prerelease)
+          else
+            RELEASE_FLAGS=(--latest=false)
+          fi
+          cd .runtime-release
+          gh release create "$TAG" "${ASSETS[@]}" SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "uivolve-web runtime $VERSION" \
+            "${RELEASE_FLAGS[@]}" \
+            --notes "$(printf 'Shared runtime (index.js / index.css / engine.wasm), the minimal static app and the bare WASM engine built from %s with Rust 1.95.0 (wasm32-unknown-unknown), Bun 1.3.12 and Node 24. Verify downloads with SHA256SUMS.' "$GITHUB_SHA")"

@@ -10,6 +10,7 @@ import { SCREEN_CATALOG } from "../src/screen-catalog.js";
 import { readPageRoute } from "../src/page-router.js";
 import { skillNames } from "../scripts/bundle-skills.mjs";
 import { buildMinimal } from "../scripts/build-runtime.mjs";
+import { releaseRuntime } from "../scripts/release-runtime.mjs";
 
 const temporary = [];
 async function workspace() {
@@ -173,3 +174,41 @@ it("builds a standalone static app with real deep entries and no demo or build d
     [200, 0],
   ]);
 }, 30_000);
+
+it("releases the runtime, the minimal app and the bare engine with matching digests", async () => {
+  const output = await workspace();
+  const release = await releaseRuntime({ version: "0.1.0", outputDirectory: output });
+  expect(release.tagName).toBe("runtime-v0.1.0");
+  expect(release.assets.map((asset) => asset.name)).toEqual([
+    "uivolve-web-runtime-0.1.0.tar.gz",
+    "uivolve-web-minimal-app-0.1.0.tar.gz",
+    "uivolve-web-engine-0.1.0.wasm",
+  ]);
+  const sums = await readFile(join(output, "SHA256SUMS"), "utf8");
+  for (const asset of release.assets) {
+    expect(asset.sha256).toBe(
+      createHash("sha256")
+        .update(await readFile(join(output, asset.name)))
+        .digest("hex"),
+    );
+    expect(sums).toContain(`${asset.sha256}  ${asset.name}\n`);
+  }
+  expect(await readFile(join(output, "uivolve-web-engine-0.1.0.wasm"))).toEqual(
+    await readFile(new URL("../public/engine.wasm", import.meta.url)),
+  );
+  const listing = spawnSync("tar", ["-tzf", join(output, "uivolve-web-runtime-0.1.0.tar.gz")], {
+    encoding: "utf8",
+  });
+  expect(listing.status).toBe(0);
+  const entries = listing.stdout.trim().split("\n");
+  expect(entries.every((path) => path.startsWith("uivolve-web-runtime-0.1.0/"))).toBe(true);
+  expect(entries.every((path) => !path.split("/").includes(".."))).toBe(true);
+  for (const file of ["engine.wasm", "index.js", "index.css", "THIRD_PARTY_NOTICES.txt"])
+    expect(entries).toContain(`uivolve-web-runtime-0.1.0/${file}`);
+  const app = spawnSync("tar", ["-tzf", join(output, "uivolve-web-minimal-app-0.1.0.tar.gz")], {
+    encoding: "utf8",
+  });
+  expect(app.stdout).toContain("uivolve-web-minimal-app-0.1.0/pages/home/index.html\n");
+  expect(app.stdout).toContain("uivolve-web-minimal-app-0.1.0/runtime/engine.wasm\n");
+  await expect(releaseRuntime({ version: "v1", outputDirectory: output })).rejects.toThrow();
+}, 60_000);

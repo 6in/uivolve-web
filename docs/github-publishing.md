@@ -1,4 +1,4 @@
-# GitHub Actions・Pages・スキル配布
+# GitHub Actions・Pages・スキル配布・ランタイム配布
 
 公開デモ: [uivolve-web](https://6in.github.io/uivolve-web/)。[Hello World](https://6in.github.io/uivolve-web/pages/hello-world/)や[ダイアログ](https://6in.github.io/uivolve-web/pages/dialogs/)を直接開ける。
 
@@ -33,6 +33,24 @@ bun run skills:release -- 0.1.0
 
 Pagesは公開済みの最新の安定版skills Releaseからカタログを取り込み、デモと独立した版のZIPを参照する。最初のReleaseがない場合は空のカタログを置き、デモだけ先に公開できる。
 
+## ランタイムとWASMエンジンのリリース
+
+`.github/workflows/release-runtime.yml`は`runtime-v0.1.0`形式のタグのpush、またはActionsの手動実行（versionに未公開の版番号）で動く。Pagesと同じNode 24・Bun 1.3.12・Rust 1.95.0でテストを通し、`scripts/release-runtime.mjs`が次の3つとSHA-256を作ってGitHub Releaseへ公開する。
+
+| 資産                                       | 内容                                                                                                                |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| `uivolve-web-runtime-<version>.tar.gz`     | [共通ランタイム](runtime-distribution.md)（`index.js` / `index.css` / `engine.wasm` / 第三者通知 / Workerアセット） |
+| `uivolve-web-minimal-app-<version>.tar.gz` | Hello World入りの静的アプリ一式（`app-dist/`相当）                                                                  |
+| `uivolve-web-engine-<version>.wasm`        | WASMエンジン単体                                                                                                    |
+
+```sh
+bun run runtime:release -- 0.1.0
+gh release download runtime-v0.1.0 --repo 6in/uivolve-web --pattern 'uivolve-web-runtime-*.tar.gz' --pattern SHA256SUMS
+sha256sum -c SHA256SUMS --ignore-missing
+```
+
+ローカルの生成先は`.runtime-release/`でGit管理しない。tarは名前順・所有者なしで固め、Actionsではコミット時刻を`SOURCE_DATE_EPOCH`に使う。WASMのバイト列はRustのバージョンに依存するので、Release本文にビルド元コミットとツールチェーンを記録する。既存リリースは上書きせず、変更には新しい版番号を使う。`-beta.1`等はprereleaseとして公開する。スキルの`skills-v*`とは独立した版番号で、Pagesのカタログには影響しない。
+
 ## インストール
 
 Claude Codeで次のURLを登録する。GitHubリポジトリのowner/repo形式で登録するとクローンが発生するため、必要な配布物だけを取得する場合はJSONのHTTPS URLを使う。
@@ -48,6 +66,6 @@ Claude Codeで次のURLを登録する。GitHubリポジトリのowner/repo形�
 
 ## 検証と更新
 
-`tests/distribution.test.js`でZIPの展開、必要なスキル、カタログのURL・ハッシュ、余分なビルド成果物の除外、Pagesの画面入口を検証する。`tests/skills.test.js`で配布後の文書リンクと最小サンプルの実WASM動作を確認する。Claude Codeでの実インストールは別途確認する。
+`tests/distribution.test.js`でZIPの展開、必要なスキル、カタログのURL・ハッシュ、余分なビルド成果物の除外、Pagesの画面入口、ランタイムReleaseの資産とSHA-256を検証する。`tests/skills.test.js`で配布後の文書リンクと最小サンプルの実WASM動作を確認する。Claude Codeでの実インストールは別途確認する。
 
 運用仕様は[GitHub Pagesの公式手順](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages)、[ViteのPages設定](https://vite.dev/guide/static-deploy.html#github-pages)、[Claudeのarchive形式](https://code.claude.com/docs/en/plugins/marketplace-reference#archive-plugin-source)を参照する。

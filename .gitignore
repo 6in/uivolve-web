@@ -12,5 +12,6 @@ public/screens/rpc-demo.pb
 .skill-bundles/
 .skill-release/
 .skill-release-catalog/
+.runtime-release/
 .gsd-lite/logs/
 .gsd-lite/loop.pid

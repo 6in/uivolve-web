@@ -22,6 +22,7 @@
     "docs:check": "bun scripts/check-docs.mjs",
     "skills:bundle": "bun scripts/bundle-skills.mjs",
     "skills:release": "bun scripts/release-skills.mjs",
+    "runtime:release": "bun run build:wasm && bun scripts/release-runtime.mjs",
     "pages:prepare": "bun scripts/prepare-pages.mjs",
     "fmt": "vp fmt && cargo fmt --manifest-path engine/Cargo.toml",
     "test:transfer:browser": "bun scripts/test-transfer-browser.mjs"
