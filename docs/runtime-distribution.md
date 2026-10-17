@@ -106,7 +106,7 @@ Canvasの表示領域は**文書に接続してから描かれる**。ランタ�
 
 ## 次の配布段階
 
-現在はリポジトリから生成する静的配布物。npmの公開、`bunx uivolve-web init / serve / build`というCLI、アプリ用ビルドコマンドの一般化、ランタイムの自動更新はまだ提供していない。`package.json`は引き続きprivateで、公開操作も行わない。共通ランタイムの切り出しと静的利用の検証を先に完了させた。
+現在はリポジトリから生成する静的配布物で、同じ内容を[GitHub Release](github-publishing.md)の`runtime-v*`タグからtar.gzとWASM単体でも取得できる。npmの公開、`bunx uivolve-web init / serve / build`というCLI、アプリ用ビルドコマンドの一般化、ランタイムの自動更新はまだ提供していない。`package.json`は引き続きprivateで、公開操作も行わない。共通ランタイムの切り出しと静的利用の検証を先に完了させた。
 
 時計を固定・差し替えする場合はcreateApplicationまたはUiRuntimeへ`clockProvider`を渡す。既定はブラウザ時計。[日付・時計の契約](date-functions.md)を参照。
 
