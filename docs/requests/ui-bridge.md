@@ -29,6 +29,7 @@ ui-bridge は、uivolve-web の画面と PostgreSQL の業務部品（iam・file
 画面がステータスのコードからしか判断できない。項目の横にエラーを出すことも、サーバの文言を出すこともできない。
 
 **欲しいもの**:
+
 - 操作ごとの **opt-in** で、2xx 以外の応答の本文（JSON）を失敗の結果に載せる。
   例: `options: { errorBody: json }` → `response.error.body`（と `response.error.status`）。名前と置き場所は任意。
 - 対象は `http.request`、`http.upload`、`http.multipart`。`http.download` は、本文を OPFS に保存しない形で載せられるなら対象にする。
@@ -63,6 +64,7 @@ ui-bridge は、uivolve-web の画面と PostgreSQL の業務部品（iam・file
 ところが、そのキーを Rhai で作る手段が無い。
 
 **欲しいもの**（どちらか。他の形でもよい）:
+
 - Rhai のネイティブ関数（例: `uuid_v4()`）。画面はキーを state に持ち、再送では同じ値を使う。
 - 操作の宣言で、ホストがキーを作って本文の決まった項目に入れる形。ただし `docs/files-cache-rpc.md` の
   「自動の idempotency key は付けない」という既存の決定と、`docs/host-adapters-design.md:188` の将来案
@@ -73,6 +75,7 @@ ui-bridge は、uivolve-web の画面と PostgreSQL の業務部品（iam・file
 **いま**: 2xx 以外はどのメソッドでも `outcome: "unknown"`。
 
 **ui-bridge の保証**: 4xx（408・429 を除く）は「処理していない」ことを ui-bridge が保証する。
+
 - 例えば 422 は検証で弾いた、409 は状態が合わなかった、という意味で、DB には何も書いていない。
 - そのため画面は `failed` として扱い、入力を直して送り直してよい。
 
