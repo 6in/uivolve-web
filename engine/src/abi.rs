@@ -51,6 +51,12 @@ fn execute(request: Value) -> Result<Value, String> {
         .get("clock")
         .map(|value| serde_json::from_value(value.clone()).map_err(|e| e.to_string()))
         .transpose()?;
+    // The length is checked where the execution starts, next to the clock's own validation.
+    let random: Option<Vec<u8>> = request
+        .get("random")
+        .map(|value| serde_json::from_value(value.clone()).map_err(|e| e.to_string()))
+        .transpose()?;
+    let host = crate::extensions::HostContext { clock, random };
     match request.get("op").and_then(Value::as_str).unwrap_or("") {
         "theme" => {
             if let Some(value) = request.get("theme") {
@@ -79,7 +85,7 @@ fn execute(request: Value) -> Result<Value, String> {
                     components.insert(url.clone(),crate::Bundle{package,script:script.to_owned(),descriptors});
                 }
             }
-            let mut runtime = Runtime::load_with_bundle(package, script, descriptors, clock, components, |_| {})?;
+            let mut runtime = Runtime::load_with_host_context(package, script, descriptors, host, components, |_| {})?;
             let result = result(&mut runtime)?;
             RUNTIME.with(|r| *r.borrow_mut() = Some(runtime));
             Ok(result)
@@ -91,7 +97,7 @@ fn execute(request: Value) -> Result<Value, String> {
                 .get("target")
                 .and_then(Value::as_str)
                 .ok_or("Missing target")?;
-            runtime.with_clock(clock, |runtime| {
+            runtime.with_host_context(host, |runtime| {
                 runtime.dispatch(target, request.get("payload").cloned().unwrap_or(json!({})))?;
                 result(runtime)
             })
@@ -106,7 +112,7 @@ fn execute(request: Value) -> Result<Value, String> {
             let error = request.get("error").and_then(Value::as_str).unwrap_or("");
             if error.len() > 2048 { return Err(format!("{channel} error exceeds 2048 bytes")); }
             let response=json!({"ok":ok,"data":request.get("data").cloned().unwrap_or(Value::Null),"error":error});
-            runtime.with_clock(clock, |runtime| {
+            runtime.with_host_context(host, |runtime| {
             let completion = if request["op"]=="storage_result" {Completion::Storage{id,response}}
             else if request["op"]=="dialog_result" {Completion::Dialog{id,response}}
             else if request["op"]=="file_result" || request["op"]=="rpc_result" {
@@ -125,7 +131,7 @@ fn execute(request: Value) -> Result<Value, String> {
             let id = request.get("id").and_then(Value::as_u64).ok_or("Missing host request id")?;
             let instance = take_instance(&request)?;
             let data = request.get("data").cloned().ok_or("Missing host progress data")?;
-            runtime.with_clock(clock, |runtime| {
+            runtime.with_host_context(host, |runtime| {
                 runtime.complete(&instance, Completion::HostProgress { id, data })?;
                 result(runtime)
             })
@@ -140,7 +146,7 @@ fn execute(request: Value) -> Result<Value, String> {
                 "data": request.get("data").cloned().unwrap_or(Value::Null),
                 "error": request.get("error").cloned().unwrap_or(Value::Null),
             });
-            runtime.with_clock(clock, |runtime| {
+            runtime.with_host_context(host, |runtime| {
                 runtime.complete(&instance, Completion::Host { id, response })?;
                 result(runtime)
             })

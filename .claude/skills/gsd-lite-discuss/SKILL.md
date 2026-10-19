@@ -27,7 +27,7 @@ disable-model-invocation: true
   推論強度は `opencode.variant.<phase>`、エージェントは `opencode.agent.<phase>`。
   空ならその CLI の設定を使用する。
 - 次のマイルストーンに移るときも `engine` / `phase_engines` / `model` / `codex` / `opencode` /
-  `subagents` / `reflect` は保持する（gsd-control 形では `.gsd-lite/config.json` の `defaults` が
+  `subagents` / `reflect` / `limits` は保持する（gsd-control 形では `.gsd-lite/config.json` の `defaults` が
   次のマイルストーンの初期値。選んだパターンを次回以降の既定にしたいときは `defaults` も更新してコミットする）。
 - 監視用サブエージェントが利用できない場合は `gsd-lite-loop.sh --status` で
   確認する方法を案内する。
@@ -189,6 +189,17 @@ PROGRESS / VERIFICATION 等）を `.gsd-lite/archive/<前回のmilestone>/` へ�
    - **振り返り（reflect）**: state の `reflect`（既定 `true`）を確認する。`true` なら verify 合格後に
      reflect ターンが記録に基づく PMI の振り返りを `.gsd-lite/reflect/` に書いてから DONE になる。
      不要なら `false`（AUQ で聞くのは初回か変更希望があるときだけ）
+   - **資源の上限（limits）**: ループ全体（ターンの CLI・テスト・ビルド）のメモリと CPU の上限を AUQ で選ぶ
+     （state の `limits`。既存値があればそれを既定に）。テストやビルドの暴走でマシンが固まるのを防ぐ保険。
+     先に `nproc` と `free -g` でマシンの CPU 数とメモリを調べ、選択肢の値に使う:
+     - **上限なし**（`{"memory_max": "", "cpu_quota": ""}`。初回で、マシンに余裕があり他に重い作業が無いとき）
+     - **メモリ半分・CPU 半分**（推奨。例: 16GB・4 コアなら `{"memory_max": "8G", "cpu_quota": "200%"}`）
+     - **現在の設定を使う**（既存値があるとき）
+     - カスタム（Other で値を書いてもらう。メモリは `8G` / `512M` / `75%`、CPU は `200%` の形）
+     上限を付けるなら、保存後の `gsd-lite-loop.sh --check` の `limits` 行を見せる。WARN が出ていれば
+     そのまま伝える（systemd が無い環境では上限なしで動く。CPU は管理者が delegate.conf を入れて OS を
+     再起動するまで効かず、メモリだけ効く）。環境変数 `GSD_LITE_MEMORY_MAX` / `GSD_LITE_CPU_QUOTA` が
+     設定されていれば state より優先されるので、選択と違うなら外した起動コマンドを使う（`off` は「付けない」）
    - **選択したエンジンの準備**: 現在のホストのインストール済みテンプレートを使い、
      Claude が含まれれば `.claude/skills/`、Codex が含まれれば `.agents/skills/`、
      OpenCode が含まれれば `.opencode/skills/` に
@@ -238,7 +249,7 @@ PROGRESS / VERIFICATION 等）を `.gsd-lite/archive/<前回のmilestone>/` へ�
    - state.json を**すべて更新してから**コミットする: `milestone`（kebab-case の
      スラッグ）/ `target`（`name` と `path`。in-repo 形は `{"name": "", "path": "."}` のままでよい）/
      `branch`（name と base）/ `research.targets` / `phase: "research"` /
-     `next_command: "/gsd-lite-research"` / `engine` / `phase_engines` / `subagents` / `reflect` /
+     `next_command: "/gsd-lite-research"` / `engine` / `phase_engines` / `subagents` / `reflect` / `limits` /
      `fix_round: 0` / `updated_at`（修正ラウンドは 0-a の記載どおり、ブランチを作らず
      `fix_round` / `phase` / `next_command` / `verify_round` / `updated_at` を更新）。
      そのうえで REQUIREMENTS.md / DECISIONS.md / state.json と追加・更新したスキル・設定を一括コミット
@@ -250,7 +261,9 @@ PROGRESS / VERIFICATION 等）を `.gsd-lite/archive/<前回のmilestone>/` へ�
    - **起動する**: `setsid gsd-lite-loop.sh >> .gsd-lite/logs/loop.log 2>&1 &` で（`>>` で追記。`>` だと
      再起動のたびに前回のループログが消える）
      デタッチ起動し、`gsd-lite-loop.sh --status` などの監視コマンドを提示して
-     **即座に手を離す**。以後このセッションでログをポーリングしない
+     **即座に手を離す**。以後このセッションでログをポーリングしない。
+     state の `limits`（手順 4 で選んだもの）があればループ自身が systemd の scope に入り直すので、
+     起動コマンドは同じ（`--status` の `limits` 行で確認できる）
    - **見守る**: バックグラウンドのサブエージェントを 1 体起動する。指示は
      「$MS/state.json の phase の変化と loop.pid の消滅を Bash の
      until ループで待ち、変化のたびに 1 行（例: `research → plan (turn 3)`）、

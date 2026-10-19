@@ -1137,3 +1137,247 @@ it.each([
     { transferred: 4, total: totals[1] },
   ]);
 });
+
+const problem = {
+  type: "about:blank",
+  title: "入力に誤りがあります",
+  status: 422,
+  errors: [{ field: "email", code: "format", message: "メールアドレスの形式が正しくありません" }],
+};
+// Keeps the rejection value so one failure can carry several positive assertions.
+const rejection = (promise) =>
+  promise.then(
+    () => {
+      throw new Error("拒否されるはずの転送が成功しました");
+    },
+    (error) => error,
+  );
+const bodyKeys = (error) => ({
+  body: Object.hasOwn(error, "body"),
+  bodyError: Object.hasOwn(error, "bodyError"),
+});
+// ASCII-only JSON whose UTF-8 length is exactly `bytes`; `{"title":""}` is the 12 byte overhead.
+const jsonPayload = (bytes) => JSON.stringify({ title: "a".repeat(bytes - 12) });
+const encode = (value) => new TextEncoder().encode(value);
+
+it("delivers the declared upload failure body with the HTTP status", async () => {
+  const f = await uploadFixture("http.upload", { errorBody: "json" });
+  f.resources.transferRequest.mockResolvedValueOnce(
+    new Response(JSON.stringify(problem), {
+      status: 422,
+      headers: { "content-type": "application/problem+json" },
+    }),
+  );
+  const error = await rejection(f.run());
+  expect(error).toMatchObject({
+    code: "HTTP_422",
+    status: 422,
+    outcome: "unknown",
+    body: { title: "入力に誤りがあります" },
+  });
+  expect(error.body).toEqual(problem);
+  expect(bodyKeys(error)).toEqual({ body: true, bodyError: false });
+});
+
+it("reports an empty upload failure body when the response carries no stream", async () => {
+  const f = await uploadFixture("http.upload", { errorBody: "json" });
+  f.resources.transferRequest.mockResolvedValueOnce(new Response(null, { status: 403 }));
+  const error = await rejection(f.run());
+  expect(error).toMatchObject({ code: "HTTP_403", status: 403, bodyError: "empty" });
+  expect(bodyKeys(error)).toEqual({ body: false, bodyError: true });
+});
+
+it("bounds the multipart failure body at 64,000 decoded bytes", async () => {
+  for (const [bytes, keys] of [
+    [64_000, { body: true, bodyError: false }],
+    [64_001, { body: false, bodyError: true }],
+  ]) {
+    const f = await uploadFixture("http.multipart", { errorBody: "json" });
+    const payload = jsonPayload(bytes);
+    expect(encode(payload).byteLength).toBe(bytes);
+    f.resources.transferRequest.mockResolvedValueOnce(
+      new Response(payload, { status: 422, headers: { "content-type": "application/json" } }),
+    );
+    const error = await rejection(f.run());
+    expect(error).toMatchObject({ code: "HTTP_422", status: 422, outcome: "unknown" });
+    expect(bodyKeys(error)).toEqual(keys);
+    if (keys.body) expect(error.body.title).toHaveLength(bytes - 12);
+    else expect(error.bodyError).toBe("too-large");
+  }
+});
+
+it.each(["http.upload", "http.multipart"])(
+  "applies the connection clientErrorOutcome to %s failures",
+  async (action) => {
+    for (const [status, outcome] of [
+      [400, "failed"],
+      [409, "failed"],
+      [422, "failed"],
+      [408, "unknown"],
+      [429, "unknown"],
+      [503, "unknown"],
+    ]) {
+      const f = await uploadFixture(action, { errorBody: "json" });
+      f.connection.clientErrorOutcome = "failed";
+      f.adapter.validate(f.operation, f.connection, new URL("https://example.test/"));
+      f.resources.transferRequest.mockResolvedValueOnce(
+        new Response(JSON.stringify(problem), {
+          status,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+      const error = await rejection(f.run());
+      expect({ code: error.code, status: error.status, outcome: error.outcome }).toEqual({
+        code: `HTTP_${status}`,
+        status,
+        outcome,
+      });
+      expect(bodyKeys(error)).toEqual({ body: true, bodyError: false });
+    }
+  },
+);
+
+async function downloadFailureFixture(chunks, headers, status = 422) {
+  const f = await downloadFixture({ errorBody: "json" });
+  const created = vi.fn();
+  f.fs.controls.beforeCreateWritable = created;
+  const progress = vi.fn();
+  f.context.progress = progress;
+  return { f, created, progress, stream: f.stream(chunks, headers, status) };
+}
+
+it("delivers the declared download failure body without touching the destination file", async () => {
+  const { f, stream, created, progress } = await downloadFailureFixture(
+    [encode(JSON.stringify(problem))],
+    { "content-type": "application/problem+json" },
+  );
+  const error = await rejection(f.run());
+  expect(error).toMatchObject({
+    code: "HTTP_422",
+    status: 422,
+    outcome: "failed",
+    body: { title: "入力に誤りがあります" },
+  });
+  expect(error.body).toEqual(problem);
+  expect(bodyKeys(error)).toEqual({ body: true, bodyError: false });
+  expect(stream.cancel).toHaveBeenCalledOnce();
+  expect(created).toHaveBeenCalledTimes(0);
+  expect(progress).toHaveBeenCalledTimes(0);
+  await expect(f.reference.file()).rejects.toMatchObject({ name: "NotFoundError" });
+});
+
+it("bounds the download failure body independently of the transfer limit", async () => {
+  const { f, stream, created } = await downloadFailureFixture([encode(jsonPayload(64_001))], {
+    "content-type": "application/json",
+  });
+  // The failure body is read before createWritable, so the 4 byte transfer limit never applies.
+  expect(f.adapter.transferLimit).toBe(4);
+  const error = await rejection(f.run());
+  expect(error).toMatchObject({ code: "HTTP_422", status: 422, bodyError: "too-large" });
+  expect(bodyKeys(error)).toEqual({ body: false, bodyError: true });
+  expect(stream.cancel).toHaveBeenCalledOnce();
+  expect(created).toHaveBeenCalledTimes(0);
+  await expect(f.reference.file()).rejects.toMatchObject({ name: "NotFoundError" });
+});
+
+it("reports a network body error when the download failure body cannot be read", async () => {
+  const { f, stream } = await downloadFailureFixture([[1]], {
+    "content-type": "application/json",
+  });
+  stream.read.mockRejectedValueOnce(new Error("接続が切れました"));
+  const error = await rejection(f.run());
+  expect(error).toMatchObject({ code: "HTTP_422", status: 422, bodyError: "network" });
+  expect(bodyKeys(error)).toEqual({ body: false, bodyError: true });
+  expect(stream.cancel).toHaveBeenCalledOnce();
+  await expect(f.reference.file()).rejects.toMatchObject({ name: "NotFoundError" });
+});
+
+// A real stream rejects `cancel()` once it has errored; the finally block must not turn that
+// into CLEANUP after the HTTP status is already known.
+it.each([
+  ["fails mid-read", { errorBody: "json" }, "pull", { bodyError: true }],
+  ["is already errored", { errorBody: "json" }, "start", { bodyError: true }],
+  ["is already errored without errorBody", {}, "start", { bodyError: false }],
+])(
+  "keeps the download HTTP failure when the body stream %s",
+  async (_label, options, errorAt, keys) => {
+    const f = await downloadFixture(options);
+    const created = vi.fn();
+    f.fs.controls.beforeCreateWritable = created;
+    const stream = new ReadableStream({
+      start(controller) {
+        if (errorAt === "start") controller.error(new Error("接続が切れました"));
+        else controller.enqueue(encode('{"title":'));
+      },
+      pull(controller) {
+        controller.error(new Error("接続が切れました"));
+      },
+    });
+    f.resources.transferRequest.mockResolvedValue(
+      new Response(stream, {
+        status: 422,
+        headers: { "content-type": "application/problem+json" },
+      }),
+    );
+    const error = await rejection(f.run());
+    expect({ code: error.code, status: error.status, outcome: error.outcome }).toEqual({
+      code: "HTTP_422",
+      status: 422,
+      outcome: "failed",
+    });
+    expect(bodyKeys(error)).toEqual({ body: false, ...keys });
+    if (keys.bodyError) expect(error.bodyError).toBe("network");
+    expect(created).toHaveBeenCalledTimes(0);
+    await expect(f.reference.file()).rejects.toMatchObject({ name: "NotFoundError" });
+  },
+);
+
+it.each([[{}], [{ "content-type": "text/plain" }]])(
+  "refuses a download failure body whose media type is not JSON %j",
+  async (headers) => {
+    const { f, stream } = await downloadFailureFixture([[1, 2]], headers);
+    const error = await rejection(f.run());
+    expect(error).toMatchObject({ code: "HTTP_422", status: 422, bodyError: "content-type" });
+    expect(bodyKeys(error)).toEqual({ body: false, bodyError: true });
+    expect(stream.cancel).toHaveBeenCalledOnce();
+    expect(stream.read).toHaveBeenCalledTimes(0);
+  },
+);
+
+it("reports an empty download failure body when no bytes arrive", async () => {
+  const { f, stream } = await downloadFailureFixture([], { "content-type": "application/json" });
+  const error = await rejection(f.run());
+  expect(error).toMatchObject({ code: "HTTP_422", status: 422, bodyError: "empty" });
+  expect(bodyKeys(error)).toEqual({ body: false, bodyError: true });
+  expect(stream.cancel).toHaveBeenCalledOnce();
+});
+
+it("reports an invalid download failure body for fatal UTF-8 and broken JSON", async () => {
+  for (const chunk of [[0xff], [...encode("{broken")]]) {
+    const { f, stream } = await downloadFailureFixture([chunk], {
+      "content-type": "application/json",
+    });
+    const error = await rejection(f.run());
+    expect(error).toMatchObject({ code: "HTTP_422", status: 422, bodyError: "invalid" });
+    expect(bodyKeys(error)).toEqual({ body: false, bodyError: true });
+    expect(stream.cancel).toHaveBeenCalledOnce();
+    await expect(f.reference.file()).rejects.toMatchObject({ name: "NotFoundError" });
+  }
+});
+
+it("keeps download failures failed even when the connection asks for failed client errors", async () => {
+  for (const status of [400, 401, 403, 500]) {
+    const f = await downloadFixture();
+    f.connection.clientErrorOutcome = "failed";
+    f.adapter.validate(f.operation, f.connection, new URL("https://example.test/"));
+    expect(f.context.connection.clientErrorOutcome).toBe("failed");
+    const stream = f.stream([], {}, status);
+    const error = await rejection(f.run());
+    expect({ code: error.code, outcome: error.outcome }).toEqual({
+      code: `HTTP_${status}`,
+      outcome: "failed",
+    });
+    expect(stream.cancel).toHaveBeenCalledOnce();
+    await expect(f.reference.file()).rejects.toMatchObject({ name: "NotFoundError" });
+  }
+});

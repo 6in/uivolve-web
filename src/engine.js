@@ -1,7 +1,8 @@
 // Browser boundary only: UTF-8 memory exchange and the native Wasm API.
 import { browserClock, validateClock } from "./clock.js";
+import { browserRandom, validateRandom } from "./random.js";
 
-const clockOperations = new Set([
+const contextOperations = new Set([
   "load",
   "event",
   "host_result",
@@ -21,16 +22,22 @@ function withInstance(request, instance) {
 }
 
 export class WasmEngine {
-  constructor(exports, bytes, { clockProvider = browserClock } = {}) {
+  constructor(
+    exports,
+    bytes,
+    { clockProvider = browserClock, randomProvider = browserRandom } = {},
+  ) {
     if (typeof clockProvider !== "function") throw new Error("clockProviderには関数が必要です");
+    if (typeof randomProvider !== "function") throw new Error("randomProviderには関数が必要です");
     this.clockProvider = clockProvider;
+    this.randomProvider = randomProvider;
     this.exports = exports;
     this.bytes = bytes;
     this.encoder = new TextEncoder();
     this.decoder = new TextDecoder();
   }
 
-  static async create(url, { resources, signal, theme, clockProvider } = {}) {
+  static async create(url, { resources, signal, theme, clockProvider, randomProvider } = {}) {
     signal?.throwIfAborted();
     const response = resources
       ? await resources.fetch(url, { signal })
@@ -40,7 +47,10 @@ export class WasmEngine {
     signal?.throwIfAborted();
     const { instance } = await WebAssembly.instantiate(bytes, {});
     signal?.throwIfAborted();
-    const engine = new WasmEngine(instance.exports, bytes.byteLength, { clockProvider });
+    const engine = new WasmEngine(instance.exports, bytes.byteLength, {
+      clockProvider,
+      randomProvider,
+    });
     if (theme !== undefined) engine.theme(theme);
     return engine;
   }
@@ -50,11 +60,14 @@ export class WasmEngine {
   }
 
   call(request) {
-    if (clockOperations.has(request.op)) {
+    if (contextOperations.has(request.op)) {
       const clock = Object.hasOwn(request, "clock")
         ? validateClock(request.clock)
         : this.readClock();
-      request = { ...request, clock };
+      const random = Object.hasOwn(request, "random")
+        ? validateRandom(request.random)
+        : validateRandom(this.randomProvider());
+      request = { ...request, clock, random };
     }
     const bytes = this.encoder.encode(JSON.stringify(request));
     if (bytes.length > 2_000_000) throw new Error("リクエストが2 MBを超えています");

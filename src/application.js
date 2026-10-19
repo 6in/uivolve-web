@@ -78,6 +78,7 @@ export async function createApplication({
   adapters,
   connections,
   clockProvider,
+  randomProvider,
   transferLimit,
 } = {}) {
   configUrl = httpUrl(configUrl, globalThis.location?.href);
@@ -122,6 +123,7 @@ export async function createApplication({
       adapters,
       connections: connections ?? config.connections,
       clockProvider,
+      randomProvider,
       transferLimit,
       onError,
       onBusy,

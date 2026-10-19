@@ -535,7 +535,7 @@ impl Composing<'_> {
                 &bundle.script,
                 bundle.descriptors.clone(),
                 self.context,
-                None,
+                extensions::HostContext::default(),
                 &path,
                 |_| {},
                 self.dialogs,
@@ -627,16 +627,39 @@ impl Runtime {
         components: HashMap<String, Bundle>,
         register: impl FnOnce(&mut Engine),
     ) -> Result<Self, String> {
+        Self::load_with_host_context(
+            package,
+            script,
+            descriptors,
+            extensions::HostContext {
+                clock,
+                random: None,
+            },
+            components,
+            register,
+        )
+    }
+
+    /// Load a screen with everything the host supplies for the loading execution: the clock
+    /// `init` reads and the random bytes it draws from.
+    pub fn load_with_host_context(
+        package: Package,
+        script: &str,
+        descriptors: HashMap<String, Vec<u8>>,
+        host: extensions::HostContext,
+        components: HashMap<String, Bundle>,
+        register: impl FnOnce(&mut Engine),
+    ) -> Result<Self, String> {
         let mut dialogs = dialogs::Requests::default();
         let pages = pages::Requests::default();
-        // One context per screen: every instance of the tree shares this clock.
+        // One context per screen: every instance of the tree shares this clock and randomness.
         let context = extensions::ExtensionContext::default();
         let root = instance::Instance::load(
             package,
             script,
             descriptors,
             &context,
-            clock,
+            host,
             "",
             register,
             &mut dialogs,
@@ -668,7 +691,23 @@ impl Runtime {
         clock: Option<extensions::Clock>,
         execute: impl FnOnce(&mut Self) -> Result<T, String>,
     ) -> Result<T, String> {
-        let _clock_guard = self.root.extension_context.enter(clock)?;
+        self.with_host_context(
+            extensions::HostContext {
+                clock,
+                random: None,
+            },
+            execute,
+        )
+    }
+
+    /// Run `execute` with the clock and the random bytes the host supplied for this execution.
+    /// Both are released when it returns, however it returns, so nothing leaks into the next one.
+    pub fn with_host_context<T>(
+        &mut self,
+        host: extensions::HostContext,
+        execute: impl FnOnce(&mut Self) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let _host_guard = self.root.extension_context.enter(host)?;
         execute(self)
     }
 

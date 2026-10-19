@@ -40,11 +40,11 @@ let instant = datetime_to_ms("1970-01-01T00:00:00.001Z"); // 1
 
 ## 時計の供給と再現性
 
-WASMはOSやブラウザから直接時計を取得しない。ブラウザホストはRhaiを実行する`load`、`event`、`host_result`、`http_result`、`storage_result`、`file_result`、`rpc_result`、`dialog_result`ごとに一度だけ時計を採取する。initと同じ画面load中のdatepicker.todayにも同じ値を使う。layoutやthemeだけの操作では採取しない。
+WASMはOSやブラウザから直接時計を取得しない。ブラウザホストはRhaiを実行する`load`、`event`、`host_result`、`host_progress`、`http_result`、`storage_result`、`file_result`、`rpc_result`、`dialog_result`ごとに一度だけ時計を採取する。initと同じ画面load中のdatepicker.todayにも同じ値を使う。layoutやthemeだけの操作では採取しない。[乱数](random-functions.md)も同じ9つのopで一緒に添える。
 
-ABIの任意フィールドは`clock: {nowMs, tzOffsetMinutes}`。nowMsは整数、tzOffsetMinutesは-840〜840の整数分で、現地日付が0001〜9999年であることを検証する。JavaScriptではnowMsが安全な整数であることも要求する。余分なキーは拒否する。clockを省略した旧ABIも使えるが、`date_today`、`datetime_now`、`now_ms`、`tz_offset_minutes`、`datetime_from_ms`は時計不足の例外になる。純粋な日付計算は使える。
+ABIの任意フィールドは`clock: {nowMs, tzOffsetMinutes}`。nowMsは整数、tzOffsetMinutesは-840〜840の整数分で、現地日付が0001〜9999年であることを検証する。JavaScriptではnowMsが安全な整数であることも要求する。余分なキーは拒否する。clockを省略した旧ABIも使えるが、`date_today`、`datetime_now`、`now_ms`、`tz_offset_minutes`、`datetime_from_ms`は時計不足の例外になる。純粋な日付計算は使える。乱数の任意フィールドはトップレベルの`random`で、0〜255の整数1,024個のJSON配列。
 
-WasmEngine、UiRuntime、createApplicationは`clockProvider`を受け取る。既定はDate.nowとその瞬間のブラウザのUTCオフセット。固定時計を注入すればテストや再生を再現できる。providerがundefinedを返すと時計を省略する。
+WasmEngine、UiRuntime、createApplicationは`clockProvider`を受け取る。既定はDate.nowとその瞬間のブラウザのUTCオフセット。固定時計を注入すればテストや再生を再現できる。providerがundefinedを返すと時計を省略する。乱数は同じ3か所が受け取る`randomProvider`で供給し、既定は`crypto.getRandomValues`。
 
 ```js
 const clockProvider = () => ({

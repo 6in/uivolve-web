@@ -242,6 +242,105 @@ describe("ApplicationLoader の components 取得", () => {
     }
   });
 
+  // Two things a screen must carry wherever it was read from: an id that can name a scope, and an
+  // rpc map of objects. A child is held to them exactly as the root is, on both paths.
+  const SHAPES = [
+    ["id: 5", { id: 5 }, "画面idは空でない文字列にしてください"],
+    ["id: null", { id: null }, "画面idは空でない文字列にしてください"],
+    ['id: ""', { id: "" }, "画面idは空でない文字列にしてください"],
+    ["rpc: {x: null}", { rpc: { x: null } }, "rpcの宣言はオブジェクトにしてください"],
+    ['rpc: "str"', { rpc: "str" }, "rpcの宣言はオブジェクトにしてください"],
+    ["rpc: []", { rpc: [] }, "rpcの宣言はオブジェクトにしてください"],
+    ["rpc: null", { rpc: null }, "rpcの宣言はオブジェクトにしてください"],
+  ];
+  // The patch lands on a sound screen, so the script URL it names stays the one `fixture` publishes.
+  const shaped = (id, patch) => ({ ...screen(id), ...patch });
+  const declaring = (count) =>
+    Object.fromEntries(
+      Array.from({ length: count }, (_, n) => [`c${n}`, { url: `a${n + 1}.json` }]),
+    );
+  const declaredParts = (count) =>
+    Array.from({ length: count }, (_, n) => [`a${n + 1}.json`, screen(`a${n + 1}`)]);
+
+  it("refuses a malformed id or rpc on the network path, at the root and in a child", async () => {
+    for (const [name, patch, message] of SHAPES) {
+      const root = fixture([["parent.json", shaped("parent", patch)]]);
+      const atRoot = root.loader.fetch(href("parent.json"));
+      await expect(atRoot, name).rejects.toThrow(message);
+      await expect(atRoot, name).rejects.not.toBeInstanceOf(TypeError);
+      const child = fixture([
+        ["parent.json", screen("parent", { components: { a: { url: "a.json" } } })],
+        ["a.json", shaped("a", patch)],
+      ]);
+      const atChild = child.loader.fetch(href("parent.json"));
+      await expect(atChild, name).rejects.toThrow(message);
+      await expect(atChild, name).rejects.not.toBeInstanceOf(TypeError);
+      // The parent was taken whole and the child's body read; the shape is judged before the
+      // child's own script is asked for.
+      expect([...child.reads.keys()].sort(), name).toEqual([
+        href("a.json"),
+        href("parent.json"),
+        href("parent.rhai"),
+      ]);
+    }
+  });
+
+  it("refuses a malformed id or rpc on the manifest path as well", async () => {
+    for (const [name, patch, message] of SHAPES) {
+      const rootList = [["parent.json", shaped("parent", patch)]];
+      const root = fixture(rootList);
+      const rt = await treeManifest(root, rootList);
+      const atRoot = root.loader.fetch(rt.url, { mode: "network-first" });
+      await expect(atRoot, name).rejects.toThrow(message);
+      await expect(atRoot, name).rejects.not.toBeInstanceOf(TypeError);
+      const childList = [
+        ["parent.json", screen("parent", { components: { a: { url: "a.json" } } })],
+        ["a.json", shaped("a", patch)],
+      ];
+      const child = fixture(childList);
+      const ct = await treeManifest(child, childList);
+      const atChild = child.loader.fetch(ct.url, { mode: "network-first" });
+      await expect(atChild, name).rejects.toThrow(message);
+      await expect(atChild, name).rejects.not.toBeInstanceOf(TypeError);
+    }
+  });
+
+  // `components` is a declaration list, not the Instance count: a ninth key is refused even when
+  // nothing places it, and the wording names the screen that wrote the declarations.
+  it("refuses a root declaring nine components without reading a single child", async () => {
+    const f = fixture([
+      ["parent.json", screen("parent", { components: declaring(9) })],
+      ...declaredParts(9),
+    ]);
+    await expect(f.loader.fetch(href("parent.json"))).rejects.toThrow(
+      `コンポーネントの宣言が8件を超えています: ${href("parent.json")}`,
+    );
+    expect([...f.reads.keys()].sort()).toEqual([href("parent.json"), href("parent.rhai")]);
+    for (let n = 1; n <= 9; n++) expect(f.reads.has(href(`a${n}.json`)), `a${n}.json`).toBe(false);
+  });
+
+  it("takes a root declaring exactly eight components", async () => {
+    const f = fixture([
+      ["parent.json", screen("parent", { components: declaring(8) })],
+      ...declaredParts(8),
+    ]);
+    const candidate = await f.loader.fetch(href("parent.json"));
+    const children = declaredParts(8).map(([path]) => href(path));
+    expect(Object.keys(candidate.components).sort()).toEqual([...children].sort());
+    for (const child of children) expect(f.reads.get(child), child).toBe(1);
+  });
+
+  it("names the child that declares a ninth component", async () => {
+    const f = fixture([
+      ["parent.json", screen("parent", { components: { a: { url: "a.json" } } })],
+      ["a.json", screen("a", { components: declaring(9) })],
+      ...declaredParts(9),
+    ]);
+    await expect(f.loader.fetch(href("parent.json"))).rejects.toThrow(
+      `コンポーネントの宣言が8件を超えています: ${href("a.json")}`,
+    );
+  });
+
   it("applies the existing Rhai size limit to a child script", async () => {
     const f = fixture([
       ["parent.json", screen("parent", { components: { a: { url: "a.json" } } })],
@@ -493,6 +592,25 @@ describe("ApplicationLoader の components 取得", () => {
       const edge = fixture([]);
       const e = await sized(edge, 998_999);
       await expect(edge.loader.fetch(e.url, { mode: "network-first" })).rejects.toThrow("HTTP 404");
+      // A `?x` key means the screen URL carrying a query, the basis `save` and `restore` resolve a
+      // child by. The largest child is named the way the store would find it, not beside the
+      // sidecar, so the href is `parent.json?x` rather than `parent.json.manifest.json?x`.
+      const odd = fixture([]);
+      const o = await sized(odd, 1_000);
+      const metadata = structuredClone(o.metadata);
+      metadata.components["?x"] = {
+        source: { url: "packages/rev/component-2-source", sha256: "5".repeat(64), size: 998_000 },
+        script: { url: "packages/rev/component-2-script", sha256: "6".repeat(64), size: 0 },
+        descriptors: {},
+      };
+      metadata.revision = await manifestRevision(metadata);
+      odd.responses.set(o.sidecar.href, JSON.stringify(metadata));
+      const query = odd.loader.fetch(o.url, { mode: "network-first" });
+      await expect(query).rejects.toThrow(
+        `配信ファイルの合計が2 MBを超えています（合計 2000001 バイト。最大の子: ${href("parent.json?x")} 998000 バイト）`,
+      );
+      await expect(query).rejects.not.toThrow(href("parent.json.manifest.json?x"));
+      expect([...odd.reads.keys()]).toEqual([o.sidecar.href]);
     });
 
     it("hashes the tree independently of the order the children are listed in", async () => {
@@ -656,6 +774,23 @@ describe("ApplicationLoader の components 取得", () => {
       const child = t.metadata.components["?x"];
       expect(f.reads.has(new URL(child.source.url, t.sidecar).href)).toBe(false);
       expect(f.reads.has(new URL(child.script.url, t.sidecar).href)).toBe(false);
+    });
+
+    // `""` and `parent.json` name two different files beside the sidecar and the very same child
+    // against the screen URL. The basis the store uses decides, so the manifest is refused as one
+    // key listed twice instead of being loaded as two children.
+    it("refuses two child keys that collide against the screen URL", async () => {
+      const list = parentWithChild();
+      const f = fixture(list);
+      const t = await treeManifest(f, list);
+      const metadata = await revised(f, t, (c) => {
+        c[""] = c["a.json"];
+        c["parent.json"] = c["a.json"];
+        delete c["a.json"];
+      });
+      expect(Object.keys(metadata.components)).toEqual(["", "parent.json"]);
+      await expect(f.loader.fetch(t.url, { mode: "network-first" })).rejects.toThrow(MALFORMED);
+      expect([...f.reads.keys()]).toEqual([t.sidecar.href]);
     });
 
     it("names the child whose delivered file does not match its entry", async () => {
@@ -1016,6 +1151,54 @@ describe("ApplicationLoader の components 取得", () => {
       // The first generation falls out once a third arrives, and nothing was iterating by then.
       expect(removals).toEqual([0]);
       expect(await names(held.directory, "versions")).toHaveLength(2);
+    });
+
+    // Whatever a `current.json` holds, it is a pointer or it is nothing: these five are read as
+    // JSON text, so a value that is not an object and a file that is not JSON at all are covered.
+    const BROKEN = ["null", "[]", '"x"', "{}", "{broken"];
+
+    it("saves over a broken current.json and keeps no previous version", async () => {
+      for (const text of BROKEN) {
+        const list = parentWithChild();
+        const f = fixture(list);
+        const { fs, loader } = withCache(f);
+        const t = await treeManifest(f, list);
+        const directory = await cacheDirectory(fs, t.url);
+        await directory.write("current.json", encoder.encode(text));
+        const candidate = await loader.fetch(t.url, { mode: "network-first" });
+        await loader.save(candidate);
+        expect((await pointerOf(directory, "current.json")).metadata.revision, text).toBe(
+          candidate.metadata.revision,
+        );
+        // Nothing could be restored from what was there, so it is dropped rather than retained.
+        await expect(directory.read("previous.json"), text).rejects.toMatchObject({
+          name: "NotFoundError",
+        });
+      }
+    });
+
+    it("falls back to previous.json when current.json is not a pointer", async () => {
+      for (const text of BROKEN) {
+        const { loader, url, one, directory } = await twoGenerations();
+        await directory.write("current.json", encoder.encode(text));
+        const restored = await loader.restore(url);
+        expect(restored.status, text).toBe("cache");
+        expect(restored.metadata.revision, text).toBe(one.metadata.revision);
+      }
+    });
+
+    it("reports a sound refusal when neither pointer can be read", async () => {
+      for (const text of BROKEN) {
+        const { loader, url, directory } = await twoGenerations();
+        await directory.write("current.json", encoder.encode(text));
+        await directory.write("previous.json", encoder.encode(text));
+        const failure = loader.restore(url);
+        await expect(failure, text).rejects.toThrow("通信に失敗し、利用できる保存版もありません");
+        await expect(failure, text).rejects.not.toThrow("null is not an object");
+        await expect(failure, text).rejects.not.toThrow("TypeError");
+        if (["null", "[]", '"x"'].includes(text))
+          await expect(failure, text).rejects.toThrow("保存版の情報が不正です");
+      }
     });
   });
 

@@ -224,6 +224,7 @@ Instanceごとの既存上限はそのまま。1画面分の予算を部品が�
 | state                     | InstanceごとにJSONシリアライズ後1 MB                                                              |
 | ABIの1リクエスト          | 2 MB（子を同梱した合計。据え置き。配信はマニフェストの`source.size + script.size`合計で前段拒否） |
 | ABIの`components`エントリ | 8パッケージ                                                                                       |
+| `components`の宣言        | 1パッケージ8件（JSローダー・生成スクリプト。配置数・同梱数とは別）                                |
 | 完了opの`instance`        | 256バイト（UTF-8。超過は値を文言に載せずに拒否）                                                  |
 
 `instance`の256バイトは完了opの入口だけに掛かる。接頭辞付きのパスが256バイトを超える子は完了を受け取れないので、`itemId`はこの範囲に収める。
@@ -252,9 +253,9 @@ Instanceごとの既存上限はそのまま。1画面分の予算を部品が�
   | 同梱後（JS）     | `load`の直前                             | 子を同梱した**JSON化後**のバイト数                                               | `リクエストが2 MBを超えています（同梱後 {総バイト数} バイト。最大の子: {URL} {バイト数} バイト）`       |
   | 入力長（Rust）   | load時                                   | 入力長だけ                                                                       | `Request exceeds 2 MB`                                                                                  |
 
-  **マニフェスト段階は生バイトの粗い前段で、`load`時（JSON化後）が正**。descriptorを合計に含めないのは、`load`のリクエストに入るのがpackageとscriptだけでdescriptorはbuffer ABIを通るため。descriptorには1 MB / 8件 / 16 MBの上限が別にある。「最大の子」も同じ`source.size + script.size`の和で選び、同点はキー順。
+  **マニフェスト段階は生バイトの粗い前段で、`load`時（JSON化後）が正**。descriptorを合計に含めないのは、`load`のリクエストに入るのがpackageとscriptだけでdescriptorはbuffer ABIを通るため。descriptorには1 MB / 8件 / 16 MBの上限が別にある。「最大の子」も同じ`source.size + script.size`の和で選び、同点はキー順。文言の`{URL}`はマニフェストの子キーを**画面URL基準**で絶対化したhrefで、配信ファイルの基準であるsidecar（`{画面URL}.manifest.json`）基準ではない。子キーの解決先は`save`・`restore`が使う基準と同じなので、1つのマニフェストが配信と保存で違う木を意味することはない。
 
-- Instance数・入れ子の深さ・循環参照はJS側とRust側の2段で、JS側は取得中に日本語（`コンポーネントの数が8を超えています（rootを含む）: {URL}`、`コンポーネントの入れ子が3段を超えています: {URL}`、`コンポーネント {名前} の循環参照: {URL}`）、Rust側はload時に英語（上記と`Component {path}: circular reference to {url}`）で拒否する。この日本語3文言は生成スクリプト（`scripts/publish-packages.mjs`）も出し、そのとき`{URL}`の位置は絶対ファイルパスになる。
+- Instance数・入れ子の深さ・循環参照はJS側とRust側の2段で、JS側は取得中に日本語（`コンポーネントの数が8を超えています（rootを含む）: {URL}`、`コンポーネントの入れ子が3段を超えています: {URL}`、`コンポーネント {名前} の循環参照: {URL}`）、Rust側はload時に英語（上記と`Component {path}: circular reference to {url}`）で拒否する。1パッケージの`components`の宣言件数はJS側だけの検査で、`コンポーネントの宣言が8件を超えています: {URL}`（`{URL}`は宣言した画面）を子を1つも取得する前に出す。Rust側の`At most 8 component packages`は**同梱数**の上限で別物。この日本語4文言は生成スクリプト（`scripts/publish-packages.mjs`）も出し、そのとき`{URL}`の位置は絶対ファイルパスになる。
 - `itemId`は`/`を予約する。componentノードでも通常のウィジェットでも使えない。接頭辞付きパスとの区別がつかなくなるため。
 - 宣言していないxtypeを置いた、または同梱されていないURLを宣言したときは`Component {path}: {xtype} is not declared`、`Component {path}: package {url} was not bundled`。
 - JSローダーは**宣言単位**で循環・深さを検査し、uiに置かれていない宣言も取得・検査する。Rustは**配置単位**で検査する。したがってraw ABIでは通る「置かれていない自己参照の宣言」は、ローダーでは拒否される。

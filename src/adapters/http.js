@@ -7,8 +7,11 @@ import { withFileLocks } from "../opfs.js";
 
 const methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"];
 const formats = ["json", "text", "empty"];
-const optionsKeys = ["method", "path", "response", "headers", "responseHeaders"];
+const optionsKeys = ["method", "path", "response", "headers", "responseHeaders", "errorBody"];
 const transfers = ["http.download", "http.upload", "http.multipart"];
+// Failure bodies are diagnostics, not payloads: the documented cap is 64,000 bytes.
+const failureBodyLimit = 64_000;
+const failureBodyDepth = 64;
 
 function transferArguments(operation, args, connection, { scope, files }, client) {
   const multipart = operation.action === "http.multipart";
@@ -112,6 +115,106 @@ function requestUrl(base, path, params = {}, query = {}) {
   return url;
 }
 
+function jsonMedia(header) {
+  if (typeof header !== "string") return false;
+  const media = header.split(";")[0].trim().toLowerCase();
+  // A comma only appears when Fetch joined a duplicated header; media types never contain one.
+  if (media.includes(",")) return false;
+  return (
+    media === "application/json" ||
+    media === "application/problem+json" ||
+    (media.includes("/") && media.endsWith("+json"))
+  );
+}
+// A lone surrogate survives both fatal UTF-8 decoding and JSON.parse, but JSON.stringify emits it
+// as a `\udc00` escape and the engine's serde_json rejects the whole request, so the completion
+// handler would never run. Reject such bodies here instead.
+const loneSurrogate = /\p{Surrogate}/u;
+function invalidShape(value, depth) {
+  if (depth > failureBodyDepth) return true;
+  if (typeof value === "string") return loneSurrogate.test(value);
+  if (value && typeof value === "object")
+    for (const [key, child] of Object.entries(value)) {
+      if (loneSurrogate.test(key) || invalidShape(child, depth + 1)) return true;
+    }
+  return false;
+}
+
+// Reads the body of a failed response when the operation opted in with `errorBody: "json"`.
+// Returns `{status}`, `{status, body}` or `{status, bodyError}` — `body` and `bodyError` never
+// appear together and absent keys are left out entirely.
+export async function failureDetails(response, { errorBody, signal, reader } = {}) {
+  const status = response.status;
+  // Opt-out keeps the historical behaviour: never look at headers, just drain the body.
+  if (errorBody !== "json") {
+    if (!reader) await response.body?.cancel().catch(() => {});
+    return { status };
+  }
+  if (!reader && response.body === null) return { status, bodyError: "empty" };
+  if (!jsonMedia(response.headers.get("content-type"))) {
+    if (!reader) await response.body?.cancel().catch(() => {});
+    return { status, bodyError: "content-type" };
+  }
+  // A reader handed in by the caller stays theirs: we never cancel or release it.
+  const owned = reader ? null : response.body.getReader();
+  const source = reader ?? owned;
+  const cancelOwned = () => owned?.cancel().catch(() => {});
+  if (owned && signal) signal.addEventListener("abort", cancelOwned, { once: true });
+  const chunks = [];
+  let size = 0;
+  let bodyError = null;
+  try {
+    for (;;) {
+      if (signal?.aborted) break;
+      const { done, value } = await source.read();
+      if (done) break;
+      if (!value) continue;
+      size += value.byteLength;
+      if (size > failureBodyLimit) {
+        bodyError = "too-large";
+        break;
+      }
+      chunks.push(value);
+    }
+  } catch {
+    bodyError = "network";
+  } finally {
+    if (owned) {
+      signal?.removeEventListener("abort", cancelOwned);
+      cancelOwned();
+    }
+  }
+  if (!bodyError && signal?.aborted) bodyError = "network";
+  if (bodyError) return { status, bodyError };
+  if (size === 0) return { status, bodyError: "empty" };
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  let value;
+  try {
+    value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch {
+    return { status, bodyError: "invalid" };
+  }
+  if (!object(value) || invalidShape(value, 0)) return { status, bodyError: "invalid" };
+  return { status, body: value };
+}
+
+// Opt-in per connection: `clientErrorOutcome: "failed"` marks client errors as never applied.
+export function failureOutcome(connection, status, fallback) {
+  // 4xx は「サーバが受け付けなかった」= 送信済みでも未適用。408/429 は適用済みの可能性が残る。
+  return connection?.clientErrorOutcome === "failed" &&
+    status >= 400 &&
+    status <= 499 &&
+    status !== 408 &&
+    status !== 429
+    ? "failed"
+    : fallback;
+}
+
 export function httpAdapter({ resources, transferLimit = 104_857_600, files = new FileClient() }) {
   if (!Number.isSafeInteger(transferLimit) || transferLimit < 1)
     throw new Error("transferLimitには正の安全整数が必要です");
@@ -120,7 +223,7 @@ export function httpAdapter({ resources, transferLimit = 104_857_600, files = ne
     actions: ["http.request", ...transfers],
     transferLimit,
     validate(operation, connection, source) {
-      checkKeys(connection, ["adapter", "baseUrl", "allowedHeaders"]);
+      checkKeys(connection, ["adapter", "baseUrl", "allowedHeaders", "clientErrorOutcome"]);
       const transfer = transfers.includes(operation.action);
       const download = operation.action === "http.download";
       checkKeys(
@@ -154,6 +257,16 @@ export function httpAdapter({ resources, transferLimit = 104_857_600, files = ne
         !formats.includes(options.response ?? "json")
       )
         throw hostError("INVALID_ARGUMENT", "HTTP method・responseが不正です");
+      if (options.errorBody !== undefined && options.errorBody !== "json")
+        throw hostError("INVALID_ARGUMENT", "HTTP errorBodyはjsonだけ指定できます");
+      if (
+        connection.clientErrorOutcome !== undefined &&
+        !["unknown", "failed"].includes(connection.clientErrorOutcome)
+      )
+        throw hostError(
+          "INVALID_ARGUMENT",
+          "HTTP clientErrorOutcomeはunknownかfailedだけ指定できます",
+        );
       if (typeof connection.baseUrl !== "string" || !connection.baseUrl)
         throw hostError("INVALID_ARGUMENT", "HTTP baseUrlが必要です");
       const base = httpUrl(connection.baseUrl, source);
@@ -217,6 +330,7 @@ export function httpAdapter({ resources, transferLimit = 104_857_600, files = ne
                 reference: prepared.references[0],
                 file: args.file,
                 options: operation.options,
+                connection,
                 signal,
                 progress,
                 limit: transferLimit,
@@ -281,11 +395,17 @@ export function httpAdapter({ resources, transferLimit = 104_857_600, files = ne
               );
             }
             if (!response.ok) {
-              await response.body?.cancel().catch(() => {});
-              throw hostError(
-                `HTTP_${response.status}`,
-                `HTTP ${response.status}: リクエストに失敗しました`,
-                "unknown",
+              const details = await failureDetails(response, {
+                errorBody: options.errorBody,
+                signal,
+              });
+              throw Object.assign(
+                hostError(
+                  `HTTP_${response.status}`,
+                  `HTTP ${response.status}: リクエストに失敗しました`,
+                  failureOutcome(connection, response.status, "unknown"),
+                ),
+                details,
               );
             }
             let payload = null;
@@ -355,11 +475,14 @@ export function httpAdapter({ resources, transferLimit = 104_857_600, files = ne
         (options.responseHeaders ?? []).map((key) => [key, response.headers.get(key)]),
       );
       if (!response.ok) {
-        await response.body?.cancel().catch(() => {});
-        throw hostError(
-          `HTTP_${response.status}`,
-          `HTTP ${response.status}: リクエストに失敗しました`,
-          "unknown",
+        const details = await failureDetails(response, { errorBody: options.errorBody, signal });
+        throw Object.assign(
+          hostError(
+            `HTTP_${response.status}`,
+            `HTTP ${response.status}: リクエストに失敗しました`,
+            failureOutcome(connection, response.status, "unknown"),
+          ),
+          details,
         );
       }
       const outcome = ["GET", "HEAD"].includes(method) ? "failed" : "committed";

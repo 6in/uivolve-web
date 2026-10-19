@@ -208,11 +208,26 @@ function payloadFor(node) {
       return {};
   }
 }
+// Handlers the base cannot be compared on, per screen id. `worker-orders` の受注作成は
+// `uuid_v4()` で冪等キーを作るが、base（`main`）のエンジンにその関数が無いので応答は必ず
+// 食い違う。候補側の挙動は tests/worker-mock.test.js が担う。
+const BASE_LACKS = { "worker-orders": ["createOrder", "resendOrder"] };
+const SKIPPED = [];
+
 // load -> layout 240/800/4096 -> (event, layout 800) per handler node.
 function baseSteps(screen) {
   const steps = [loadStep("load", screen)];
   for (const width of [240, 800, 4096]) steps.push(layoutStep(`layout:${width}`, width));
+  const lacking = BASE_LACKS[screen.pkg.id] ?? [];
   for (const node of handlerNodes(screen.pkg.ui)) {
+    if (lacking.includes(node.itemId)) {
+      SKIPPED.push({
+        sequence: screen.pkg.id,
+        label: `event:${node.itemId}`,
+        reason: "base に uuid_v4 が無い",
+      });
+      continue;
+    }
     steps.push(eventStep(`event:${node.itemId}`, node.itemId, payloadFor(node)));
     steps.push(layoutStep(`layout:800:${node.itemId}`, 800));
   }
@@ -838,15 +853,17 @@ const summary = {
   steps: base.length,
   diffs,
   normalized: NORMALIZED,
+  skipped: SKIPPED.length,
   okResponses,
   errorResponses,
   sequences: plan.length,
   durationMs: Date.now() - started,
 };
 mkdirSync(dirname(options.evidence), { recursive: true });
+// 証跡の `skipped` はコンソールの件数ではなく外した 1 件ずつの明細（後置きのキーが勝つ）。
 writeFileSync(
   options.evidence,
-  `${JSON.stringify({ base: options.base, candidate: options.candidate, clock: CLOCK, ...summary, records }, null, 2)}\n`,
+  `${JSON.stringify({ base: options.base, candidate: options.candidate, clock: CLOCK, ...summary, skipped: SKIPPED, records }, null, 2)}\n`,
 );
 console.log(JSON.stringify(summary));
 process.exit(diffs === 0 ? 0 : 1);

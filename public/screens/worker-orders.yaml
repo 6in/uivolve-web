@@ -12,12 +12,12 @@ operations:
     connection: ordersMock
     action: http.request
     handler: fetched
-    options: { method: GET, path: "orders/{id}", response: json }
+    options: { method: GET, path: "orders/{id}", response: json, errorBody: json }
   createOrder:
     connection: ordersMock
     action: http.request
     handler: changed
-    options: { method: POST, path: orders, response: json }
+    options: { method: POST, path: orders, response: json, errorBody: json }
   updateOrder:
     connection: ordersMock
     action: http.request
@@ -33,6 +33,11 @@ operations:
     action: http.request
     handler: changed
     options: { method: POST, path: reset, response: json }
+  validateOrder:
+    connection: ordersMock
+    action: http.request
+    handler: validated
+    options: { method: POST, path: "orders/validate", response: json, errorBody: json }
 state:
   orders: []
   selected: ""
@@ -43,6 +48,10 @@ state:
   quantity: "1"
   loading: false
   notice: ""
+  customerError: ""
+  quantityError: ""
+  idempotencyKey: ""
+  canResend: false
 ui:
   xtype: container
   layout: vbox
@@ -100,6 +109,7 @@ ui:
             bind: date,
             disabledBind: loading,
           }
+        - { xtype: label, itemId: customerError, bind: customerError, variant: muted }
     - xtype: container
       layout: hbox
       items:
@@ -119,6 +129,7 @@ ui:
             align: right,
             disabledBind: loading,
           }
+        - { xtype: label, itemId: quantityError, bind: quantityError, variant: muted }
     - xtype: container
       layout: hbox
       items:
@@ -155,6 +166,20 @@ ui:
             itemId: resetOrders,
             text: 初期データへ,
             handler: resetOrders,
+            disabledBind: loading,
+          }
+        - {
+            xtype: button,
+            itemId: validateOrder,
+            text: サーバ検証（422の例）,
+            handler: validateOrder,
+            disabledBind: loading,
+          }
+        - {
+            xtype: button,
+            itemId: resendOrder,
+            text: 同じキーで送り直す,
+            handler: resendOrder,
             disabledBind: loading,
           }
     - { xtype: label, itemId: notice, bind: notice }

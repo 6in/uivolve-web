@@ -52,6 +52,26 @@ export async function runBrowserTests({ context, origin, api, requests }) {
         return (await (await dir.getFileHandle("processed.csv")).getFile()).text();
       }, scope);
       assert.match(csv, /apple,4/);
+      await sample.evaluate(() => window.transferTestRuntime.dispatch("problem"));
+      await sample.waitForFunction(() =>
+        window.transferTestRuntime.state.notice.startsWith("HTTP_422"),
+      );
+      const failed = await sample.evaluate(() => window.transferTestRuntime.snapshot().state);
+      assert.match(failed.notice, /入力に誤りがあります/);
+      // The failure body is read in memory; download must not create the target file.
+      const stored = await sample.evaluate(async (scope) => {
+        const root = await navigator.storage.getDirectory();
+        let dir = root;
+        for (const name of ["uivolve-web", "fs", scope, "workspace"])
+          dir = await dir.getDirectoryHandle(name);
+        try {
+          await dir.getFileHandle("problem.bin");
+          return "present";
+        } catch (error) {
+          return error.name;
+        }
+      }, scope);
+      assert.equal(stored, "NotFoundError");
       await sample.evaluate(() => window.transferTestRuntime.dispatch("slow"));
       await sample.waitForFunction(
         () =>
@@ -79,7 +99,9 @@ export async function runBrowserTests({ context, origin, api, requests }) {
       assert.equal(await sample.evaluate(() => window.transferTestRuntime.state.busy), false);
       await sample.evaluate(() => window.transferTestRuntime.dispose());
       await sample.close();
-      console.log(`${renderer}: CSV, multipart, progress, cancel, screen replacement passed`);
+      console.log(
+        `${renderer}: CSV, multipart, 422 failure body, progress, cancel, screen replacement passed`,
+      );
     }
     const size = 104857600;
     const hash = createHash("sha256");

@@ -73,6 +73,23 @@ export async function transferFixture(request) {
     if (path === "auth" && request.headers.get("Authorization") !== "Bearer transfer-fixture")
       return json({ error: "Fixture authentication required" }, 401);
     if (path === "auth") return json({ authenticated: true });
+    if (path === "problem")
+      return Response.json(
+        {
+          type: "about:blank",
+          title: "入力に誤りがあります",
+          status: 422,
+          detail: "2 件の項目に誤りがあります",
+          errors: [
+            { field: "email", code: "format", message: "メールアドレスの形式ではありません" },
+          ],
+        },
+        {
+          status: 422,
+          // Response.json defaults to application/json; the explicit header wins in Bun too.
+          headers: { ...transferHeaders, "Content-Type": "application/problem+json" },
+        },
+      );
     if (path === "invalid-json")
       return new Response("{broken", {
         headers: { ...transferHeaders, "Content-Type": "application/json" },

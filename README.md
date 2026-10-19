@@ -141,6 +141,8 @@ DOM版はネイティブ入力・ボタンを使用する。Canvas版はキー�
 
 日付・時計は[共通関数の契約](docs/date-functions.md)を参照。`/pages/date-lab`で月末計算とホスト時計を試せる。
 
+乱数と冪等キーは[乱数の契約](docs/random-functions.md)を参照。`/pages/worker-orders`で冪等キーの送り直しを試せる。
+
 [金額・10進数](docs/decimal-functions.md)と[Unicode文字列](docs/text-functions.md)の共通関数を利用できる。`/pages/money-lab`と`/pages/text-lab`で試せる。
 
 AIによる開発は[参照入口](docs/ai-development.md)から必要な契約を選ぶ。HTTPのパス変数と本文付き送信は[HTTPアダプター契約](docs/http-adapter.md)を参照。

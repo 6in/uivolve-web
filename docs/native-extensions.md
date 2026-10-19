@@ -10,7 +10,7 @@ let total = sum_ints([10, 20, 30]);
 
 実行例は「Rust拡張・正規表現」画面、URLは`?screen=native-extensions`。[画面JSON](../public/screens/native-extensions.json)と[Rhai](../public/screens/native-extensions.rhai)で正規表現・置換を試し、「整数の一括集計」タブでは数値入力をまとめてRustへ渡せる。これらのページ固有の処理をRustへ埋め込む必要はない。
 
-[日付・時計の共通関数](date-functions.md)も利用できる。日時は文字列、時計はホストから実行単位で供給する。
+[日付・時計の共通関数](date-functions.md)も利用できる。日時は文字列、時計はホストから実行単位で供給する。[乱数と冪等キー](random-functions.md)の`uuid_v4()`と`random_int(min, max)`も同じ仕組みで、ホストが実行単位で1,024バイトの乱数を供給する。
 
 ## 現在の共通関数
 

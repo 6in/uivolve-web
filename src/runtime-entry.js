@@ -5,5 +5,6 @@ export { ResourceClient } from "./resource-client.js";
 export { HostEffects, hostError } from "./host-effects.js";
 export { httpAdapter } from "./adapters/http.js";
 export { browserClock } from "./clock.js";
+export { browserRandom } from "./random.js";
 export { workerMockAdapter } from "./adapters/worker-mock.js";
 export { createMockApi } from "./mock-api-client.js";

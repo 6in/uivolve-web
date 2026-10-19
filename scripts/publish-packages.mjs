@@ -38,6 +38,9 @@ export async function publishPackage(sourcePath, output = dirname(sourcePath)) {
   const rootClone = structuredClone(root.screen);
   const packages = Object.create(null);
   const visit = async (parent, declaringFile, depth, stack) => {
+    // The same gate the loader applies, judged before the first child is read off disk.
+    if (Object.keys(parent.components ?? {}).length > 8)
+      throw new Error(`コンポーネントの宣言が8件を超えています: ${declaringFile}`);
     for (const [name, declaration] of Object.entries(parent.components ?? {})) {
       if (typeof declaration?.url !== "string")
         throw new Error(

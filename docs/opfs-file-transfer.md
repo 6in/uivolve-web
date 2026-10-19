@@ -104,7 +104,7 @@ fn fileDone(s, r) { s }
 | `http.upload`    | POST（既定）/PUT | `{file:{volume,path}, path?, query?}` | read/readwrite |
 | `http.multipart` | POST（既定）/PUT | `{parts:[…], path?, query?}`          | read/readwrite |
 
-各操作は`connection / action / handler / options`で宣言する。optionsは`method / path / response / headers / responseHeaders / timeout`、downloadだけに`overwrite / progressHandler`を追加できる。`timeout`は秒単位で1〜300、既定120秒。一般HostEffectsの既定15秒（ホスト設定はms単位）は維持する。downloadの`overwrite`はbool、既定false。`progressHandler`は存在するRhai handler名。
+各操作は`connection / action / handler / options`で宣言する。optionsは`method / path / response / headers / responseHeaders / timeout / errorBody`、downloadだけに`overwrite / progressHandler`を追加できる。`errorBody`は`json`だけ指定でき、宣言した操作にかぎり失敗応答の本文を`error.body`で受け取る。`timeout`は秒単位で1〜300、既定120秒。一般HostEffectsの既定15秒（ホスト設定はms単位）は維持する。downloadの`overwrite`はbool、既定false。`progressHandler`は存在するRhai handler名。
 
 multipartの項目は`{name,value:"文字列"}`または`{name,file:{volume,path},filename?,contentType?}`。順序と同名項目を保持し、valueはstringのみ、file/valueの併用を拒否する。最大32項目、ファイル8件。filenameの既定はパス末尾、Content-Typeの既定はapplication/octet-stream。multipartのトップレベルContent-Typeは大小文字を問わず手動指定不可。boundaryはブラウザが生成する。
 
@@ -116,7 +116,7 @@ URL用path/queryと許可ヘッダーは[HTTPの規則](http-adapter.md)を共�
 
 downloadは応答chunkをreaderから読み、上限確認後にwriter.writeをawaitする。全量blob/arrayBuffer/text取得を使わない。復号後の実受信bytesを`transferLimit`で制限し、Content-Lengthの有無・誤りだけに依存しない。超過chunkを保存しない。uploadはFile本文、multipartはFormDataを使い、JSで本体を全量読み込まない。multipartのファイル容量合計には同じファイルの重複partも加算する。ブラウザ内部のバッファリングは保証対象外。
 
-downloadはwriter.close成功が確定点。close開始前の通信・保存失敗や中止では旧内容を保持し、新規の未確定entryを後始末する。close開始後の巻き戻しは保証しない。成功close後のファイルは取消やcleanupで削除しない。reader.cancel / writer.abort / entry削除の失敗も通知する。
+downloadはwriter.close成功が確定点。close開始前の通信・保存失敗や中止では旧内容を保持し、新規の未確定entryを後始末する。close開始後の巻き戻しは保証しない。成功close後のファイルは取消やcleanupで削除しない。reader.cancel / writer.abort / entry削除の失敗も通知する（`HTTP_<status>`が確定した後のreader.cancelの失敗を除く）。
 
 通常files操作と転送は同じ画面id・領域のロックを共有する。複数領域は重複除去して固定順で非待機取得し、競合はBUSY。Web Locks環境では別タブでも排他し、未対応環境では同じホスト実行環境内で排他する。期限切れ・中止でも実処理とcleanupがsettleするまでロックを保持し、転送の完了通知もその終了を待つ。
 
@@ -128,7 +128,7 @@ downloadはwriter.close成功が確定点。close開始前の通信・保存失�
 
 downloadの進捗handlerは`handler(state,{operation,transferred,total}) → state`。transferredは受信・保存したbytesで単調増加、最大毎秒10回（100ms以上間隔）。totalは信頼できるContent-Lengthだけで、不明・圧縮・CORS非公開などではnull（Rhaiではunit）。進捗は完了pendingを消費せず、終了後は通知しない。handler失敗はonErrorへ報告して転送を継続する。uploadに送信byte進捗は提供しないため、送信中と完了をstateで表示する。
 
-失敗は`{ok:false,data:null,error:{code,message,retryable:false,outcome}}`。代表codeはINVALID_ARGUMENT、ALREADY_EXISTS、BUSY、LIMIT、STORAGE、NETWORK、CLEANUP、TIMEOUT、CANCELLED、HTTP_404など、応答解析失敗はINVALID_RESPONSE。outcomeはnot-started（開始前拒否）、failed（受信・保存の未確定失敗）、unknown（送信後の結果不明）、committed（確定後・2xx送信成功後の解析失敗）。timeout/cancelだけで未更新と判断せず、outcomeを確認する。非2xx本文は返さない。
+失敗は`{ok:false,data:null,error:{code,message,retryable:false,outcome}}`。代表codeはINVALID_ARGUMENT、ALREADY_EXISTS、BUSY、LIMIT、STORAGE、NETWORK、CLEANUP、TIMEOUT、CANCELLED、HTTP_404など、応答解析失敗はINVALID_RESPONSE。outcomeはnot-started（開始前拒否）、failed（受信・保存の未確定失敗）、unknown（送信後の結果不明）、committed（確定後・2xx送信成功後の解析失敗）。timeout/cancelだけで未更新と判断せず、outcomeを確認する。HTTP応答を受け取った失敗には`error.status`がopt-inに関係なく常に付き、`errorBody: json`を宣言した操作にかぎり`error.body`（JSONオブジェクト）または`error.bodyError`が付く（同時には付かず、該当しないキーは存在しない）。`bodyError`は`empty` / `content-type` / `too-large` / `invalid` / `network`の5値で、受け付けるContent-Typeと64,000バイト・深さ64・オブジェクトのみの条件は[HTTPの失敗の形](http-adapter.md)と共通。downloadは失敗応答をOPFSに書かず（ファイルを作らず）メモリで64,000バイトまで読み、受信進捗handlerはこの読み取りでは呼ばない。失敗本文の読み取りが途中で失敗したときは`bodyError: network`で`status`付き。応答を受け取って失敗が確定した後のreader.cancelの失敗はCLEANUPに昇格しない。接続の`clientErrorOutcome`の設定に関係なく、downloadのoutcomeは常にfailed。
 
 JWT、CORS、許可originは共有ResourceClientの[認証設定](authentication.md)を使う。トークンを画面stateへ渡さない。送信前provider・期限前refreshは使えるが、転送3方式は`retryAuthentication=false`で401/403・切断後を含め自動再送しない。multipartのAuthorization等にはサーバーのOPTIONS許可が必要。応答ヘッダーを読むには必要なExpose-Headersも設定する。
 
@@ -139,7 +139,7 @@ bun run demo:transfer
 bun run dev
 ```
 
-[DOM入口](../examples/opfs-file-transfer/index.html)は`http://127.0.0.1:4173/examples/opfs-file-transfer/`、Canvasは同URLへ`?renderer=canvas`を付ける。[画面](../examples/opfs-file-transfer/home.yaml)と[Rhai](../examples/opfs-file-transfer/home.rhai)はCSV受信→小さなCSV加工→別名保存→複数file multipartを示す。100 MiB生成ボタンは[ホストコード](../examples/opfs-file-transfer/large-file.js)で直接chunkを書き込み、通常Rhai上限を拡張しない。[サーバー](../scripts/transfer-server.mjs)は4177でGET、POST/PUT本文、multipart、遅延・容量・非2xx・認証・不正応答fixtureを提供する。
+[DOM入口](../examples/opfs-file-transfer/index.html)は`http://127.0.0.1:4173/examples/opfs-file-transfer/`、Canvasは同URLへ`?renderer=canvas`を付ける。[画面](../examples/opfs-file-transfer/home.yaml)と[Rhai](../examples/opfs-file-transfer/home.rhai)はCSV受信→小さなCSV加工→別名保存→複数file multipartを示す。100 MiB生成ボタンは[ホストコード](../examples/opfs-file-transfer/large-file.js)で直接chunkを書き込み、通常Rhai上限を拡張しない。[サーバー](../scripts/transfer-server.mjs)は4177でGET、POST/PUT本文、multipart、遅延・容量・非2xx（problem+jsonの422を含む）・認証・不正応答fixtureを提供する。
 
 ```bash
 bun run verify:transfer

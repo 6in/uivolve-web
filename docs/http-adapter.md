@@ -34,13 +34,13 @@ await ui.load("screens/orders.yaml");
 // ホストを外すとき: ui.dispose()
 ```
 
-APIエンドポイントは利用者のサーバーで用意する。このライブラリは`./api/`にサーバーを生成しない。baseUrlは末尾/のHTTP(S)ディレクトリURLで、query/fragmentを付けない。相対接続URLは画面URLから解決されるため、複数画面で共有する接続は上のように絶対URLにする。
+APIエンドポイントは利用者のサーバーで用意する。このライブラリは`./api/`にサーバーを生成しない。baseUrlは末尾/のHTTP(S)ディレクトリURLで、query/fragmentを付けない。相対接続URLは画面URLから解決されるため、複数画面で共有する接続は上のように絶対URLにする。接続には`clientErrorOutcome: "unknown" | "failed"`（既定`"unknown"`）も置け、`"failed"`にすると4xx（408・429を除く）の失敗のoutcomeが`failed`になる（下の「失敗の形」を参照）。これはホストの接続だけが書ける設定で、画面DSLのoptionsに書くと拒否される。
 
 createApplicationも同じresources、adapters、connectionsを受け取る。OPFS転送のホスト容量設定`transferLimit`（bytes、既定104857600）と秒単位の操作別期限は[ファイル転送契約](opfs-file-transfer.md)を参照。HTTPアダプターはUiRuntime/createRuntime/createApplicationで自動登録されるので、重複登録しない。connectionsはapp.jsonにも置ける。HostEffectsを単独で使う場合はhttpAdapterの明示登録が必要。サーバーなしで試す場合は[WorkerモックAPI](worker-mock-api.md)を登録する。JWTは共有ResourceClientへ設定し、画面やRhaiへトークンを渡さない。詳細は[認証契約](authentication.md)。
 
 ## 画面を宣言する（screens/orders.yaml）
 
-method、path、response、headers、responseHeadersは必ずoptions内に置く。connection、action、handlerはその外。未知の操作属性は拒否される。
+method、path、response、headers、responseHeaders、errorBodyは必ずoptions内に置く。connection、action、handlerはその外。未知の操作属性は拒否される。errorBodyは`json`だけ指定でき、指定した操作にかぎり失敗応答の本文をresponse.error.bodyで受け取る。
 
 ```yaml
 version: 1
@@ -62,6 +62,7 @@ operations:
       method: PATCH
       path: customers/{customerId}/orders/{orderId}
       response: json
+      errorBody: json
 ui:
   xtype: container
   layout: vbox
@@ -90,6 +91,9 @@ fn updated(state, response) {
     if response.ok {
         state.notice = "更新しました: HTTP " + response.data.status.to_string();
         // response.data.body: サーバーのJSON。204/205/HEAD/emptyはunit ()。
+    } else if "body" in response.error {
+        // errorBody: jsonを宣言した操作だけ。bodyはオブジェクト、読めなければerror.bodyErrorが入る。
+        state.notice = response.error.status.to_string() + ": " + response.error.body.title;
     } else {
         state.notice = response.error.code + ": " + response.error.message;
     }
@@ -121,12 +125,15 @@ fn updated(state, response) {
 | 呼び出し        | 1回のhandler最大8件、同時pending最大8件。同名の複数呼び出しも各idで管理                                                             |
 | 容量            | args全体100,000 UTF-8バイト、JSON本文100,000バイト、path宣言2,048文字                                                               |
 | 応答            | 本文900,000バイト、完了JSON全体1,000,000バイトまで                                                                                  |
+| 失敗本文        | 64,000バイト（errorBody: jsonのときだけ読む）。深さ64、オブジェクトのみ                                                             |
 | 期限            | HostEffects既定15秒。画面置換・disposeで中止を試み、古い世代の完了は破棄                                                            |
 
 authorization/cookie/host/sec-*は画面指定不可。set-cookie/authorizationは応答ヘッダー公開不可。JWTやCookieはホストの認証設定に従う。別オリジンのPATCHなどではサーバーが使用メソッドとContent-TypeをCORSで許可する必要がある。
 
-成功は`{ok:true, data:{status, headers, body}, error:null}`。失敗は`{ok:false, data:null, error:{code, message, retryable:false, outcome}}`。非2xxはHTTP_404などのcodeで失敗し、失敗本文は返さない。outcomeはnot-started、failed、committed、unknown。更新成功後に応答解析が失敗した場合はcommitted、通信失敗など結果不明はunknownとなる。子Instanceが出した`kind: "host"`のeffectには`instance`が付き、ホストは`host_result`と`host_progress`へ同じ`instance`を添えて返す（省略はroot宛。[部品化の契約](components.md)を参照）。`host_cancel`は同じInstanceが出した操作だけを取り消す。
+成功は`{ok:true, data:{status, headers, body}, error:null}`。失敗は`{ok:false, data:null, error:{code, message, retryable:false, outcome}}`。非2xxはHTTP_404などのcodeで失敗する。outcomeはnot-started、failed、committed、unknown。更新成功後に応答解析が失敗した場合はcommitted、通信失敗など結果不明はunknownとなる。子Instanceが出した`kind: "host"`のeffectには`instance`が付き、ホストは`host_result`と`host_progress`へ同じ`instance`を添えて返す（省略はroot宛。[部品化の契約](components.md)を参照）。`host_cancel`は同じInstanceが出した操作だけを取り消す。
 
-通常のRhai/状態検証失敗では未確定の依頼を開始しない。動的なpath/query/bodyのHTTP検証はstate確定後にホストで行い、不正値は完了handlerへ失敗として返す。try/catchだけで通信失敗を受け取ろうとしない。完了handlerが失敗しても外部の更新は巻き戻せず、そのidは消費される。ホストのonErrorにはexternalResultが付く。自動再送を前提にしない。認証の401後の更新・再送はGET/HEADだけで、POST/PUT/PATCH/DELETEは行わない。
+失敗の`error`には、HTTP応答を受け取って2xx以外で失敗したとき`status`（整数）がopt-inに関係なく常に付く。応答が無い失敗（通信例外のNETWORK、TIMEOUT、CANCELLED、開始前拒否、INVALID_RESPONSE、LIMIT）には付かない。`errorBody: json`を宣言した操作にかぎり、さらに`body`（受け付けたJSONオブジェクト）または`bodyError`（文字列）が付く。`body`と`bodyError`は同時に付かず、該当しないキーは存在しない（nullではない）。`bodyError`は`empty`（bodyがnullまたは0バイト。304やHEADを含む）、`content-type`（媒体型が条件外。ヘッダー無しを含む）、`too-large`（64,000バイト超）、`invalid`（fatalなUTF-8違反、JSONとして壊れている、オブジェクトでない、入れ子の深さ64超、文字列に孤立サロゲートを含む（`\udc00`などのエスケープ。キーと値の両方を見る））、`network`（読み取り中の例外または中止）の5値だけ。受け付けるContent-Typeは`application/json`、`application/problem+json`、`+json`で終わる媒体型の3形で、`;`以降のパラメータ（charset等）は無視し、大文字小文字は区別しない。`text/json`と結合された重複ヘッダー（`,`を含む値）は不一致。上限は受信バイトの累計64,000バイトで、超えたら`too-large`、ちょうどは受理し、Content-Lengthは見ない。本文はオブジェクトだけを受け付け（配列・数値・文字列・nullは`invalid`）、入れ子の深さは最上位を0として64まで。本文の数値はJSONの数として入り2^53を超える整数は丸まるので、桁を保つなら文字列で返す。opt-outのときはstatusだけ取って本文を捨てる。接続の`clientErrorOutcome: "failed"`は、実HTTPステータスが400〜499で408と429を除く失敗のoutcomeを`failed`にする（本文のstatusフィールドは見ない）。408・429を除くのは規格の保証ではなく、ui-bridge側の「4xxは未適用」の保証と、Azure SDKの既定retry対象リスト`[408, 429, 500, 502, 503, 504]`の慣行による。[http.download](opfs-file-transfer.md)は接続の設定に関係なく常に`failed`。
+
+通常のRhai/状態検証失敗では未確定の依頼を開始しない。動的なpath/query/bodyのHTTP検証はstate確定後にホストで行い、不正値は完了handlerへ失敗として返す。try/catchだけで通信失敗を受け取ろうとしない。完了handlerが失敗しても外部の更新は巻き戻せず、そのidは消費される。ホストのonErrorにはexternalResultが付くが、失敗本文（`error.body`）を含むのでそのままログへ出さない。自動再送を前提にしない。冪等キーが要る更新では、画面がRhaiの`uuid_v4()`でキーを作ってstateに持ち本文に載せ、outcomeが`unknown`の間は同じキーで送り直す（成功したとき、または入力を直して送り直すときは捨てる）。ホストはキーを自動で付けないし自動再送もしない。認証の401後の更新・再送はGET/HEADだけで、POST/PUT/PATCH/DELETEは行わない。
 
 実装根拠は[HTTPアダプター](../src/adapters/http.js)、[HostEffects](../src/host-effects.js)、[Rust操作宣言](../engine/src/host.rs)。検証は[既存テスト](../tests/host-adapters.test.js)と[この文書の例のテスト](../tests/documented-http.test.js)。

@@ -158,7 +158,8 @@ export const SCREEN_CATALOG = Object.freeze(
       id: "worker-orders",
       title: "受注管理・Worker API",
       category: "apps",
-      description: "サーバー不要の一覧・登録・更新・削除と日付・金額計算",
+      description:
+        "サーバー不要の一覧・登録・更新・削除と日付・金額計算、422の項目エラー表示と冪等キーの送り直し",
       file: "worker-orders.yaml",
     },
     {

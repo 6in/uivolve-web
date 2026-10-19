@@ -4,6 +4,10 @@ export function hostError(code, message, outcome = "not-started") {
   return Object.assign(new Error(message), { code, outcome });
 }
 
+function plainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 function failure(error) {
   return {
     ok: false,
@@ -15,6 +19,10 @@ function failure(error) {
       outcome: ["not-started", "failed", "committed", "unknown"].includes(error?.outcome)
         ? error.outcome
         : "unknown",
+      // Adapters attach these only when they have them; absent keys stay absent.
+      ...(Number.isInteger(error?.status) ? { status: error.status } : {}),
+      ...(plainObject(error?.body) ? { body: error.body } : {}),
+      ...(typeof error?.bodyError === "string" ? { bodyError: error.bodyError } : {}),
     },
   };
 }
