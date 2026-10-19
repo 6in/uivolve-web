@@ -38,8 +38,12 @@ fn failure(s, e) {
     s.busy = true; s.notice = "失敗応答を確認中…";
     host_call("failure", #{file: #{volume: "workspace", path: "failure.bin"}}); s
 }
+fn problem(s, e) {
+    s.busy = true; s.notice = "失敗本文を確認中…";
+    host_call("problem", #{file: #{volume: "workspace", path: "problem.bin"}}); s
+}
 fn cancel(s, e) {
-    host_cancel("csv"); host_cancel("slow"); host_cancel("upload"); host_cancel("multipart"); host_cancel("failure");
+    host_cancel("csv"); host_cancel("slow"); host_cancel("upload"); host_cancel("multipart"); host_cancel("failure"); host_cancel("problem");
     if s.busy { s.notice = "中止処理中…"; }
     s
 }
@@ -53,6 +57,9 @@ fn transferDone(s, r) {
     if r.ok {
         s.notice = "完了: HTTP " + r.data.status.to_string();
         if r.data.body != () { s.notice += " / " + r.data.body.to_string(); }
-    } else { s.notice = r.error.code + ": " + r.error.message; }
+    } else {
+        s.notice = r.error.code + ": " + r.error.message;
+        if "body" in r.error { s.notice += " / " + r.error.body.title; }
+    }
     s
 }

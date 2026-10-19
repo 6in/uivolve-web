@@ -10,6 +10,7 @@ it("executes the documented YAML/Rhai HTTP example with two encoded path placeho
   const document = await readFile(new URL("../docs/http-adapter.md", import.meta.url), "utf8");
   const yaml = document.match(/```yaml\n([\s\S]*?)\n```/)[1];
   const script = document.match(/```rhai\n([\s\S]*?)\n```/)[1];
+  expect(yaml).toContain("errorBody");
   const definition = parsePackage(yaml, "yaml");
   const source = new URL("https://example.test/app/screens/orders.yaml");
   const fetch = vi.fn(async () => new Response('{"status":"confirmed"}'));
@@ -47,4 +48,16 @@ it("executes the documented YAML/Rhai HTTP example with two encoded path placeho
   expect(fetch).toHaveBeenCalledTimes(1);
   expect(completed.state.loading).toBe(false);
   expect(completed.state.notice).toContain("INVALID_ARGUMENT");
+
+  // errorBody: json を宣言した操作は、422の本文を error.body として完了handlerへ届ける。
+  engine.dispatch("orderId", { value: "O123" });
+  fetch.mockResolvedValueOnce(
+    new Response(JSON.stringify({ title: "入力に誤りがあります", status: 422 }), {
+      status: 422,
+      headers: { "content-type": "application/problem+json" },
+    }),
+  );
+  await effects.run(engine.dispatch("save").effects);
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(completed.state).toMatchObject({ loading: false, notice: "422: 入力に誤りがあります" });
 });

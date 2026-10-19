@@ -78,7 +78,7 @@ fn load_with(
         script,
         descriptors,
         context,
-        None,
+        extensions::HostContext::default(),
         path,
         |_| {},
         &mut dialogs,
@@ -723,10 +723,13 @@ fn a_child_reads_the_clock_its_parent_is_holding() {
     // One context for the whole screen: the parent enters the clock, the child inherits it.
     let context = extensions::ExtensionContext::default();
     let _guard = context
-        .enter(Some(extensions::Clock {
-            now_ms: 1_791_088_440_123,
-            tz_offset_minutes: 540,
-        }))
+        .enter(extensions::HostContext {
+            clock: Some(extensions::Clock {
+                now_ms: 1_791_088_440_123,
+                tz_offset_minutes: 540,
+            }),
+            random: None,
+        })
         .expect("a valid clock");
     let instance = load_in(
         child(),

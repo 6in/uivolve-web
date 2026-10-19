@@ -87,6 +87,11 @@ export class UiRuntime {
         throw new Error("clockProviderには関数が必要です");
       if (this.engine) this.engine.clockProvider = options.clockProvider;
     }
+    if (options.randomProvider !== undefined) {
+      if (typeof options.randomProvider !== "function")
+        throw new Error("randomProviderには関数が必要です");
+      if (this.engine) this.engine.randomProvider = options.randomProvider;
+    }
     this.cacheMode = options.cacheMode ?? "network-only";
     this.disposed = false;
     this.fetching = false;
@@ -218,6 +223,7 @@ export class UiRuntime {
       this.engine = await WasmEngine.create(this.wasmUrl, {
         resources: this.resources,
         clockProvider: this.options.clockProvider ?? this.engine?.clockProvider,
+        randomProvider: this.options.randomProvider ?? this.engine?.randomProvider,
         signal: this.lifecycle.signal,
       });
     this.assertActive();
@@ -424,6 +430,7 @@ export class UiRuntime {
       const engine = refreshEngine
         ? await WasmEngine.create(this.wasmUrl, {
             clockProvider: this.options.clockProvider ?? this.engine?.clockProvider,
+            randomProvider: this.options.randomProvider ?? this.engine?.randomProvider,
             resources: this.resources,
             signal: controller.signal,
             theme: this.engine.theme(),

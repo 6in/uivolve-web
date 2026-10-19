@@ -13,16 +13,20 @@
   },
   "subagents": "auto",
   "reflect": true,
+  "limits": {
+    "memory_max": "8G",
+    "cpu_quota": "200%"
+  },
   "fix_round": 0,
   "target": {
     "name": "",
     "path": "."
   },
-  "milestone": "component-loader",
+  "milestone": "http-error-body",
   "phase": "done",
   "next_command": "DONE",
   "branch": {
-    "name": "gsd-lite/component-loader",
+    "name": "gsd-lite/http-error-body",
     "base": "main"
   },
   "research": {
@@ -32,10 +36,11 @@
       "similar_oss"
     ],
     "local_search_paths": [
-      "."
+      ".",
+      "../ui-bridge-component"
     ]
   },
-  "turn": 15,
+  "turn": 18,
   "max_turns": 60,
   "retry_max": 2,
   "verify_round": 1,
@@ -47,5 +52,5 @@
     "verify": "claude-fable-5-1",
     "reflect": "claude-fable-5-1"
   },
-  "updated_at": "2026-10-09T11:54:57+09:00"
+  "updated_at": "2026-10-19T12:24:36+09:00"
 }

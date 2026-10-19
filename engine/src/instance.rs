@@ -37,13 +37,13 @@ impl Instance {
     /// `path` is where this instance sits in the tree: the empty path loads a root, any other
     /// one loads the package as a component, which gains `emit` and tags the screen-wide
     /// requests it queues with its path. `context` is shared by every instance of a screen, so
-    /// `Runtime::with_clock` reaches the children too.
+    /// `Runtime::with_host_context` reaches the children too.
     pub(crate) fn load(
         mut package: Package,
         script: &str,
         descriptors: HashMap<String, Vec<u8>>,
         context: &extensions::ExtensionContext,
-        clock: Option<extensions::Clock>,
+        host: extensions::HostContext,
         path: &str,
         register: impl FnOnce(&mut Engine),
         dialogs: &mut dialogs::Requests,
@@ -51,10 +51,11 @@ impl Instance {
     ) -> Result<Self, String> {
         let component = !path.is_empty();
         let extension_context = context.clone();
-        // Without a clock of its own an instance keeps the one the caller is already holding.
-        let _clock_guard = match clock {
-            Some(_) => Some(extension_context.enter(clock)?),
-            None => None,
+        // Without a clock or randomness of its own an instance keeps what the caller is
+        // already holding.
+        let _host_guard = match host.clock.is_some() || host.random.is_some() {
+            true => Some(extension_context.enter(host)?),
+            false => None,
         };
         if package.version != 1 {
             return Err("Unsupported package version (expected 1)".into());

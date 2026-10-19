@@ -1,6 +1,6 @@
 # 作業依頼: ui-bridge からの要望（失敗応答の本文・冪等キー）
 
-起票: 2026-10-18（ohya と concierge-component のセッションで作成）/ 状態: 未着手
+起票: 2026-10-18（ohya と concierge-component のセッションで作成）/ 状態: 実装済み（Release 待ち）
 依頼元: `~/workspaces/dev/fre-components/ui-bridge-component/`（`HANDOFF.md` §2.7・§2.11）
 対象の版: 本書は commit `f5cf097` の実装と文書に基づく
 
@@ -94,3 +94,18 @@ ui-bridge は、uivolve-web の画面と PostgreSQL の業務部品（iam・file
 - テストを入れる。DOM / Canvas の両方、Worker モック、上限超え、解析の失敗、opt-in しない操作の互換を確かめる。
 - runtime と skills の新しい版を Release する。ui-bridge は、その版を `ui/` に固定版として取り込む。
 - 完了したら、本書の「状態」を更新し、版を書く。ui-bridge の `HANDOFF.md` §2.11 は ui-bridge 側で直す。
+
+## 対応の要約（uivolve-web 側で決めた名前と上限）
+
+R1・R2・R3 をすべて実装した。版（runtime / skills の Release）は Release 後に人が書く。
+
+| 依頼 | 決めたもの                                                                                                                                                                                                                                                                      | 契約の文書                                                                                                                |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| R1   | 操作ごとの opt-in `options: { errorBody: json }`（値は `json` だけ）。失敗に `error.status`（整数。応答を受け取った失敗では opt-in に関係なく常に）・`error.body`（JSON オブジェクト）・`error.bodyError`（理由）が載る。`body` と `bodyError` は同時に付かない                 | [HTTPアダプター](../http-adapter.md)・[OPFSファイル転送](../opfs-file-transfer.md)・[Workerモック](../worker-mock-api.md) |
+| R1   | 受け付ける本文: `application/json` / `application/problem+json` / `*/*+json`。上限 **64,000 バイト**（ちょうどは受理、超えたら本文なし）、入れ子の深さ 64。`bodyError` の 5 値 = `empty` / `content-type` / `too-large` / `invalid` / `network`                                 | [HTTPアダプター](../http-adapter.md)                                                                                      |
+| R1   | 対象は `http.request` / `http.upload` / `http.multipart` に加えて **`http.download` も対象**（本文は OPFS に書かずメモリで 64,000 バイトまで読み、2xx 以外ではファイルを作らない）                                                                                              | [OPFSファイル転送](../opfs-file-transfer.md)                                                                              |
+| R1   | Worker モックの固定応答・CRUD の失敗本文も同じ経路で載る（Content-Type は常に `application/json`。モック DSL に応答ヘッダーの指定は足していない）                                                                                                                               | [Workerモック](../worker-mock-api.md)                                                                                     |
+| R2   | Rhai のネイティブ関数 `uuid_v4()` と `random_int(min, max)`。ホストが 1 実行あたり **1,024 バイト**の乱数を供給する（UUID 64 個 / `random_int` 128 試行）。画面がキーを state に持ち、`outcome: unknown` の間は同じキーで送り直す。**ホストの自動付与・自動再送は引き続き無い** | [乱数と冪等キー](../random-functions.md)                                                                                  |
+| R3   | 接続の宣言 `connections.<name>.clientErrorOutcome: "failed"`（既定は `"unknown"`）。立てると 4xx のうち **408・429 を除く**ものが `outcome: "failed"` になる。判定は実 HTTP ステータスで行い、本文の `status` は見ない                                                          | [HTTPアダプター](../http-adapter.md)                                                                                      |
+
+範囲外（求めないこと）は依頼どおり対象外のまま。エラー本文は WebMCP の画面スナップショットには出していない。

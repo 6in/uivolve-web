@@ -221,6 +221,7 @@ pub fn register(engine: &mut Engine, context: &ExtensionContext) {
     let ctx = context.clone();
     FuncRegistration::new("date_today")
         .with_purity(false)
+        .with_volatility(true)
         .register_into_engine(engine, move || -> Result<String> {
             let c = ctx.clock()?;
             date_string(from_ms(c.now_ms, c.tz_offset_minutes)?.date_naive())
@@ -228,6 +229,7 @@ pub fn register(engine: &mut Engine, context: &ExtensionContext) {
     let ctx = context.clone();
     FuncRegistration::new("datetime_now")
         .with_purity(false)
+        .with_volatility(true)
         .register_into_engine(engine, move || -> Result<String> {
             let c = ctx.clock()?;
             datetime_string(from_ms(c.now_ms, c.tz_offset_minutes)?)
@@ -235,10 +237,12 @@ pub fn register(engine: &mut Engine, context: &ExtensionContext) {
     let ctx = context.clone();
     FuncRegistration::new("now_ms")
         .with_purity(false)
+        .with_volatility(true)
         .register_into_engine(engine, move || -> Result<INT> { Ok(ctx.clock()?.now_ms) });
     let ctx = context.clone();
     FuncRegistration::new("tz_offset_minutes")
         .with_purity(false)
+        .with_volatility(true)
         .register_into_engine(engine, move || -> Result<INT> {
             Ok(ctx.clock()?.tz_offset_minutes.into())
         });
@@ -321,6 +325,7 @@ pub fn register(engine: &mut Engine, context: &ExtensionContext) {
     let ctx = context.clone();
     FuncRegistration::new("datetime_from_ms")
         .with_purity(false)
+        .with_volatility(true)
         .register_into_engine(engine, move |ms: INT| -> Result<String> {
             datetime_string(from_ms(ms, ctx.clock()?.tz_offset_minutes)?)
         });

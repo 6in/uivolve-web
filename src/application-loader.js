@@ -11,6 +11,8 @@ export async function sha256(bytes) {
     .join("");
 }
 const byKey = ([a], [b]) => (a < b ? -1 : a > b ? 1 : 0);
+// A plain object the way the request policy judges one: null and arrays are not objects.
+const object = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 // Revision covers the hashes of every file the version delivers, each list sorted by its key so
 // that the same tree published in a different declaration order keeps the same revision.
 export async function manifestRevision(value) {
@@ -37,7 +39,9 @@ export async function manifestRevision(value) {
 }
 // A version 2 manifest lists the whole tree; version 1 describes one package and must not carry a
 // `components` key at all, so an older loader never silently drops children it cannot see.
-async function manifest(value, base) {
+// `fileBase` is what the delivered files are named against (the sidecar); `keyBase` is what a child
+// key is absolutised against (the screen URL), so one manifest cannot name two different trees.
+async function manifest(value, fileBase, keyBase = fileBase) {
   if (
     !value ||
     ![1, 2].includes(value.version) ||
@@ -60,7 +64,7 @@ async function manifest(value, base) {
       entry.size > limit
     )
       throw new Error("マニフェストのファイル情報が不正です");
-    httpUrl(entry.url, base);
+    httpUrl(entry.url, fileBase);
   };
   check(value.source, 1_000_000);
   check(value.script, 100_000);
@@ -89,7 +93,7 @@ async function manifest(value, base) {
         if (typeof own !== "object" || Array.isArray(own) || Object.keys(own).length > 8)
           throw bad();
         for (const entry of Object.values(own)) check(entry, 1_000_000);
-        href = httpUrl(key, base).href;
+        href = httpUrl(key, keyBase).href;
       } catch {
         throw bad();
       }
@@ -116,10 +120,32 @@ async function manifest(value, base) {
     throw new Error("配信revisionとファイルのハッシュが一致しません");
   return value;
 }
+// A stored pointer whose manifest no longer parses is a generation nothing can restore, so it is
+// dropped rather than kept as the previous version.
+async function restorable(metadata, base) {
+  try {
+    await manifest(metadata, base);
+    return true;
+  } catch {
+    return false;
+  }
+}
 async function verify(bytes, entry) {
   if (bytes.length !== entry.size || (await sha256(bytes)) !== entry.sha256)
     throw new Error("配信ファイルのサイズ・ハッシュが一致しません");
   return bytes;
+}
+// The shape a loaded screen must have beyond what `parsePackage` judges, kept out of the parser so
+// the mock DSL that shares it is not held to the loader's rules. Both delivery paths run it before
+// anything is read off the screen, so a body that is not an object refuses by wording, not by type.
+function screenShape(screen) {
+  if (typeof screen?.id !== "string" || !screen.id)
+    throw new Error("画面idは空でない文字列にしてください");
+  if (
+    screen?.rpc !== undefined &&
+    (!object(screen.rpc) || Object.values(screen.rpc).some((value) => !object(value)))
+  )
+    throw new Error("rpcの宣言はオブジェクトにしてください");
 }
 // One delivered package judged against the files that came with it: the screen parses, its RPC
 // descriptor set matches the delivered descriptors exactly and it names a script URL. The root and
@@ -127,6 +153,7 @@ async function verify(bytes, entry) {
 function parsed(url, source, script, descriptors) {
   const format = packageFormat(url);
   const screen = parsePackage(decoder.decode(source), format);
+  screenShape(screen);
   const wanted = [...new Set(Object.values(screen.rpc ?? {}).map((r) => r.descriptor))];
   if (
     wanted.some((key) => typeof key !== "string" || !Object.hasOwn(descriptors, key)) ||
@@ -230,6 +257,7 @@ export class ApplicationLoader {
   async #download(url, signal) {
     const source = encoder.encode(await this.resources.text(url, { signal }));
     const screen = parsePackage(decoder.decode(source), packageFormat(url));
+    screenShape(screen);
     if (typeof screen.script !== "string") throw new Error("script URLがありません");
     const script = encoder.encode(
       await this.resources.text(httpUrl(screen.script, url), { signal }),
@@ -251,6 +279,9 @@ export class ApplicationLoader {
     const packages = Object.create(null);
     if (!Object.keys(screen.components ?? {}).length) return packages;
     const visit = async (parent, base, depth, stack) => {
+      // Judged before the first child is fetched, so an over-declared screen reads no child at all.
+      if (Object.keys(parent.components ?? {}).length > 8)
+        throw new Error(`コンポーネントの宣言が8件を超えています: ${base.href}`);
       for (const [name, declaration] of Object.entries(parent.components ?? {})) {
         if (typeof declaration?.url !== "string")
           throw new Error(
@@ -386,6 +417,7 @@ export class ApplicationLoader {
       const metadata = await manifest(
         JSON.parse(await this.resources.text(sidecar, { signal })),
         sidecar,
+        url,
       );
       const source = await verify(
         await this.resources.bytes(httpUrl(metadata.source.url, sidecar), { signal }),
@@ -485,10 +517,14 @@ export class ApplicationLoader {
           const old = await directory.read("current.json", { signal });
           // Preserve only valid metadata. All source files are checked on restore.
           const previous = JSON.parse(decoder.decode(old));
-          if (previous.url === candidate.url.href && previous.metadata?.revision !== revision) {
-            await manifest(previous.metadata, candidate.url);
+          if (
+            object(previous) &&
+            previous.url === candidate.url.href &&
+            object(previous.metadata) &&
+            previous.metadata.revision !== revision &&
+            (await restorable(previous.metadata, candidate.url))
+          )
             await directory.write("previous.json", old, { signal });
-          }
         } catch (e) {
           if (e.name !== "NotFoundError" && !(e instanceof SyntaxError)) throw e;
         }
@@ -498,7 +534,7 @@ export class ApplicationLoader {
           const previous = JSON.parse(
             decoder.decode(await directory.read("previous.json", { signal })),
           );
-          if (previous.url === candidate.url.href)
+          if (object(previous) && previous.url === candidate.url.href)
             keep.add((await manifest(previous.metadata, candidate.url)).revision);
         } catch {
           signal?.throwIfAborted();
@@ -536,6 +572,7 @@ export class ApplicationLoader {
         for (const pointer of ["current.json", "previous.json"]) {
           try {
             const stored = JSON.parse(decoder.decode(await directory.read(pointer, { signal })));
+            if (!object(stored)) throw new Error("保存版の情報が不正です");
             if (stored.url !== url.href) throw new Error("キャッシュのURLが一致しません");
             const metadata = await manifest(stored.metadata, url);
             const path = `versions/${metadata.revision}`;

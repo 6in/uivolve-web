@@ -35,6 +35,11 @@ operations:
     action: http.download
     handler: transferDone
     options: { path: status, overwrite: true }
+  problem:
+    connection: api
+    action: http.download
+    handler: transferDone
+    options: { path: problem, overwrite: true, errorBody: json }
 ui:
   xtype: container
   layout: { type: vbox, gap: 12 }
@@ -57,4 +62,5 @@ ui:
         disabledBind: busy,
       }
     - { xtype: button, itemId: failure, text: 失敗応答を確認, handler: failure, disabledBind: busy }
+    - { xtype: button, itemId: problem, text: 失敗本文を確認, handler: problem, disabledBind: busy }
     - { xtype: button, itemId: cancel, text: 転送を中止, handler: cancel }

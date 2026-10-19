@@ -29,3 +29,17 @@ routes:
   deleteOrder: { method: DELETE, path: "orders/{id}", operation: delete, collection: orders }
   reset: { method: POST, path: reset, operation: reset }
   health: { method: GET, path: health, response: { status: 200, body: { ready: true } } }
+  validateOrder:
+    method: POST
+    path: "orders/validate"
+    response:
+      status: 422
+      body:
+        type: about:blank
+        title: 入力に誤りがあります
+        status: 422
+        detail: 2 件の項目に誤りがあります
+        code: UB012
+        errors:
+          - { field: customer, code: required, message: 顧客名を入力してください }
+          - { field: quantity, code: range, message: 数量は1以上にしてください }

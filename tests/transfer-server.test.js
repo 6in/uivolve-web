@@ -136,6 +136,10 @@ it("provides delay, authentication, non-2xx and invalid response fixtures", asyn
     ).json(),
   ).toEqual({ authenticated: true });
   expect((await fetch(`${base}status?code=403`)).status).toBe(403);
+  const problem = await fetch(`${base}problem`);
+  expect(problem.status).toBe(422);
+  expect(problem.headers.get("content-type")).toBe("application/problem+json");
+  expect((await problem.json()).title).toBe("入力に誤りがあります");
   expect((await fetch(`${base}status`)).status).toBe(503);
   await expect((await fetch(`${base}invalid-json`)).json()).rejects.toThrow();
   const invalid = await (await fetch(`${base}invalid-utf8`)).arrayBuffer();

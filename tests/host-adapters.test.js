@@ -194,6 +194,7 @@ it("does not replay mutations on 401 and preserves a committed update outcome on
   expect(fetch).toHaveBeenCalledTimes(1);
   expect(fetch.mock.calls[0][1].headers.get("Authorization")).toBe("Bearer old-token");
   expect(complete.mock.calls[0][1].error.code).toBe("HTTP_401");
+  expect(complete.mock.calls[0][1].error.status).toBe(401);
   fetch.mockImplementation(async () => new Response("not JSON"));
   await effects.run(engine.dispatch("start").effects);
   expect(complete.mock.calls[1][1].error).toMatchObject({
@@ -201,6 +202,77 @@ it("does not replay mutations on 401 and preserves a committed update outcome on
     outcome: "committed",
     retryable: false,
   });
+});
+
+const problem = {
+  type: "about:blank",
+  title: "入力に誤りがあります",
+  status: 422,
+  errors: [{ field: "email", code: "format", message: "メールアドレスの形式が正しくありません" }],
+};
+const problemResponse = () =>
+  new Response(JSON.stringify(problem), {
+    status: 422,
+    headers: { "content-type": "application/problem+json" },
+  });
+
+it("delivers the declared failure body to the handler with the HTTP status", async () => {
+  const definition = screen();
+  definition.operations.request.options = { path: "items", method: "POST", errorBody: "json" };
+  engine.load(definition, script);
+  const fetch = vi.fn(async () => problemResponse());
+  const { effects, complete } = host(definition, fetch);
+  await effects.run(engine.dispatch("start").effects);
+  const error = complete.mock.calls[0][1].error;
+  expect(error).toEqual({
+    code: "HTTP_422",
+    message: "HTTP 422: リクエストに失敗しました",
+    retryable: false,
+    outcome: "unknown",
+    status: 422,
+    body: problem,
+  });
+  expect(Object.keys(error)).toEqual(["code", "message", "retryable", "outcome", "status", "body"]);
+  const { state } = complete.mock.results.at(-1).value;
+  expect(state.result.error.status).toBe(422);
+  expect(state.result.error.body.title).toBe("入力に誤りがあります");
+  expect(state.result.error.body.errors[0].field).toBe("email");
+});
+
+it("hides the failure body and cancels the stream when errorBody is not declared", async () => {
+  const definition = screen();
+  definition.operations.request.options = { path: "items", method: "POST" };
+  engine.load(definition, script);
+  let cancel;
+  const fetch = vi.fn(async () => {
+    const response = problemResponse();
+    cancel = vi.spyOn(response.body, "cancel");
+    return response;
+  });
+  const { effects, complete } = host(definition, fetch);
+  await effects.run(engine.dispatch("start").effects);
+  const error = complete.mock.calls[0][1].error;
+  expect(error.code).toBe("HTTP_422");
+  expect(error.status).toBe(422);
+  expect(Object.hasOwn(error, "body")).toBe(false);
+  expect(Object.hasOwn(error, "bodyError")).toBe(false);
+  expect(cancel).toHaveBeenCalledTimes(1);
+});
+
+it("omits the status when the failure carries no HTTP response", async () => {
+  const definition = screen();
+  definition.operations.request.options = { path: "items", method: "POST", errorBody: "json" };
+  engine.load(definition, script);
+  const fetch = vi.fn(async () => {
+    throw new Error("接続できません");
+  });
+  const { effects, complete } = host(definition, fetch);
+  await effects.run(engine.dispatch("start").effects);
+  const error = complete.mock.calls[0][1].error;
+  expect(error).toMatchObject({ code: "NETWORK", outcome: "unknown", retryable: false });
+  expect(Object.hasOwn(error, "status")).toBe(false);
+  expect(Object.hasOwn(error, "body")).toBe(false);
+  expect(Object.hasOwn(error, "bodyError")).toBe(false);
 });
 
 it("rejects unsafe paths, argument headers and GET bodies before sending anything", async () => {
@@ -239,6 +311,19 @@ it("validates capabilities without replacing the active operations and blocks fo
   }
   definition.operations.request.action = "db.query";
   expect(() => effects.prepare(definition.operations, source)).toThrow(/Unsupported/);
+});
+
+it("accepts only json for the declared errorBody option", () => {
+  const definition = screen();
+  const { effects } = host(definition, vi.fn());
+  for (const errorBody of ["text", true, 1, null]) {
+    definition.operations.request.options = { path: "items", errorBody };
+    expect(() => effects.prepare(definition.operations, source)).toThrow(
+      "HTTP errorBodyはjsonだけ指定できます",
+    );
+  }
+  definition.operations.request.options = { path: "items", errorBody: "json" };
+  expect(() => effects.prepare(definition.operations, source)).not.toThrow();
 });
 
 it("bounds pending calls and discards the entire handler on overflow", () => {
@@ -574,4 +659,96 @@ it.each([0, 1])("checks the final transfer response UTF-8 limit at boundary +%s"
   } finally {
     current.effects.dispose();
   }
+});
+
+const apiConnection = (connection) => ({
+  connections: { api: { adapter: "http", baseUrl: "https://example.test/api/", ...connection } },
+});
+// 4xx the server rejected outright; 408/429 may still have been applied before the status.
+const unappliedStatuses = [400, 401, 403, 404, 409, 422];
+const ambiguousStatuses = [408, 429, 500, 503];
+
+it("marks only the unapplied client errors as failed when the connection opts in", async () => {
+  const definition = screen();
+  engine.load(definition, script);
+  for (const [status, outcome] of [
+    ...unappliedStatuses.map((status) => [status, "failed"]),
+    ...ambiguousStatuses.map((status) => [status, "unknown"]),
+  ]) {
+    const fetch = vi.fn(async () => new Response("denied", { status }));
+    const { effects, complete } = host(
+      definition,
+      fetch,
+      apiConnection({ clientErrorOutcome: "failed" }),
+    );
+    await effects.run(engine.dispatch("start").effects);
+    const error = complete.mock.calls[0][1].error;
+    expect({ code: error.code, status: error.status, outcome: error.outcome }).toEqual({
+      code: `HTTP_${status}`,
+      status,
+      outcome,
+    });
+  }
+});
+
+it("treats a sub-400 failure status as unknown even when the connection opts in", async () => {
+  const definition = screen();
+  engine.load(definition, script);
+  // 399 cannot be built with `new Response`, and the operation declares no responseHeaders.
+  const fetch = vi.fn(async () => ({ ok: false, status: 399, body: null }));
+  const { effects, complete } = host(
+    definition,
+    fetch,
+    apiConnection({ clientErrorOutcome: "failed" }),
+  );
+  await effects.run(engine.dispatch("start").effects);
+  expect(complete.mock.calls[0][1].error).toMatchObject({
+    code: "HTTP_399",
+    status: 399,
+    outcome: "unknown",
+  });
+});
+
+it("keeps every failure unknown without the connection opt-in", async () => {
+  const definition = screen();
+  engine.load(definition, script);
+  for (const connection of [{}, { clientErrorOutcome: "unknown" }]) {
+    for (const status of [...unappliedStatuses, ...ambiguousStatuses]) {
+      const fetch = vi.fn(async () => new Response("denied", { status }));
+      const { effects, complete } = host(definition, fetch, apiConnection(connection));
+      await effects.run(engine.dispatch("start").effects);
+      const error = complete.mock.calls[0][1].error;
+      expect({ status: error.status, outcome: error.outcome }).toEqual({
+        status,
+        outcome: "unknown",
+      });
+    }
+  }
+});
+
+it("accepts only unknown or failed for the connection clientErrorOutcome", () => {
+  const definition = screen();
+  const prepare = (connection) => {
+    const effects = new HostEffects({
+      adapters: [
+        httpAdapter({ resources: new ResourceClient({ baseUrl: source, fetch: vi.fn() }) }),
+      ],
+      ...apiConnection(connection),
+      complete: vi.fn(),
+    });
+    return () => effects.prepare(definition.operations, source);
+  };
+  for (const clientErrorOutcome of [true, "FAILED", null])
+    expect(prepare({ clientErrorOutcome })).toThrow(
+      "HTTP clientErrorOutcomeはunknownかfailedだけ指定できます",
+    );
+  for (const connection of [
+    { clientErrorOutcome: "unknown" },
+    { clientErrorOutcome: "failed" },
+    {},
+  ])
+    expect(prepare(connection)).not.toThrow();
+  // The screen DSL cannot ask for it per operation; it stays a host-side connection setting.
+  definition.operations.request.options = { path: "items", clientErrorOutcome: "failed" };
+  expect(prepare({})).toThrow("HTTP設定・引数に未知の属性があります");
 });

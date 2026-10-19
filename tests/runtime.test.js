@@ -64,6 +64,21 @@ it("retains the clock provider on WASM refresh and preserves the active screen o
   expect(runtime.snapshot()).toEqual(previous);
 });
 
+it("retains the random provider on WASM refresh and preserves the active screen on an invalid one", async () => {
+  const randomProvider = () => Array.from({ length: 1024 }, () => 0);
+  const runtime = await host({ randomProvider });
+  await runtime.load("pages/home.yaml");
+  const realFetch = runtime.resources.fetch.bind(runtime.resources);
+  runtime.resources.fetch = (url, options) =>
+    url.pathname.endsWith(".wasm") ? Promise.resolve(new Response(bytes)) : realFetch(url, options);
+  await runtime.load("pages/home.yaml", { refreshEngine: true });
+  expect(runtime.engine.randomProvider).toBe(randomProvider);
+  const previous = runtime.snapshot();
+  runtime.engine.randomProvider = () => "x";
+  expect(() => runtime.compile(definition, script, "pages/home.yaml")).toThrow(/randomには/);
+  expect(runtime.snapshot()).toEqual(previous);
+});
+
 // Adapters are verified in-browser. These tests exercise the shared host with real WASM.
 vi.mock("../src/dom-renderer.js", () => ({
   DomRenderer: class {

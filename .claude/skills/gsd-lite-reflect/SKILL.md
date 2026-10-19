@@ -55,13 +55,17 @@ slug=<slug>
 ## 読む記録（この順で。全部読んでから書く）
 
 1. `$MS/state.json`: milestone / branch / turn / verify_round / fix_round /
-   engine / phase_engines / model・codex・opencode / subagents
+   engine / phase_engines / model・codex・opencode / subagents / limits
 2. `.gsd-lite/logs/<milestone>/turns.jsonl`: ループが 1 試行ごとに記録した客観データ
    （phase / engine / model / attempt / 所要秒 / rc / progressed / commits。gsd-control 形では
    対象側に増えたコード側のコミット数 `target_commits` も）。エンジンが報告したターンには
    `usage`（`input_tokens` / `output_tokens` / `cache_read_input_tokens` / `cache_creation_input_tokens`。
    Codex は `total_tokens` だけ）/ `cost_usd` / `num_turns` / `permission_denials`（承認待ちで拒否された
-   ツール名）/ `rate_limit`（利用枠の使用率）も入る。無い行は「記録なし」として扱い、推定で埋めない。
+   ツール名）/ `permission_denial_heads`（ツール名 ＋ Bash ならコマンドの先頭 1 語）/ `permission_denial_inputs`（入力の先頭）/
+   `rate_limit`（利用枠の使用率）も入る。無い行は「記録なし」として扱い、推定で埋めない。
+   **承認待ちの件数は turns.jsonl の `permission_denials` を正とする**。ループは 1 件以上あった進んだターンについて
+   PROGRESS の末尾に `- 承認待ち（ループ計測・turn N）: K 件 — …` を追記してコミットする（`gsd-lite(loop):`）。
+   エージェントの自己申告と食い違うのは、サブエージェントの分や失敗した試行の分が自己申告に入らないためで、指摘の対象にしない
    ここから**フェーズ別の所要時間・リトライが起きたターン・無進捗の試行**を集計する。
    `jq` でまとめて読む（例: `jq -s 'group_by(.phase) | map({phase: .[0].phase, turns: length, sec: (map(.duration_s) | add), retries: map(select(.attempt > 1)) | length, out_tokens: (map(.usage.output_tokens // 0) | add), cache_read: (map(.usage.cache_read_input_tokens // 0) | add), cost_usd: (map(.cost_usd // 0) | add), denials: (map(.permission_denials // []) | add | group_by(.) | map("\(.[0]) x\(length)"))})'`）。
    `permission_denials` が出ているターンは Minus の材料（allowlist に足すか deny するかを提案に書く）
@@ -106,10 +110,15 @@ slug=<slug>
 | research | 1        | 1      | 4          | 0        | 3,200        | 410,000        | 0.42          | claude / ...      |
 | ...      |          |        |            |          |              |                |               |                   |
 
+- 注記: `usage`（出力トークン・キャッシュ読み）は親セッションのみ、`cost_usd` はサブエージェント込み（推測）。
+  ターン間の比較は `cost_usd` で行う
 - 権限拒否（permission_denials）: なし | <ツール名 × 回数（どのターン）>
 
 - 計画タスク数 / impl ターン数: N / M
 - verify 差し戻し: verify_round 回（指摘 K 件）/ BLOCKED: 回数と原因の要約
+  （`verify_round` は**差し戻しの回数**で、VERIFICATION の round 番号は「差し戻し ＋ 1」。合格した round = `verify_round + 1` なので
+  「state 2 / VERIFICATION round 3」はずれではない。`fix_round` は discuss から始めた**人の修正ラウンド**の番号で、verify の差し戻しで
+  足した F タスクでは増えない）
 - 前回の提案の反映: 守られた / 守られなかった（どれが）
 
 ## Plus（うまくいったこと）

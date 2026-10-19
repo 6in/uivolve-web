@@ -22,7 +22,7 @@ description: uivolve-web上で動くアプリの画面JSON/YAML、Rhai、stateSc
 | 配置・Grid・動的タブ・ウィンドウ・テーマ    | [部品と配置](references/components-layout.md)     |
 | 既存の画面パッケージを部品として埋め込む    | [部品と配置](references/components-layout.md)     |
 | HTTPメソッド・パス変数・query・本文         | [HTTPの選択と接続](references/http.md)            |
-| 日付・時計・金額・Unicode加工               | [共通関数の選択](references/native-functions.md)  |
+| 日付・時計・乱数・金額・Unicode加工         | [共通関数の選択](references/native-functions.md)  |
 | JSON保存・OPFSファイル・RPC・正規表現の利用 | [I/Oと拡張](references/io-extensions.md)          |
 | alert・confirm・promptとアイコン            | [ダイアログ](references/dialogs.md)               |
 | WebMCPの説明・操作・配信と確認              | [WebMCPと実行確認](references/webmcp-delivery.md) |

@@ -1,7 +1,23 @@
 fn list(s) { host_call("listOrders", #{}); s.loading = true; s }
 fn init(s) { s.date = date_today(); list(s) }
 fn refreshOrders(s, e) { list(s) }
-fn failure(s, r) { s.loading = false; s.notice = r.error.code + ": " + r.error.message; s }
+fn failure(s, r) {
+    s.loading = false;
+    s.notice = r.error.code + ": " + r.error.message;
+    if "body" in r.error {
+        if "title" in r.error.body { s.notice = s.notice + " / " + r.error.body.title.to_string(); }
+        else if "message" in r.error.body { s.notice = s.notice + " / " + r.error.body.message.to_string(); }
+    }
+    // 送信済みか分からない失敗だけ、同じ冪等キーで送り直せる。
+    if r.error.outcome == "unknown" && s.idempotencyKey != "" {
+        s.canResend = true;
+        s.notice = s.notice + "（同じキーで送り直せます）";
+    } else {
+        s.idempotencyKey = "";
+        s.canResend = false;
+    }
+    s
+}
 fn listed(s, r) {
     if !r.ok { return failure(s, r); }
     let orders = [];
@@ -41,6 +57,11 @@ fn save(s, operation) {
         let subtotal = dec_mul(s.price, s.quantity);
         let total = dec_add(subtotal, dec_round(dec_mul(subtotal, "0.1"), 0, "half_up"));
         let body = #{customer: customer, date: s.date, due: date_add_days(s.date, 14), price: s.price, quantity: s.quantity, total: total};
+        // 1つの登録に1つの冪等キー。送り直しの間は同じキーを使い回す。
+        if operation == "createOrder" {
+            if s.idempotencyKey == "" { s.idempotencyKey = uuid_v4(); }
+            body.idempotencyKey = s.idempotencyKey;
+        }
         host_call(operation, #{path: #{id: s.id}, body: body});
         s.loading = true;
     } catch (error) { s.notice = "入力を確認してください: " + error.to_string(); }
@@ -48,6 +69,29 @@ fn save(s, operation) {
 }
 fn createOrder(s, e) { save(s, "createOrder") }
 fn updateOrder(s, e) { save(s, "updateOrder") }
+fn resendOrder(s, e) {
+    if !s.canResend { s.notice = "送り直せる登録はありません。"; return s; }
+    save(s, "createOrder")
+}
+fn validateOrder(s, e) {
+    host_call("validateOrder", #{body: #{customer: s.customer, quantity: s.quantity}});
+    s.loading = true; s
+}
+fn validated(s, r) {
+    s.customerError = "";
+    s.quantityError = "";
+    if !r.ok {
+        s = failure(s, r);
+        if "body" in r.error && "errors" in r.error.body {
+            for entry in r.error.body.errors {
+                if entry.field == "customer" { s.customerError = entry.message.to_string(); }
+                if entry.field == "quantity" { s.quantityError = entry.message.to_string(); }
+            }
+        }
+        return s;
+    }
+    s.loading = false; s.notice = "サーバ検証を通過しました。"; s
+}
 fn deleteOrder(s, e) {
     if s.id == "" { s.notice = "削除するIDを入力してください。"; return s; }
     host_call("deleteOrder", #{path: #{id: s.id}}); s.loading = true; s
@@ -55,6 +99,8 @@ fn deleteOrder(s, e) {
 fn resetOrders(s, e) { host_call("resetOrders", #{}); s.loading = true; s.id = ""; s }
 fn changed(s, r) {
     if !r.ok { return failure(s, r); }
+    s.idempotencyKey = "";
+    s.canResend = false;
     if type_of(r.data.body) == "map" && "id" in r.data.body { s.id = r.data.body.id; }
     list(s)
 }

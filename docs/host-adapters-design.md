@@ -183,9 +183,9 @@ WebSocket/BLEはキュー満杯で黙ってデータを捨てず、subscription�
 
 以下は当初案。現行http.requestはJSON要求本文とjson/text/empty応答を提供し、bytes・WASMバッファ本文は未実装。OPFSのFile本文・multipart送信とストリーム保存は別actionで実装済み。実行コードは[現行HTTP契約](http-adapter.md)から生成する。
 
-GET/POST/PUT/PATCH/DELETE/HEADを提供。JSON、text、bytes、空応答を明示する。204/HEADはbodyなしで成功。応答にstatusと許可したheadersを含める。非2xxはHTTP statusを持つ失敗として返す。bodyはJSON/text/既存バッファを初期対応とし、multipartは後続とする、という当初案だった。現在のOPFS転送はmultipartにも対応する。
+GET/POST/PUT/PATCH/DELETE/HEADを提供。JSON、text、bytes、空応答を明示する。204/HEADはbodyなしで成功。応答にstatusと許可したheadersを含める。非2xxはHTTP statusを持つ失敗として返す。bodyはJSON/text/既存バッファを初期対応とし、multipartは後続とする、という当初案だった。現在のOPFS転送はmultipartにも対応する。現行は`error.status`を常に、`errorBody: json`を宣言した操作には`error.body`（または`error.bodyError`）も載せる。
 
-既存ResourceClientのURL・CORS・送信先・認証ポリシーを共有する。JWTはstate/DSLへ渡さず、Authorizationはホストが設定する。任意headersはホスト許可リスト内に制限。GETの従来契約は維持する。更新メソッドは401更新を含む自動再送を標準OFFにし、サーバーが保証するidempotency key等を宣言した場合だけ許可する、という将来案。現行OPFS転送には再送を許可する宣言はなく、GETを含め401後の更新・再送を行わない。
+既存ResourceClientのURL・CORS・送信先・認証ポリシーを共有する。JWTはstate/DSLへ渡さず、Authorizationはホストが設定する。任意headersはホスト許可リスト内に制限。GETの従来契約は維持する。更新メソッドは401更新を含む自動再送を標準OFFにし、サーバーが保証するidempotency key等を宣言した場合だけ許可する、という将来案。現行OPFS転送には再送を許可する宣言はなく、GETを含め401後の更新・再送を行わない。現行は画面が`uuid_v4()`で冪等キーを作って本文に載せる運用で、ホストの自動付与・自動再送は引き続き無い。
 
 ## WebSocket
 

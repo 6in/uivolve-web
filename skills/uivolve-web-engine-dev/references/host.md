@@ -22,7 +22,7 @@
 - WebMCPは通常イベントと同じWASM検証を通す。screen token/revision、可視性、readOnly/disabled、モーダル遮断を維持する。説明メタデータを認可へ転用しない。未対応ブラウザでも通常UIを動かす。
 - IME、フォーカス、非表示要素、メディアの解放に触れる変更は両描画方式で確認する。業務計算やGridの並べ替えをホストへ移さない。
 
-- HTTPの固定宣言は画面load前、動的path/query/bodyは確定後のホストで検証する。state確定前に通信しない。host_resultのerrorは構造化オブジェクトで、旧http_resultの文字列と区別する。
+- HTTPの固定宣言は画面load前、動的path/query/bodyは確定後のホストで検証する。state確定前に通信しない。host_resultのerrorは構造化オブジェクトで、旧http_resultの文字列と区別する。HTTPの`error`には、応答を受け取った失敗ならopt-inと関係なく`status`が載り、操作が`errorBody: "json"`を宣言したときだけ`body`または`bodyError`が載る（両者は排他で、該当しないキーは存在しない）。接続の`clientErrorOutcome: "failed"`は4xx（408・429を除く）の`outcome`を`failed`にする接続側だけの設定で、画面DSLのoptionsには書けない。
 - 外部操作の完了handlerが失敗してもidは消費される。onErrorのexternalResultを保持し、UIの巻き戻しを外部更新の取り消しとみなさない。
 - HostEffects/HTTP以外のWebSocket・Media・Bluetooth・DB、host_event/host_closeは未実装。将来設計を現行DSLへそのまま追加しない。
 

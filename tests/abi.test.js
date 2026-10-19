@@ -56,6 +56,27 @@ it("accepts old clockless requests and validates raw clocks in WASM before state
   expect(raw(JSON.stringify({ op: "event", target: "add" })).data.state.count).toBe(2);
 });
 
+// The engine owns the 1,024-byte rule, not engine.js: a raw host that sends the wrong shape is
+// refused in WASM, and the screen it is already showing does not move. The messages stay English
+// here because they come from the ABI and from serde, not from the Rhai functions.
+it("validates raw random bytes in WASM before state changes and accepts exactly 1,024", () => {
+  const bytes = (length, value = 0) => Array.from({ length }, () => value);
+  expect(raw(JSON.stringify({ op: "load", package: screen, script })).ok).toBe(true);
+  const layout = JSON.stringify(raw(JSON.stringify({ op: "layout", width: 400 })));
+  for (const random of [bytes(1023), bytes(1025), [256, ...bytes(1023)], "abc", {}]) {
+    const response = raw(JSON.stringify({ op: "event", target: "add", random }));
+    expect(response.ok).toBe(false);
+    expect(typeof response.error).toBe("string");
+    expect(JSON.stringify(raw(JSON.stringify({ op: "layout", width: 400 })))).toBe(layout);
+  }
+  // Nothing above counted, and a correct pool still drives the screen forward.
+  expect(raw(JSON.stringify({ op: "event", target: "add" })).data.state.count).toBe(1);
+  const pool = bytes(1024, 7);
+  expect(raw(JSON.stringify({ op: "event", target: "add", random: pool })).data.state.count).toBe(
+    2,
+  );
+});
+
 it("loads a screen with its component packages bundled and caps how many may be sent", () => {
   const child = {
     version: 1,

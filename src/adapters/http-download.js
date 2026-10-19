@@ -1,3 +1,4 @@
+import { failureDetails, failureOutcome } from "./http.js";
 import { hostError } from "../host-effects.js";
 
 export async function downloadFile({
@@ -6,6 +7,7 @@ export async function downloadFile({
   reference,
   file,
   options,
+  connection,
   signal,
   progress,
   limit,
@@ -51,12 +53,21 @@ export async function downloadFile({
     if (response.body) reader = response.body.getReader();
     signal.addEventListener("abort", cancelReader, { once: true });
     signal.throwIfAborted();
-    if (!response.ok)
-      throw hostError(
-        `HTTP_${response.status}`,
-        `HTTP ${response.status}: リクエストに失敗しました`,
-        "failed",
+    if (!response.ok) {
+      const details = await failureDetails(response, {
+        errorBody: options.errorBody,
+        signal,
+        reader,
+      });
+      throw Object.assign(
+        hostError(
+          `HTTP_${response.status}`,
+          `HTTP ${response.status}: リクエストに失敗しました`,
+          failureOutcome(connection, response.status, "failed"),
+        ),
+        details,
       );
+    }
     const length = response.headers.get("content-length");
     // Encoded wire sizes are not decoded byte counts; the streamed count is authoritative.
     if (
@@ -116,13 +127,16 @@ export async function downloadFile({
   } finally {
     signal.removeEventListener("abort", cancelReader);
     let cleanupFailed = false;
+    // An HTTP failure already carries the server's status; cancelling the body it
+    // left behind must not replace that with CLEANUP.
+    const httpFailure = Number.isInteger(failure?.status);
     if (!committed) {
       cancelReader();
     }
     try {
       await cancellation;
     } catch {
-      cleanupFailed = true;
+      if (!httpFailure) cleanupFailed = true;
     }
     if (!committed) {
       if (writer) {
