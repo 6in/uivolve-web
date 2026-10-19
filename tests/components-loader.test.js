@@ -224,6 +224,46 @@ describe("ApplicationLoader の components 取得", () => {
     );
   });
 
+  // Placements are counted after the tree is built; declarations are counted before it is. A
+  // package naming more children than the tree can hold is refused at the package that holds the
+  // declarations, so no surplus key costs a fetch.
+  const declaring = (count, target = (n) => `c${n}.json`) => {
+    const urls = Array.from({ length: count }, (_, n) => target(n));
+    return [
+      [
+        "parent.json",
+        screen("parent", {
+          components: Object.fromEntries(urls.map((url, n) => [`c${n}`, { url }])),
+        }),
+      ],
+      ...[...new Set(urls)].map((url) => [url, screen(url.replace(".json", ""))]),
+    ];
+  };
+
+  it("refuses a ninth declaration before fetching any child", async () => {
+    const f = fixture(declaring(9));
+    await expect(f.loader.fetch(href("parent.json"))).rejects.toThrow(
+      `コンポーネントの宣言が8件を超えています: ${href("parent.json")}`,
+    );
+    // Only the parent's own body and script were read; not one declared url was opened.
+    expect([...f.reads.keys()].sort()).toEqual([href("parent.json"), href("parent.rhai")]);
+    const eight = fixture(declaring(8));
+    const candidate = await eight.loader.fetch(href("parent.json"));
+    expect(Object.keys(candidate.components)).toHaveLength(8);
+  });
+
+  it("refuses a ninth declaration on the manifest path as well", async () => {
+    // Nine declarations over eight distinct children, so the manifest itself stays within its own
+    // eight-child limit and the declaration count is what refuses the tree.
+    const list = declaring(9, (n) => `c${n % 8}.json`);
+    const f = fixture(list);
+    const t = await treeManifest(f, list);
+    expect(Object.keys(t.metadata.components)).toHaveLength(8);
+    await expect(f.loader.fetch(t.url, { mode: "network-first" })).rejects.toThrow(
+      `コンポーネントの宣言が8件を超えています: ${href("parent.json")}`,
+    );
+  });
+
   it("returns an empty components map for a screen without children", async () => {
     const f = fixture([["plain.json", screen("plain")]]);
     const candidate = await f.loader.fetch(href("plain.json"));
@@ -357,6 +397,63 @@ describe("ApplicationLoader の components 取得", () => {
     ]);
     const candidate = await f.loader.fetch(href("parent.json"));
     expect(Object.keys(candidate.components)).toEqual([href("part.json")]);
+  });
+
+  // `parsePackage` promises an object and nothing more, so the loader is what holds a package to
+  // the shape everything downstream reads: the id composes a storage scope and an RPC declaration
+  // is read field by field, both of which used to fail as a `TypeError` far from the cause.
+  it("refuses a screen whose id is not a string", async () => {
+    for (const id of [5, null, {}]) {
+      const f = fixture([["parent.json", screen(id)]]);
+      await expect(f.loader.fetch(href("parent.json")), String(id)).rejects.toThrow(
+        "画面idは文字列で指定してください",
+      );
+    }
+  });
+
+  it("refuses a root id that is not a string before any child is fetched", async () => {
+    const f = fixture([
+      [
+        "parent.json",
+        screen(5, {
+          components: { part: { url: "part.json" } },
+          ui: { xtype: "container", items: [{ xtype: "part", itemId: "a" }] },
+        }),
+      ],
+      [
+        "part.json",
+        screen("part", {
+          storage: { draft: { backend: "opfs", key: "draft", handler: "done" } },
+        }),
+      ],
+    ]);
+    await expect(f.loader.fetch(href("parent.json"))).rejects.toThrow(
+      "画面idは文字列で指定してください",
+    );
+    // The scope rules would have composed `5__a` out of a number; the child was never opened.
+    expect([...f.reads.keys()]).toEqual([href("parent.json")]);
+    expect(f.reads.has(href("part.json"))).toBe(false);
+  });
+
+  it("refuses an RPC declaration that is not an object, in an array as well as a map", async () => {
+    for (const value of [null, 5]) {
+      const f = fixture([["parent.json", screen("parent", { rpc: { x: value } })]]);
+      await expect(f.loader.fetch(href("parent.json")), String(value)).rejects.toThrow(
+        "RPC x の定義が不正です（object で指定してください）",
+      );
+    }
+    // The values are what gets read, and an array has values too: its index is the name to report.
+    const array = fixture([["parent.json", screen("parent", { rpc: [null] })]]);
+    await expect(array.loader.fetch(href("parent.json"))).rejects.toThrow(
+      "RPC 0 の定義が不正です（object で指定してください）",
+    );
+    // A missing, `null` or empty `rpc` carries no declaration to judge and goes through as it
+    // always has: `[]` is not refused for being an array.
+    for (const rpc of [null, []]) {
+      const f = fixture([["parent.json", screen("parent", { rpc })]]);
+      const candidate = await f.loader.fetch(href("parent.json"));
+      expect(candidate.screen.id, JSON.stringify(rpc)).toBe("parent");
+    }
   });
 
   // A version 2 manifest lists the whole tree: the root plus every descendant, keyed by the path
@@ -656,6 +753,58 @@ describe("ApplicationLoader の components 取得", () => {
       const child = t.metadata.components["?x"];
       expect(f.reads.has(new URL(child.source.url, t.sidecar).href)).toBe(false);
       expect(f.reads.has(new URL(child.script.url, t.sidecar).href)).toBe(false);
+    });
+
+    // `""` and `parent.json` are one child against the screen URL and two beside the sidecar, so a
+    // manifest listing both is the single case where the basis decides whether `manifest()` sees
+    // the duplicate at all. The wording carries no parenthesis: the shape is what is refused.
+    it("refuses two child keys that resolve to the same screen URL", async () => {
+      const list = parentWithChild();
+      const f = fixture(list);
+      const t = await treeManifest(f, list);
+      await revised(f, t, (c) => {
+        c[""] = c["a.json"];
+        c["parent.json"] = c["a.json"];
+        delete c["a.json"];
+      });
+      await expect(f.loader.fetch(t.url, { mode: "network-first" })).rejects.toThrow(
+        new RegExp(`^${MALFORMED}$`),
+      );
+      // The duplicate is judged on the manifest alone, so nothing beyond it was read.
+      expect([...f.reads.keys()]).toEqual([t.sidecar.href]);
+    });
+
+    // The 2 MB wording names a child by the same href the walk would key it under, so a key whose
+    // meaning depends on the basis — `?x` is the screen with a query, the sidecar with one — reads
+    // as the screen URL here as well.
+    it("names the largest child of an oversized tree by its screen URL", async () => {
+      const f = fixture([]);
+      const url = new URL(href("parent.json"));
+      const sidecar = new URL(url);
+      sidecar.pathname += ".manifest.json";
+      const entry = (name, size, seed) => ({
+        url: `packages/rev/${name}`,
+        sha256: seed.repeat(64),
+        size,
+      });
+      const child = (i, size, seed) => ({
+        source: entry(`component-${i}-source`, size, seed),
+        script: entry(`component-${i}-script`, 0, seed),
+        descriptors: {},
+      });
+      const metadata = {
+        version: 2,
+        revision: "a".repeat(64),
+        source: entry("source", 1_000_000, "1"),
+        script: entry("script", 1, "2"),
+        components: { "?x": child(0, 999_000, "3"), "b.json": child(1, 1_000, "4") },
+      };
+      metadata.revision = await manifestRevision(metadata);
+      f.responses.set(sidecar.href, JSON.stringify(metadata));
+      await expect(f.loader.fetch(url, { mode: "network-first" })).rejects.toThrow(
+        `配信ファイルの合計が2 MBを超えています（合計 2000001 バイト。最大の子: ${href("parent.json?x")} 999000 バイト）`,
+      );
+      expect([...f.reads.keys()]).toEqual([sidecar.href]);
     });
 
     it("names the child whose delivered file does not match its entry", async () => {
@@ -1016,6 +1165,62 @@ describe("ApplicationLoader の components 取得", () => {
       // The first generation falls out once a third arrives, and nothing was iterating by then.
       expect(removals).toEqual([0]);
       expect(await names(held.directory, "versions")).toHaveLength(2);
+    });
+
+    // The delivered path judges a child the same way the network does: the manifest says nothing
+    // about what is inside a package, so the shape is still the loader's to refuse.
+    it("refuses a delivered child whose id is not a string", async () => {
+      const list = [
+        ["parent.json", screen("parent", { components: { a: { url: "a.json" } } })],
+        ["a.json", screen(5)],
+      ];
+      const f = fixture(list);
+      const t = await treeManifest(f, list);
+      await expect(f.loader.fetch(t.url, { mode: "network-first" })).rejects.toThrow(
+        "画面idは文字列で指定してください",
+      );
+    });
+
+    // A pointer is only ever read for what it says about a generation, so one that is not an
+    // object says nothing: the save reads past it and the restore reports it as a reason.
+    it("saves a new generation over pointers that are not objects", async () => {
+      const held = await afterFirstSave();
+      for (const name of ["current.json", "previous.json"])
+        await held.directory.write(name, encoder.encode("null"));
+      const two = await held.nextCandidate("generation two");
+      await held.loader.save(two);
+      expect(await names(held.directory, "versions")).toEqual([two.metadata.revision]);
+      const pointer = await pointerOf(held.directory, "current.json");
+      expect(pointer.url).toBe(held.url.href);
+      expect(pointer.metadata.revision).toBe(two.metadata.revision);
+    });
+
+    it("names a pointer that is not an object as the reason no stored version was used", async () => {
+      for (const raw of ["null", "[]", "5", '"x"']) {
+        const held = await afterFirstSave();
+        await held.directory.write("current.json", encoder.encode(raw));
+        await expect(held.loader.restore(held.url), raw).rejects.toThrow(
+          "通信に失敗し、利用できる保存版もありません（キャッシュの管理情報が不正です）",
+        );
+      }
+      // An object without a url is a pointer all the same, and keeps the wording it always had.
+      const empty = await afterFirstSave();
+      await empty.directory.write("current.json", encoder.encode("{}"));
+      await expect(empty.loader.restore(empty.url)).rejects.toThrow(
+        "通信に失敗し、利用できる保存版もありません（キャッシュのURLが一致しません）",
+      );
+    });
+
+    it("falls back to the previous generation when the current pointer is not an object", async () => {
+      const { loader, url, one, two, directory } = await twoGenerations();
+      expect(two.metadata.revision).not.toBe(one.metadata.revision);
+      expect((await pointerOf(directory, "previous.json")).metadata.revision).toBe(
+        one.metadata.revision,
+      );
+      await directory.write("current.json", encoder.encode("null"));
+      const restored = await loader.restore(url);
+      expect(restored.status).toBe("cache");
+      expect(restored.metadata.revision).toBe(one.metadata.revision);
     });
   });
 
@@ -1503,5 +1708,37 @@ describe("WasmEngine / UiRuntime の components", () => {
     expect(events.at(-1)).toMatchObject({ status: "save-error" });
     expect(events.at(-1).error.name).toBe("QuotaExceededError");
     expect(runtime.screen.id).toBe(definition.id);
+  });
+
+  /** The parent of `parent`, with the card placed behind a `ready` flag the `show` handler sets. */
+  const hiding = () => {
+    const screen = structuredClone(parent(CARD_URL));
+    screen.state.ready = false;
+    screen.ui.items[1].visibleBind = "ready";
+    screen.ui.items.push({ xtype: "button", itemId: "show", text: "表示", handler: "show" });
+    return screen;
+  };
+
+  // A hidden child still has a summary — that is how a host learns a component is there at all —
+  // so `hidden` is what tells the summary apart from the widgets the layout left out.
+  it("summarizes a child the parent hides and lays it out once the parent shows it", async () => {
+    const engine = await newEngine();
+    engine.load(
+      hiding(),
+      "fn init(s){s} fn show(s,e){s.ready = true; s}",
+      {},
+      {
+        components: { [CARD_URL]: { screen: card(), script: CARD_SCRIPT } },
+      },
+    );
+    const before = engine.layout(500);
+    expect(before.components).toHaveLength(1);
+    expect(before.components[0]).toMatchObject({ instance: "a", id: "card", hidden: true });
+    expect(before.widgets.some((w) => w.key.startsWith("a/"))).toBe(false);
+
+    engine.dispatch("show");
+    const after = engine.layout(500);
+    expect(after.components[0].hidden).toBe(false);
+    expect(after.widgets.some((w) => w.key.startsWith("a/"))).toBe(true);
   });
 });

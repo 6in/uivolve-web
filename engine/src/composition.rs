@@ -1,7 +1,7 @@
 //! Screen composition: a package may declare child packages under `components` and place them
 //! as nodes whose `xtype` is the declared name. This module owns the declaration rules and the
 //! shape of a component node; loading the children into an instance tree lives on `Runtime`.
-use super::{fields, metadata, storage, Node, Package, Widget, XTYPES};
+use super::{fields, storage, Node, Package, Widget, XTYPES};
 use rhai::{Dynamic, Engine, EvalAltResult, ImmutableString};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -230,20 +230,11 @@ pub fn component_scope(root_id: &str, path: &str) -> Result<String, String> {
     }
 }
 
-/// The one declaration a child package still may not carry: `webmcp` publishes the screen-wide
-/// tool surface, which belongs to the root. Effects themselves are a child's to queue.
-pub fn reject_effect_declarations(package: &Package) -> Result<(), String> {
-    if metadata::Metadata::is_empty(&package.webmcp) {
-        return Ok(());
-    }
-    Err("webmcp is not available in components (reserved for a later stage)".into())
-}
-
 /// A child owns no window layer: the screen-wide modal stack and its focus belong to the root.
 /// Covers `messagebox`, which `fields::normalize` rewrites into a `window`.
 pub fn reject_windows(node: &Node) -> Result<(), String> {
     if node.xtype == "window" {
-        return Err("window is not available in components (reserved for a later stage)".into());
+        return Err("window is not available in components".into());
     }
     for child in &node.items {
         reject_windows(child)?;

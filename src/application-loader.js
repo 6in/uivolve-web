@@ -10,6 +10,9 @@ export async function sha256(bytes) {
     .map((n) => n.toString(16).padStart(2, "0"))
     .join("");
 }
+// The one test for "a plain object" this module uses, so a declaration, a manifest and a stored
+// pointer are all judged by the same rule: `null` and an array are not objects here.
+const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const byKey = ([a], [b]) => (a < b ? -1 : a > b ? 1 : 0);
 // Revision covers the hashes of every file the version delivers, each list sorted by its key so
 // that the same tree published in a different declaration order keeps the same revision.
@@ -36,20 +39,20 @@ export async function manifestRevision(value) {
   return sha256(encoder.encode(JSON.stringify(parts)));
 }
 // A version 2 manifest lists the whole tree; version 1 describes one package and must not carry a
-// `components` key at all, so an older loader never silently drops children it cannot see.
-async function manifest(value, base) {
+// `components` key at all, so an older loader never silently drops children it cannot see. Both
+// bases are derived from the screen URL here: the delivered files sit beside the sidecar that
+// carries them, while a child key names a package and so resolves against the screen itself.
+async function manifest(value, screenUrl) {
   if (
     !value ||
     ![1, 2].includes(value.version) ||
     !/^[a-f0-9]{64}$/.test(value.revision) ||
     (value.version === 1 && Object.hasOwn(value, "components")) ||
-    (value.version === 2 &&
-      (!Object.hasOwn(value, "components") ||
-        typeof value.components !== "object" ||
-        value.components === null ||
-        Array.isArray(value.components)))
+    (value.version === 2 && (!Object.hasOwn(value, "components") || !isObject(value.components)))
   )
     throw new Error("配信マニフェストが不正です");
+  const sidecar = new URL(screenUrl);
+  sidecar.pathname += ".manifest.json";
   const check = (entry, limit) => {
     if (
       !entry ||
@@ -60,36 +63,33 @@ async function manifest(value, base) {
       entry.size > limit
     )
       throw new Error("マニフェストのファイル情報が不正です");
-    httpUrl(entry.url, base);
+    httpUrl(entry.url, sidecar);
   };
   check(value.source, 1_000_000);
   check(value.script, 100_000);
   const descriptors = value.descriptors ?? {};
-  if (
-    typeof descriptors !== "object" ||
-    Array.isArray(descriptors) ||
-    Object.keys(descriptors).length > 8
-  )
+  if (!isObject(descriptors) || Object.keys(descriptors).length > 8)
     throw new Error("マニフェストの型情報が不正です");
   for (const entry of Object.values(descriptors)) check(entry, 1_000_000);
-  // Children are read as own properties into a null-prototype map keyed by the href their relative
-  // key resolves to, so a `__proto__` key and `a.json` vs `./a.json` are both plain collisions.
+  // Children are read as own properties into a null-prototype map keyed by the href their key
+  // resolves to against the screen URL — the basis `fetch`, `save` and `restore` all walk with, so
+  // a key like `?x` cannot mean two packages. A `__proto__` key and `a.json` vs `./a.json` are both
+  // plain collisions.
   const components = Object.create(null);
   if (value.version === 2) {
     const bad = () => new Error("マニフェストのコンポーネント情報が不正です");
     const children = Object.entries(value.components);
     if (children.length > 8) throw bad();
     for (const [key, child] of children) {
-      if (!child || typeof child !== "object" || Array.isArray(child)) throw bad();
+      if (!isObject(child)) throw bad();
       let href;
       try {
         check(child.source, 1_000_000);
         check(child.script, 100_000);
         const own = child.descriptors ?? {};
-        if (typeof own !== "object" || Array.isArray(own) || Object.keys(own).length > 8)
-          throw bad();
+        if (!isObject(own) || Object.keys(own).length > 8) throw bad();
         for (const entry of Object.values(own)) check(entry, 1_000_000);
-        href = httpUrl(key, base).href;
+        href = httpUrl(key, screenUrl).href;
       } catch {
         throw bad();
       }
@@ -121,12 +121,28 @@ async function verify(bytes, entry) {
     throw new Error("配信ファイルのサイズ・ハッシュが一致しません");
   return bytes;
 }
+// The shape a package must have before anything downstream reads it. `parsePackage` only promises
+// an object, and the id travels into the scope rules while an RPC declaration is read field by
+// field, so a number for an id or a non-object declaration would surface as a `TypeError` far from
+// the package that caused it. It lives here rather than in `package-format.js` because that parser
+// also serves definitions that are not screens, such as the mock API's own.
+function shape(screen) {
+  if (typeof screen.id !== "string") throw new Error("画面idは文字列で指定してください");
+  // Both callers read a `descriptor` out of every value of `rpc`, `Object.values` not caring
+  // whether it walks a map or an array, so an array is held to the same rule. Only a missing or
+  // `null` `rpc` carries no declaration to judge, and an empty array carries none either.
+  if (screen.rpc !== null && typeof screen.rpc === "object")
+    for (const [name, value] of Object.entries(screen.rpc))
+      if (!isObject(value))
+        throw new Error(`RPC ${name} の定義が不正です（object で指定してください）`);
+  return screen;
+}
 // One delivered package judged against the files that came with it: the screen parses, its RPC
 // descriptor set matches the delivered descriptors exactly and it names a script URL. The root and
 // every child go through the same gate, so a child reports the same refusals the root does.
 function parsed(url, source, script, descriptors) {
   const format = packageFormat(url);
-  const screen = parsePackage(decoder.decode(source), format);
+  const screen = shape(parsePackage(decoder.decode(source), format));
   const wanted = [...new Set(Object.values(screen.rpc ?? {}).map((r) => r.descriptor))];
   if (
     wanted.some((key) => typeof key !== "string" || !Object.hasOwn(descriptors, key)) ||
@@ -229,7 +245,7 @@ export class ApplicationLoader {
   // One package without its children: body, script and RPC descriptors, all relative to url.
   async #download(url, signal) {
     const source = encoder.encode(await this.resources.text(url, { signal }));
-    const screen = parsePackage(decoder.decode(source), packageFormat(url));
+    const screen = shape(parsePackage(decoder.decode(source), packageFormat(url)));
     if (typeof screen.script !== "string") throw new Error("script URLがありません");
     const script = encoder.encode(
       await this.resources.text(httpUrl(screen.script, url), { signal }),
@@ -251,6 +267,11 @@ export class ApplicationLoader {
     const packages = Object.create(null);
     if (!Object.keys(screen.components ?? {}).length) return packages;
     const visit = async (parent, base, depth, stack) => {
+      // How many children one package may declare, judged before a single declaration is read: a
+      // package that names more than the tree can hold is refused where it is written rather than
+      // after the fetches its surplus keys would have cost.
+      if (Object.keys(parent.components ?? {}).length > 8)
+        throw new Error(`コンポーネントの宣言が8件を超えています: ${base.href}`);
       for (const [name, declaration] of Object.entries(parent.components ?? {})) {
         if (typeof declaration?.url !== "string")
           throw new Error(
@@ -385,7 +406,7 @@ export class ApplicationLoader {
       sidecar.pathname += ".manifest.json";
       const metadata = await manifest(
         JSON.parse(await this.resources.text(sidecar, { signal })),
-        sidecar,
+        url,
       );
       const source = await verify(
         await this.resources.bytes(httpUrl(metadata.source.url, sidecar), { signal }),
@@ -483,9 +504,15 @@ export class ApplicationLoader {
         );
         try {
           const old = await directory.read("current.json", { signal });
-          // Preserve only valid metadata. All source files are checked on restore.
+          // Preserve only valid metadata. All source files are checked on restore. A pointer that
+          // is not an object says nothing about a previous generation, so it is read past the way
+          // a missing one is rather than letting a `TypeError` take the save down with it.
           const previous = JSON.parse(decoder.decode(old));
-          if (previous.url === candidate.url.href && previous.metadata?.revision !== revision) {
+          if (
+            isObject(previous) &&
+            previous.url === candidate.url.href &&
+            previous.metadata?.revision !== revision
+          ) {
             await manifest(previous.metadata, candidate.url);
             await directory.write("previous.json", old, { signal });
           }
@@ -498,7 +525,7 @@ export class ApplicationLoader {
           const previous = JSON.parse(
             decoder.decode(await directory.read("previous.json", { signal })),
           );
-          if (previous.url === candidate.url.href)
+          if (isObject(previous) && previous.url === candidate.url.href)
             keep.add((await manifest(previous.metadata, candidate.url)).revision);
         } catch {
           signal?.throwIfAborted();
@@ -536,6 +563,9 @@ export class ApplicationLoader {
         for (const pointer of ["current.json", "previous.json"]) {
           try {
             const stored = JSON.parse(decoder.decode(await directory.read(pointer, { signal })));
+            // A pointer that is not an object has nothing to read a url out of, and that is a
+            // reason worth reporting rather than a `TypeError` escaping the generation loop.
+            if (!isObject(stored)) throw new Error("キャッシュの管理情報が不正です");
             if (stored.url !== url.href) throw new Error("キャッシュのURLが一致しません");
             const metadata = await manifest(stored.metadata, url);
             const path = `versions/${metadata.revision}`;

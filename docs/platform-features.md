@@ -128,7 +128,7 @@ ui:
     tags: [write]
 ```
 
-Sceneへ渡した画面情報は`ui_get_screen.screen.webmcp`、表示部品は`widgets[].metadata.webmcp`に出る。stateSchemaも同ツールでプレビューを返し、省略時はstateSchemaTruncated=true。説明はツールの入力schema・許可action・認可を変更しない。ページ独自ツールや任意handlerの直接起動は省略する。[WebMCP契約](webmcp.md)を参照。
+Sceneへ渡した画面情報は`ui_get_screen.screen.webmcp`、表示部品は`widgets[].metadata.webmcp`に出る。`widgets[].metadata.webmcp`は子Instanceの部品にも出る（keyは接頭辞付き）。子パッケージ直下の`webmcp`は`ui_get_screen.components[]`にinstance別で出る。stateSchemaも同ツールでプレビューを返し、省略時はstateSchemaTruncated=true。説明はツールの入力schema・許可action・認可を変更しない。ページ独自ツールや任意handlerの直接起動は省略する。[WebMCP契約](webmcp.md)を参照。
 
 ## 自然なURL
 
