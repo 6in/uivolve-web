@@ -197,3 +197,4 @@
 - 想定外: (1) turns.jsonl は利用枠拒否の試行を `attempt: 1` のまま記録するので、`attempt > 1` で数えるリトライ欄には 2 試行が現れない（試行数とターン数の差だけが痕跡）。(2) turn 17 の PROGRESS は `git ls-remote` / `glab mr list` が承認待ちになったと書くが turns.jsonl の turn 17 は `permission_denials: []`（記録を正とした）。(3) 本ターンでも `git -C <絶対パス> status` が承認待ちになった（ベア `git status` で代替）
 - やり直し: 0 回
 - 次への注意: 提案の要点は「既知の穴は要件と照らして F タスクに昇格する」「`gsd-lite-loop.sh --where` はベア名で呼ぶ」「実ブラウザの取得先を scratch にして無人ターンで取得してよい」「トークン輪番は直前の利用率を見る」の 4 つ。次のマイルストーンの research は VERIFICATION round 2 の残留リスク 1〜3 を入力にする
+- 承認待ち（ループ計測・turn 18）: 2 件 — Bash: bash, Bash: git

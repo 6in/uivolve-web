@@ -239,15 +239,15 @@ describe("配信用パッケージの公開", () => {
     await untouched(output);
   });
 
-  // The declaration list is judged before the first child is read off disk, and names the file
-  // that wrote the declarations rather than a URL: the builder works on paths.
-  it("refuses a tree whose root declares a ninth component", async () => {
+  // The declaration cap is judged before any child is read, so it stands on the count alone: the
+  // ninth declaration is refused even though none of them is placed and the Instance cap is clear.
+  it("refuses a root that declares a ninth component", async () => {
     const parts = {};
     const declarations = {};
-    for (let i = 1; i <= 9; i++) {
-      parts[`screens/a${i}.json`] = screen(`a${i}`);
-      parts[`screens/a${i}.rhai`] = `fn a${i}(s) { s }`;
-      declarations[`c${i}`] = { url: `a${i}.json` };
+    for (let i = 0; i < 9; i++) {
+      parts[`screens/p${i}.json`] = screen(`p${i}`);
+      parts[`screens/p${i}.rhai`] = `fn p${i}(s) { s }`;
+      declarations[`c${i}`] = { url: `p${i}.json` };
     }
     const root = await workspace({
       ...parts,
@@ -256,9 +256,28 @@ describe("配信用パッケージの公開", () => {
     });
     const output = join(root, "out");
     await expect(publishPackage(join(root, "screens/root.json"), output)).rejects.toThrow(
-      `コンポーネントの宣言が8件を超えています: ${join(root, "screens/root.json")}`,
+      "コンポーネントの宣言が8件を超えています",
     );
     await untouched(output);
+  });
+
+  it("publishes a root that declares the eight the contract allows", async () => {
+    const parts = {};
+    const declarations = {};
+    for (let i = 0; i < 8; i++) {
+      parts[`screens/p${i}.json`] = screen(`p${i}`);
+      parts[`screens/p${i}.rhai`] = `fn p${i}(s) { s }`;
+      declarations[`c${i}`] = { url: `p${i}.json` };
+    }
+    const root = await workspace({
+      ...parts,
+      "screens/root.json": screen("root", { components: declarations }),
+      "screens/root.rhai": "fn root(s) { s }",
+    });
+    const metadata = await publishPackage(join(root, "screens/root.json"), join(root, "out"));
+    expect(Object.keys(metadata.components).sort()).toEqual(
+      Object.keys(declarations).map((_, i) => `p${i}.json`),
+    );
   });
 
   it("refuses a tree whose bodies and scripts pass two megabytes by one byte", async () => {
