@@ -121,6 +121,55 @@ describe("raw ABI で読む受注ダッシュボード", () => {
     expect(shipped.data.revision).toBe(2);
     for (const text of ["出荷済", "SO-002"]) expect(shipped.data.state.notice).toContain(text);
   });
+
+  it("summarises both placements in components, in instance byte order", () => {
+    expect(load().ok).toBe(true);
+    const { components } = raw({ op: "layout", width: 800 }).data;
+    // `open` before `shipped`: the instance names are ordered as bytes, so `o` < `s`.
+    expect(components).toEqual([
+      {
+        instance: "open",
+        id: "order-list",
+        title: child.title,
+        webmcp: child.webmcp,
+        hidden: false,
+      },
+      {
+        instance: "shipped",
+        id: "order-list",
+        title: child.title,
+        webmcp: child.webmcp,
+        hidden: false,
+      },
+    ]);
+    // One package, two placements: the declaration of the part is the same for both.
+    expect(components[1].webmcp).toEqual(components[0].webmcp);
+  });
+
+  it("carries the node declaration of the part into the widgets of both placements", () => {
+    expect(load().ok).toBe(true);
+    const { widgets } = raw({ op: "layout", width: 800 }).data;
+    // The grid of the part expands into a header and its rows; every one of them carries it.
+    const grid = (prefix) =>
+      widgets.filter(
+        (w) => w.key.startsWith(`${prefix}orders`) && Object.hasOwn(w.config, "webmcp"),
+      );
+    const open = grid("open/");
+    const shipped = grid("shipped/");
+    const declared = { description: "行を選ぶと親へselectedを通知する。", tags: ["select"] };
+    const keys = widgets.map((w) => w.key).join(" ");
+    expect(open.length, keys).toBeGreaterThanOrEqual(3);
+    expect(shipped.length, keys).toBeGreaterThanOrEqual(3);
+    for (const w of open) expect(w.config.webmcp, w.key).toEqual(declared);
+    for (const w of shipped) expect(w.config.webmcp, w.key).toEqual(declared);
+    expect(shipped[0].config.webmcp, keys).toEqual(open[0].config.webmcp);
+  });
+
+  it("keeps the screen webmcp at the root, which this dashboard never declares", () => {
+    expect(load().ok).toBe(true);
+    expect(parent.webmcp).toBeUndefined();
+    expect(raw({ op: "layout", width: 800 }).data.webmcp).toBeUndefined();
+  });
 });
 
 describe("UiRuntime 経由の受注ダッシュボード", () => {

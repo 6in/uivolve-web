@@ -3,7 +3,7 @@
 // base build from before composition cannot load one at all -- there is nothing to compare against.
 // This script covers that gap by asserting the composed behavior of a single WASM directly: the
 // shipped order-dashboard demo for the happy path, inline fixtures for the effect functions a
-// child may now call and the tool surface it still may not publish, and the shipped parts-lab
+// child may now call and the tool surface it now publishes, and the shipped parts-lab
 // demo for the whole effect round trip -- every child effect naming its instance, every
 // completion reaching the instance that asked for it, and every misaddressed completion being
 // refused without moving the screen.
@@ -93,6 +93,23 @@ function isRefused(response, texts) {
 function equals(actual, expected, what) {
   return actual === expected ? [] : [`${what}: ${expected} を期待したが ${JSON.stringify(actual)}`];
 }
+// serde writes a response object with its keys in alphabetical order, so canonicalizing both
+// sides is what lets one expectation compare a whole structure against a literal written any way
+// round -- and report the two shapes side by side when they differ.
+function canonical(value) {
+  if (value === undefined) return "undefined";
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  return `{${Object.keys(value)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`)
+    .join(",")}}`;
+}
+function deepEquals(actual, expected, what) {
+  const found = canonical(actual);
+  const want = canonical(expected);
+  return found === want ? [] : [`${what}: ${want} を期待したが ${found}`];
+}
 function hasAll(actual, texts, what) {
   const text = typeof actual === "string" ? actual : "";
   return texts
@@ -103,6 +120,12 @@ function hasAll(actual, texts, what) {
 }
 function widgetKeys(response) {
   return (response?.data?.widgets ?? []).map((widget) => widget.key);
+}
+function widgetConfig(response, key) {
+  return (response?.data?.widgets ?? []).find((widget) => widget.key === key)?.config;
+}
+function keysUnder(response, prefix) {
+  return widgetKeys(response).filter((key) => key.startsWith(prefix));
 }
 // Both placements of the same part are laid out, so every key has to carry its own prefix.
 function composedKeys(response) {
@@ -270,8 +293,43 @@ const CALL_AT_LOAD = `fn init(s) { s } ${DONE} fn run(s, e) { http_get("load"); 
 const CALL_THROUGH_A_POINTER = `fn init(s) { s } ${DONE} fn run(s, e) { let f = Fn("http_get"); f.call("load"); s.value = 1; s }`;
 // A dialog is screen-wide, so the effect the host receives says which instance asked for it.
 const ASK_FOR_A_DIALOG = `fn init(s) { s } ${DONE} fn run(s, e) { alert("こんにちは"); s }`;
-// The tool surface stays the root's: a child publishing one is still refused at load.
-const CHILD_WITH_WEBMCP = { ...EFFECT_CHILD, webmcp: { description: "部品" } };
+// A child describes itself for the tool surface too: the package describes the instance and the
+// node describes the one part a client may act on.
+const CHILD_WITH_WEBMCP = {
+  ...EFFECT_CHILD,
+  webmcp: { description: "部品" },
+  ui: {
+    ...EFFECT_CHILD.ui,
+    items: EFFECT_CHILD.ui.items.map((item) =>
+      item.itemId === "fire" ? { ...item, webmcp: { description: "呼ぶ" } } : item,
+    ),
+  },
+};
+// The same child behind a `visibleBind` of the parent, so the published summary can be read both
+// ways round: hidden with no widgets of its own at first, visible after the parent's button.
+const WEBMCP_PARENT = {
+  ...EFFECT_PARENT,
+  state: { shown: false },
+  ui: {
+    xtype: "container",
+    items: [
+      { xtype: "effectPart", itemId: "part", visibleBind: "shown" },
+      { xtype: "button", itemId: "show", text: "表示", handler: "show" },
+    ],
+  },
+};
+const WEBMCP_PARENT_SCRIPT = "fn init(s) { s } fn show(s, e) { s.shown = true; s }";
+// What `ui_get_screen.components` hands a client: the package's own id, title and description,
+// plus whether the parent is hiding the instance right now.
+const WEBMCP_SUMMARY = [
+  {
+    hidden: true,
+    id: "effect-part",
+    instance: "part",
+    title: "効果関数を呼ぶ部品",
+    webmcp: { description: "部品" },
+  },
+];
 
 function dialogEffect(response, instance) {
   const effects = response?.data?.effects ?? [];
@@ -310,11 +368,36 @@ function effectSequences() {
       ],
     },
     {
-      id: "child-webmcp-refused",
+      id: "child-webmcp-published",
       steps: [
-        loadStep("load", parent, bundleWith(CALL_AT_LOAD, CHILD_WITH_WEBMCP), (r) =>
-          isRefused(r, ["webmcp is not available in components"]),
+        loadStep(
+          "load",
+          { pkg: WEBMCP_PARENT, script: WEBMCP_PARENT_SCRIPT },
+          bundleWith(CALL_AT_LOAD, CHILD_WITH_WEBMCP),
+          isOk,
         ),
+        // Hidden by the parent, the instance is still summarized -- that is the whole point of
+        // `hidden`: a client reads what the screen holds without the widgets being laid out.
+        layoutStep("layout:800", 800, (r) => [
+          ...isOk(r),
+          ...deepEquals(r.data?.components, WEBMCP_SUMMARY, "data.components"),
+          ...deepEquals(keysUnder(r, "part/"), [], "part/ で始まる key"),
+          // The tool surface of the screen stays the root's, whatever the children describe.
+          ...equals(r.data?.webmcp, undefined, "data.webmcp"),
+        ]),
+        eventStep("event:show", "show", {}, (r) => [
+          ...isOk(r),
+          ...equals(r.data?.revision, 1, "revision"),
+        ]),
+        layoutStep("layout:800:shown", 800, (r) => [
+          ...isOk(r),
+          ...equals(r.data?.components?.[0]?.hidden, false, "components[0].hidden"),
+          ...deepEquals(
+            widgetConfig(r, "part/fire")?.webmcp,
+            { description: "呼ぶ" },
+            "part/fire の config.webmcp",
+          ),
+        ]),
       ],
     },
   ];
