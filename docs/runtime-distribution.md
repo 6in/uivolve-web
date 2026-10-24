@@ -104,6 +104,8 @@ Canvasの表示領域は**文書に接続してから描かれる**。ランタ�
 
 認証は既存の`ResourceClient`を共有する。`createApplication`の`authentication`、または起動後の`app.runtime.resources.setAuthentication(...)`で[JWT・リフレッシュ設定](authentication.md)を渡せる。トークンは公開する`app.json`やDSLに埋め込まない。認証付き配信では配信キャッシュを有効にしない。
 
+HTTP（安全でないコンテキスト）でも画面は読み込める。UUIDとSHA-256はブラウザの`crypto.randomUUID`・`crypto.subtle`が無くてもランタイム内の実装で求める。ただし、WebMCP・配信キャッシュ（`network-first`）・OPFSを使うstorage / files / OPFS転送は安全なコンテキスト（HTTPSかlocalhost）が必要。確認方法は`bun run test:insecure:browser`で、このマシンのIPのHTTPで配布版を開き、Chromiumで画面（WorkerモックAPIの画面と部品を含む画面）が表示されることを確かめる。初回は`bun scripts/test-insecure-browser.mjs --install`で作業ディレクトリの`.cache/ms-playwright/`にChromiumを取得する。
+
 ## 次の配布段階
 
 現在はリポジトリから生成する静的配布物で、同じ内容を[GitHub Release](github-publishing.md)の`runtime-v*`タグからtar.gzとWASM単体でも取得できる。npmの公開、`bunx uivolve-web init / serve / build`というCLI、アプリ用ビルドコマンドの一般化、ランタイムの自動更新はまだ提供していない。`package.json`は引き続きprivateで、公開操作も行わない。共通ランタイムの切り出しと静的利用の検証を先に完了させた。

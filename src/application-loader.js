@@ -2,11 +2,16 @@ import { OpfsDirectory, withFileLock } from "./opfs.js";
 import { packageFormat, parsePackage } from "./package-format.js";
 import { httpUrl } from "./http-policy.js";
 import { instanceTable, scopeProblem } from "./component-tree.js";
+import { sha256Hex } from "./sha256.js";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
+// `crypto.subtle` exists only in a secure context, so it is looked up on every call and the
+// plain-JS digest stands in when it is missing.
 export async function sha256(bytes) {
-  return [...new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", bytes))]
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) return sha256Hex(bytes);
+  return [...new Uint8Array(await subtle.digest("SHA-256", bytes))]
     .map((n) => n.toString(16).padStart(2, "0"))
     .join("");
 }

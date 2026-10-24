@@ -32,8 +32,8 @@ slug=<slug>
 - `$TARGET` = コードを書く対象リポジトリ。`.` なら今いるリポジトリ（従来どおり）。`work/<name>` なら
   gsd-control 形で、**コードの読み書き・テスト・コミット・ブランチ・マージ・push は `git -C <target>` /
   `cd <target>` で対象側に**、**`$MS/` の成果物と state.json はこのリポジトリ（制御側）に**コミットする。
-  対象側の `CLAUDE.md` / `AGENTS.md` / README は自動では読み込まれないので、`<target>/CLAUDE.md` 等が
-  あれば最初に読んで規約に従う。`<target>` の中身を制御側に `git add` しない（gitignore 済み）
+  対象側の指示ファイルと README は自動では読み込まれないので、最初に `<target>/AGENTS.md`（全エンジン共通の本体。
+  無ければ `<target>/CLAUDE.md`）を読んで規約に従う。CLAUDE.md の `@AGENTS.md` より下は Claude 固有の指示。`<target>` の中身を制御側に `git add` しない（gitignore 済み）
 - `.gsd-lite/logs/` と `.gsd-lite/reflect/` はどちらの形でも共通の場所（マイルストーンをまたいで蓄積）。
   一時ファイル（プローブ用スクリプト等）が必要なら `/tmp` ではなく `.gsd-lite/logs/<slug>/scratch/` に置く
   （`/tmp` への書き込みは allowlist 外で権限拒否になる。logs/ は gitignore 済み）
@@ -50,7 +50,7 @@ slug=<slug>
    未完了タスクが 1 つもなければ実装せず、`phase: "verify"` /
    `next_command: "/gsd-lite-verify"` にして共通手順で終了する
 2. タスクの完了基準・対象ファイルに従って `$TARGET` 配下で実装する。必要な範囲のコードだけ読む
-   （`$TARGET/CLAUDE.md` / `AGENTS.md` があれば規約に従う）
+   （`$TARGET/AGENTS.md`、無ければ `CLAUDE.md` の規約に従う）
    - **PLAN と実物が食い違ったら**（引数名・件数・期待するエラーコードなど）: 要件・決定に
      反しない範囲なら**実物と実測を正とし**、PLAN.md の該当箇所を直して PROGRESS に
      `PLAN 訂正: <旧> → <新>（根拠）` と残す。要件・決定に触れる食い違いなら BLOCKED にする。

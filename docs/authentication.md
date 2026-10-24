@@ -38,9 +38,20 @@ const script = await resources.text(new URL(screen.script, packageUrl));
 engine.load(screen, script);
 ```
 
-固定トークンは`getToken`の代わりに`token: accessToken`で渡せる。両方は指定しない。`getToken`は許可されたHTTP要求ごとに呼び、現在のトークンを返す。受け取ったAbortSignalを認証機構側でも扱う。JWTの内容はデコードせず、ヘッダーに使えるBearer文字列の形式と空値だけを検査する。
+JWTモードでは画面・Rhai・テーマの取得も許可リストで検査されるので、`setAuthentication`を直接呼ぶホストはページ（画面の配信元）のオリジンを`allowedOrigins`か`publicOrigins`に入れる。APIを別オリジンに置き、公開の静的ファイルとして配る画面にはJWTを送らない例:
 
-`getAuthentication()`は`mode / allowedOrigins`と、自動更新設定がある場合に`refresh: { url, format }`を返す。トークンは返さない。認証なしではAuthorizationヘッダーを付けず、従来どおり同一オリジンのCookieをブラウザが扱う。JWTモードは`credentials: "omit"`でCookieやブラウザのHTTP認証を併用しない。
+```js
+resources.setAuthentication({
+  mode: "jwt",
+  getToken: async ({ signal }) => authSession.getAccessToken({ signal }),
+  allowedOrigins: ["https://api.example.com"], // JWTを付けて送る（HTTPアダプターのAPI呼び出し）
+  publicOrigins: ["https://ui.example.com"], // JWTを付けずに取得する（画面・Rhai・テーマ）
+});
+```
+
+固定トークンは`getToken`の代わりに`token: accessToken`で渡せる。両方は指定しない。`getToken`は`allowedOrigins`への要求ごとに呼び、現在のトークンを返す（`publicOrigins`への要求では呼ばない）。受け取ったAbortSignalを認証機構側でも扱う。JWTの内容はデコードせず、ヘッダーに使えるBearer文字列の形式と空値だけを検査する。
+
+`getAuthentication()`は`mode`・`allowedOrigins`・`publicOrigins`と、自動更新設定がある場合に`refresh: { url, format }`を返す。認証なしでは`publicOrigins: []`。トークンは返さない。認証なしではAuthorizationヘッダーを付けず、従来どおり同一オリジンのCookieをブラウザが扱う。JWTモードは`credentials: "omit"`でCookieやブラウザのHTTP認証を併用しない。
 
 WASMファイル自体も認証付きで取得するホストでは、起動前にResourceClientへ設定して渡す。
 
@@ -93,12 +104,26 @@ OAuth形式では`refresh.clientId`に公開クライアントIDを追加でき�
 
 ## 送信先と失敗時の動作
 
-- 許可リストはscheme・host・portの完全一致。パス・query・fragment・ユーザー情報付きオリジンは設定できない。既定はbaseUrlのオリジン。
-- JWTモードでは許可されていないオリジンへの取得を送信前に拒否する。パッケージ内のscript URLから送信先を自動追加しない。
+- 許可リストはscheme・host・portの完全一致。パス・query・fragment・ユーザー情報付きオリジンは設定できない。`allowedOrigins`の既定はbaseUrlのオリジン。`publicOrigins`の既定は空で、指定しなければJWTなしで取得するオリジンは無い。
+- JWTモードでは`allowedOrigins`にも`publicOrigins`にも無いオリジンへの取得を送信前に拒否する。パッケージ内のscript URLから送信先を自動追加しない。
 - JWTはHTTPSで送る。ローカル開発の`localhost / 127.0.0.1 / [::1]`のHTTPだけ例外とする。
+- `publicOrigins`はJWTを付けずに取得するオリジン。そこへの取得はJWTを付けず、トークンを取得せず、401でもトークンを更新・再試行しない。401は経路ごとの通常のエラーになる（画面・Rhai・テーマの取得は「HTTP 401: 認証が必要、またはJWTが無効・期限切れです」、HTTPアダプターはRhaiへ`HTTP_401`、RPCは`RPC HTTP 401`）。fetchはJWTモードの他の取得と同じ`credentials: "omit"`・`cache: "no-store"`・リダイレクト拒否。
+- `publicOrigins`にはHTTPのオリジンも書ける。`allowedOrigins`は従来どおりHTTPS必須（ローカル開発を除く）。`publicOrigins`の設定エラー: 配列でなければ「JWTなしで取得するオリジンは配列で指定してください」。パス・query・fragment付きは「JWTなしで取得するオリジンにはパスを含まないオリジンを指定してください」。ユーザー情報付きは「認証情報を含まないHTTP / HTTPSのURLを指定してください」。URLでない値・空き要素は「HTTP / HTTPSのURLを指定してください」。読み取り中に例外を投げる値（getter・Proxy）は、認証設定のどのフィールドでも「認証設定を読み取れませんでした」。
+- `allowedOrigins`と`publicOrigins`の両方にあるオリジンは`allowedOrigins`が優先し、JWTを付ける。
+- HTTPの`publicOrigins`から取得した画面・Rhaiは経路上で改ざんされうる。改ざんされた画面も`allowedOrigins`へJWT付きで要求できる。本番で画面・Rhaiを`publicOrigins`から配るならHTTPSにする。
+- `mode: "none"`と`publicOrigins`（空配列も）の組合せは設定エラー「publicOriginsはJWTモードでだけ指定できます」。
+- `publicOrigins`があってもJWTモードなので、配信キャッシュ（network-first）は使えない（「配信キャッシュは認証なしの場合に利用できます」）。
 - JWT付き取得は`cache: "no-store"`、`redirect: "error"`。同一オリジンを含めリダイレクトに追従せず、最終URLを直接指定する。認証なしは従来どおり追従する。
 - 401は任意のリフレッシュ設定があれば上記の更新・再試行を行い、403は権限エラーとして表示する。JWTを外した再試行やログインページへの遷移は行わない。
 - 取得やコンパイルの失敗は表示中の画面・状態・revision、適用中のテーマを維持する。取得中はデモの認証設定を変更できない。APIで設定を変更した場合、共通クライアントで読み込み中の画面・スクリプト・テーマの応答は破棄する。`fetch()`で返したResponseを利用するホストは、その後の本文読み込み・適用を管理する。
+
+送信前に拒否した場合のエラーは、拒否したオリジンと許可リストを示す。
+
+```text
+このURLはJWTの送信先として許可されていません: https://x.example.com（許可: https://api.example.com、JWTなし: https://ui.example.com）
+```
+
+文言はオリジンと許可リストだけで、パス・query・トークンを含まない。`publicOrigins`が空なら`、JWTなし: …`の部分は無い。この文言は、画面（部品の子パッケージを含む）・Rhai・テーマ・WASM・`app.json`の取得、Rhaiの宣言GET（結果の`error`）、Unary RPC、ホストが直接呼ぶ`resources.fetch / text / bytes`にそのまま届く。宣言GETとRPCではRhaiの結果に入るので、許可リストのオリジンがstateに残りうる。汎用文言になるのはHTTPアダプターとOPFS転送だけで、Rhaiへは「HTTP通信・認証に失敗しました」を返す（`transferRequest`を直接呼ぶホストには「HTTP転送に失敗しました」）。
 
 Rhaiの宣言GETとHTTPアダプター、Unary RPC、画面が参照するRPC Descriptorにも共通ResourceClientを使う。RPCのPOSTで401後のrefresh・再送を許可するのは`idempotent: true`の宣言だけ。事前の期限更新は従来通り。公開ソースのOPFS配信キャッシュはJWTモードでは無効。[RPC・キャッシュ契約](files-cache-rpc.md)を参照する。
 

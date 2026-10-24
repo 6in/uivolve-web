@@ -5,7 +5,7 @@ import { TokenSession } from "./token-session.js";
 export class ResourceClient {
   #base;
   #fetch;
-  #policy = { mode: "none", allowedOrigins: [] };
+  #policy = { mode: "none", allowedOrigins: [], publicOrigins: [] };
 
   // Native browser fetch needs its Window receiver, even when stored on this client.
   constructor({ baseUrl, fetch: fetcher = (...args) => globalThis.fetch(...args) }) {
@@ -13,18 +13,24 @@ export class ResourceClient {
     this.#fetch = fetcher;
   }
 
-  setAuthentication({
-    mode = "none",
-    token,
-    getToken,
-    allowedOrigins = [this.#base.origin],
-    refresh,
-    expiresIn,
-  } = {}) {
+  setAuthentication(options) {
+    let copy;
+    try {
+      // Host getters/proxies may throw anything, even messages that carry credentials.
+      copy = copyAuthentication(options, this.#base.origin);
+    } catch {
+      throw new Error("認証設定を読み取れませんでした");
+    }
+    if (!copy) throw new Error("認証設定はオブジェクトで指定してください");
+    const { mode, token, getToken, allowedOrigins, publicOrigins, refresh, expiresIn } = copy;
+    if (mode !== "none" && mode !== "jwt")
+      throw new Error("認証モードはnoneまたはjwtを指定してください");
     let policy;
     if (mode === "none") {
-      policy = { mode, allowedOrigins: [] };
-    } else if (mode === "jwt") {
+      if (publicOrigins !== undefined)
+        throw new Error("publicOriginsはJWTモードでだけ指定できます");
+      policy = { mode, allowedOrigins: [], publicOrigins: [] };
+    } else {
       if (!Array.isArray(allowedOrigins) || !allowedOrigins.length)
         throw new Error("JWTの送信先オリジンを指定してください");
       const origins = allowedOrigins.map((value) => {
@@ -35,6 +41,7 @@ export class ResourceClient {
           throw new Error("JWTの送信先にはHTTPSを指定してください（ローカル開発を除く）");
         return url.origin;
       });
+      const anonymous = publicOriginList(publicOrigins);
       if (getToken !== undefined && (typeof getToken !== "function" || token !== undefined))
         throw new Error("tokenまたはgetTokenのどちらか一方を指定してください");
       if (getToken !== undefined && refresh !== undefined)
@@ -47,10 +54,11 @@ export class ResourceClient {
       policy = {
         mode,
         allowedOrigins: [...new Set(origins)],
+        publicOrigins: anonymous,
         getToken: session ? undefined : (getToken ?? (() => fixedToken)),
         session,
       };
-    } else throw new Error("認証モードはnoneまたはjwtを指定してください");
+    }
     const previous = this.#policy;
     this.#policy = policy;
     previous.session?.invalidate();
@@ -62,6 +70,7 @@ export class ResourceClient {
     return {
       mode: this.#policy.mode,
       allowedOrigins: [...this.#policy.allowedOrigins],
+      publicOrigins: [...this.#policy.publicOrigins],
       ...(this.#policy.session ? { refresh: this.#policy.session.metadata() } : {}),
     };
   }
@@ -126,10 +135,12 @@ export class ResourceClient {
     const policy = this.#policy;
     this.#check(policy, signal);
     const authenticated = policy.mode === "jwt";
+    // allowedOrigins wins when an origin is declared in both lists.
+    const bearer = authenticated && policy.allowedOrigins.includes(url.origin);
+    if (authenticated && !bearer && !policy.publicOrigins.includes(url.origin))
+      throw new Error(rejectedOrigin(url.origin, policy));
     let credential;
-    if (authenticated) {
-      if (!policy.allowedOrigins.includes(url.origin))
-        throw new Error("このURLはJWTの送信先として許可されていません");
+    if (bearer) {
       try {
         credential = policy.session
           ? await policy.session.access({ signal })
@@ -146,7 +157,7 @@ export class ResourceClient {
       credential.token = bearerToken(credential.token);
     }
     let response = await this.#request(url, policy, credential?.token, signal, options, attempt);
-    if (response.status === 401 && policy.session && retryAuthentication) {
+    if (response.status === 401 && bearer && policy.session && retryAuthentication) {
       await response.body?.cancel().catch(() => {});
       try {
         credential = await policy.session.renew(credential.generation, { signal });
@@ -233,6 +244,58 @@ export class ResourceClient {
     return { response, bytes };
   }
 }
+
+// Reads every host value once; validation then runs on plain copies that cannot throw.
+// Array.from turns holes into undefined so they are validated like any other element.
+function copyAuthentication(options = {}, baseOrigin) {
+  if (options === null || typeof options !== "object" || Array.isArray(options)) return undefined;
+  const {
+    mode = "none",
+    token,
+    getToken,
+    allowedOrigins = [baseOrigin],
+    publicOrigins,
+    refresh,
+    expiresIn,
+  } = options;
+  const list = (value) => (Array.isArray(value) ? Array.from(value) : value);
+  return {
+    mode,
+    token,
+    getToken,
+    allowedOrigins: list(allowedOrigins),
+    publicOrigins: list(publicOrigins),
+    refresh:
+      refresh && typeof refresh === "object" && !Array.isArray(refresh)
+        ? {
+            url: refresh.url,
+            token: refresh.token,
+            format: refresh.format,
+            clientId: refresh.clientId,
+          }
+        : refresh,
+    expiresIn,
+  };
+}
+
+// Origins fetched without JWT in JWT mode; plain HTTP is allowed because no token is sent.
+function publicOriginList(values = []) {
+  if (!Array.isArray(values)) throw new Error("JWTなしで取得するオリジンは配列で指定してください");
+  const origins = values.map((value) => {
+    const url = httpUrl(value);
+    if (url.pathname !== "/" || url.search || url.hash)
+      throw new Error("JWTなしで取得するオリジンにはパスを含まないオリジンを指定してください");
+    return url.origin;
+  });
+  return [...new Set(origins)];
+}
+
+// Origin only: the rejected path, query and fragment may carry secrets.
+function rejectedOrigin(origin, { allowedOrigins, publicOrigins }) {
+  const anonymous = publicOrigins.length ? `、JWTなし: ${publicOrigins.join("、")}` : "";
+  return `このURLはJWTの送信先として許可されていません: ${origin}（許可: ${allowedOrigins.join("、")}${anonymous}）`;
+}
+
 export async function readLimitedBytes(response, { signal, limit = 1_000_000 } = {}) {
   signal?.throwIfAborted();
   if (Number(response.headers.get("Content-Length")) > limit) {

@@ -26,6 +26,8 @@
 - 画面合成（`components`）は子も非同期効果を出せる。子のeffectには`instance`が付き、完了opの`instance`で同じInstanceへ返る。子を含む画面も配信キャッシュ（`network-first`）で配信・復元できる（マニフェストは子を含む木で`version: 2`）。子の`window`は段階7以降の将来設計で、子に`window`を書くコードを生成しない。子の`webmcp`（パッケージ直下・部品）は生成してよく、`ui_get_screen.components[]`と`widgets[].metadata.webmcp`に出る。
 - host_call、HostEffects、HTTPアダプター、WebWorkerの宣言的モックAPIは実装済み。WebSocket、カメラ/マイク、Bluetooth、PGlite/DuckDBアダプター、host_event、host_closeは将来設計。ブラウザ自体のAPIが存在することと、この製品のDSLで使えることを区別する。
 - 日付・時計、UUID v4と整数乱数（ホスト供給の`uuid_v4()`・`random_int(min, max)`）、10進文字列の金額、Unicodeの正規化・書記素処理は登録済み。専用かな変換・文字種検査は後続。日時をJSのDateオブジェクト、金額をFLOATとして扱うコード、冪等キーをJSの`crypto.randomUUID()`で作るコードを生成しない。
+- JWTモードでは画面・Rhai・テーマの取得も許可リストで検査される。ホスト起動コードで画面の配信元originを`allowedOrigins`か`publicOrigins`（JWTを付けずに取得する）に入れる。
+- HTTPのIPで開いても画面は動くが、WebMCP・配信キャッシュ・OPFS（storage / files / OPFS転送）は使えない（安全なコンテキスト＝HTTPSかlocalhostが必要）。
 - 比較デモの画面一覧はsrc/screen-catalog.jsから生成する。外部アプリはapp.jsonのpagesを使う。画面追加のためだけにデモindex.htmlの選択肢を手動追加しない。
 
 ## コード生成時に確定する項目

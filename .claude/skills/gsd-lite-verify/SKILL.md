@@ -31,8 +31,8 @@ slug=<slug>
 - `$TARGET` = コードを書く対象リポジトリ。`.` なら今いるリポジトリ（従来どおり）。`work/<name>` なら
   gsd-control 形で、**コードの読み書き・テスト・コミット・ブランチ・マージ・push は `git -C <target>` /
   `cd <target>` で対象側に**、**`$MS/` の成果物と state.json はこのリポジトリ（制御側）に**コミットする。
-  対象側の `CLAUDE.md` / `AGENTS.md` / README は自動では読み込まれないので、`<target>/CLAUDE.md` 等が
-  あれば最初に読んで規約に従う。`<target>` の中身を制御側に `git add` しない（gitignore 済み）
+  対象側の指示ファイルと README は自動では読み込まれないので、最初に `<target>/AGENTS.md`（全エンジン共通の本体。
+  無ければ `<target>/CLAUDE.md`）を読んで規約に従う。CLAUDE.md の `@AGENTS.md` より下は Claude 固有の指示。`<target>` の中身を制御側に `git add` しない（gitignore 済み）
 - `.gsd-lite/logs/` と `.gsd-lite/reflect/` はどちらの形でも共通の場所（マイルストーンをまたいで蓄積）。
   一時ファイル（プローブ用スクリプト等）が必要なら `/tmp` ではなく `.gsd-lite/logs/<slug>/scratch/` に置く
   （`/tmp` への書き込みは allowlist 外で権限拒否になる。logs/ は gitignore 済み）
@@ -43,7 +43,7 @@ slug=<slug>
 
 1. `$MS/state.json` から `branch.base` / `verify_round` / `verify_round_max` を
    読み、`git -C $TARGET diff <branch.base>...HEAD` でマイルストーン全体の差分（対象リポジトリのコード）を
-   対象にする。`$TARGET/CLAUDE.md` / `AGENTS.md` があれば規約もレビュー観点に含める
+   対象にする。`$TARGET/AGENTS.md`（無ければ `CLAUDE.md`）の規約もレビュー観点に含める
 2. `REQUIREMENTS.md` の受け入れ基準・PLAN.md の完了基準と突き合わせて検証する:
    - **コードレビュー**: バグ / 設計の歪み / テストの妥当性（テストが完了基準を
      実際に検証しているか）/ 要件の取りこぼし

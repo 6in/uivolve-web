@@ -143,7 +143,11 @@ it("defaults to CORS and no Bearer header, preserving public HTTP and redirect b
     });
   }
   expect(fetcher.mock.calls[0][0].href).toBe(`${baseUrl}screens/app.json`);
-  expect(client.getAuthentication()).toEqual({ mode: "none", allowedOrigins: [] });
+  expect(client.getAuthentication()).toEqual({
+    mode: "none",
+    allowedOrigins: [],
+    publicOrigins: [],
+  });
 });
 
 it("sends Bearer JWT to allowed screen/script/theme origins, and clears it when disabled", async () => {

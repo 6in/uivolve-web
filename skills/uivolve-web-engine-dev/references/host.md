@@ -17,6 +17,7 @@
 - 共通の取得・状態・描画・effectsは`src/runtime.js`、独立アプリの設定・ルーティングは`src/application.js`、デモの一覧・編集・計測は`src/main.js`。デモ用DOMや画面カタログを共通ランタイムへ持ち込まない。CSSは`src/runtime.css`で表示領域へ限定する。[配布契約](../../../docs/runtime-distribution.md)を維持する。
 - HTTP、保存、ファイル、RPC、ダイアログの準備と容量確認が通ってからstate/effectsを確定する。新しい依頼種別ではホスト側の振り分けと完了ABIも接続する。
 - JWTはResourceClient/TokenSessionが保持し、WASM、state、Sceneへ渡さない。CORSはサーバーの設定も必要。更新・401再試行・同時要求・中止の契約を維持する。
+- JWTモードの送信先は`url.origin`で判定する。`allowedOrigins`のoriginにはJWTを付ける。`publicOrigins`のoriginへはJWTを付けず、トークン取得も401時の更新もしない。両方にあるoriginは`allowedOrigins`を優先する。どちらにも宣言の無いoriginは送信前に拒否する。その拒否の文言はoriginと許可リストだけを含み（パス・query・トークンを含めない）、画面・Rhai・テーマ・WASM・`app.json`の取得、Rhaiの宣言GET、Unary RPC、ホストが直接呼ぶ`resources.fetch / text / bytes`にはそのまま届く（宣言GET・RPCではRhaiの結果を通じてstateに残りうる）。汎用の文言になるのはHTTPアダプターと転送だけ。
 - 候補のエンジン/画面の取得・load成功後に置き換える。失敗時は現在の画面とテーマを保つ。WASMの再取得とページJSの再読み込みを区別する。
 - OPFSは名前付き領域・ファイル排他・バッファ寿命を維持する。配信キャッシュは公開ソースのnetwork-firstで、完全なオフライン起動を保証しない。
 - WebMCPは通常イベントと同じWASM検証を通す。screen token/revision、可視性、readOnly/disabled、モーダル遮断を維持する。説明メタデータを認可へ転用しない。未対応ブラウザでも通常UIを動かす。

@@ -15,6 +15,7 @@ import { RpcClient } from "./rpc-client.js";
 import { PageEffects } from "./page-effects.js";
 import { packageFormat } from "./package-format.js";
 import { componentScope, instanceTable } from "./component-tree.js";
+import { uuidV4 } from "./random.js";
 
 function prepareScreen(definition, source, clock) {
   const screen = structuredClone(definition);
@@ -389,7 +390,7 @@ export class UiRuntime {
     this.screen = screen;
     this.descriptors = descriptors;
     this.components = bundled;
-    this.screenToken = crypto.randomUUID();
+    this.screenToken = uuidV4();
     this.packageUrl = source;
     this.hostEffects.resetInstances(hostOperations);
     this.httpEffects.resetInstances(urls);

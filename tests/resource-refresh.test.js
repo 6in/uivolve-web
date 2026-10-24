@@ -358,7 +358,11 @@ it("aborts refresh on logout and prevents a late response from restoring credent
   reply.resolve(json({ accessToken: NEXT, refreshToken: "rotated" }));
   await expect(pending).rejects.toThrow(/認証設定が変更/);
   expect(await client.text("public.json")).toBe("public");
-  expect(client.getAuthentication()).toEqual({ mode: "none", allowedOrigins: [] });
+  expect(client.getAuthentication()).toEqual({
+    mode: "none",
+    allowedOrigins: [],
+    publicOrigins: [],
+  });
   expect(fetcher.mock.lastCall[1].headers.has("Authorization")).toBe(false);
 });
 

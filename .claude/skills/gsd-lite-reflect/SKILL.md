@@ -33,8 +33,8 @@ slug=<slug>
 - `$TARGET` = コードを書く対象リポジトリ。`.` なら今いるリポジトリ（従来どおり）。`work/<name>` なら
   gsd-control 形で、**コードの読み書き・テスト・コミット・ブランチ・マージ・push は `git -C <target>` /
   `cd <target>` で対象側に**、**`$MS/` の成果物と state.json はこのリポジトリ（制御側）に**コミットする。
-  対象側の `CLAUDE.md` / `AGENTS.md` / README は自動では読み込まれないので、`<target>/CLAUDE.md` 等が
-  あれば最初に読んで規約に従う。`<target>` の中身を制御側に `git add` しない（gitignore 済み）
+  対象側の指示ファイルと README は自動では読み込まれないので、最初に `<target>/AGENTS.md`（全エンジン共通の本体。
+  無ければ `<target>/CLAUDE.md`）を読んで規約に従う。CLAUDE.md の `@AGENTS.md` より下は Claude 固有の指示。`<target>` の中身を制御側に `git add` しない（gitignore 済み）
 - `.gsd-lite/logs/` と `.gsd-lite/reflect/` はどちらの形でも共通の場所（マイルストーンをまたいで蓄積）。
   一時ファイル（プローブ用スクリプト等）が必要なら `/tmp` ではなく `.gsd-lite/logs/<slug>/scratch/` に置く
   （`/tmp` への書き込みは allowlist 外で権限拒否になる。logs/ は gitignore 済み）
@@ -63,6 +63,9 @@ slug=<slug>
    Codex は `total_tokens` だけ）/ `cost_usd` / `num_turns` / `permission_denials`（承認待ちで拒否された
    ツール名）/ `permission_denial_heads`（ツール名 ＋ Bash ならコマンドの先頭 1 語）/ `permission_denial_inputs`（入力の先頭）/
    `rate_limit`（利用枠の使用率）も入る。無い行は「記録なし」として扱い、推定で埋めない。
+   バックグラウンド実行の完了通知で再開したターンは、ループが全区間を合計して記録し、`segments` に区間数を残す
+   （`segments` が無い行は 2026-10-23 より前の記録で、`usage` / `num_turns` / `permission_denials` が最後の区間だけの
+   ことがある。`cost_usd` は当時から全区間の累積）。`segments` が無い行の過小な値を「作業量が少ない」根拠にしない
    **承認待ちの件数は turns.jsonl の `permission_denials` を正とする**。ループは 1 件以上あった進んだターンについて
    PROGRESS の末尾に `- 承認待ち（ループ計測・turn N）: K 件 — …` を追記してコミットする（`gsd-lite(loop):`）。
    エージェントの自己申告と食い違うのは、サブエージェントの分や失敗した試行の分が自己申告に入らないためで、指摘の対象にしない
@@ -137,10 +140,16 @@ slug=<slug>
 
 - [ ] <PLAN 粒度 / allowlist / スキル・テンプレート / discuss で聞くべきこと などの具体的な変更>
       （根拠になった Minus / Interesting）
+- [ ] <どのエンジンにも守ってほしい作業上の決まり 1 行>（根拠: ...）（AGENTS.md 候補）
 ```
 
 - 「次回への提案」は plan と discuss が読む。**具体的で、やるかどうかを判断できる粒度**で書く
   （「もっと注意する」は不可。「T3 のような DB マイグレーション込みタスクは 2 分割する」は可）
+- 提案のうち、マイルストーンをまたいで**このプロジェクトで繰り返し効く作業上の決まり**（コマンドの呼び方、
+  テストの走らせ方、触ってはいけないファイルなど。どのエンジンのターンにも守ってほしいもの）には、
+  末尾に `（AGENTS.md 候補）` と付ける。discuss がそれを採否確認し、採ったものを対象の AGENTS.md
+  （全エンジン共通の指示の本体）に足す。reflect 自身は AGENTS.md を書き換えない。既に AGENTS.md に
+  書かれているのに守られなかった決まりは、候補にせず Minus に「AGENTS.md にあるが守られなかった」と書く
 - 記録に矛盾があれば（PROGRESS が成功と言うが turns.jsonl は 3 試行など）それ自体を
   Interesting に書く
 - 書けるほどの記録がない（PROGRESS が空、turns.jsonl がない等）場合は、その事実と

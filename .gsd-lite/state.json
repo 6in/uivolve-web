@@ -4,7 +4,8 @@
   "phase_engines": {},
   "codex": {
     "model": {},
-    "reasoning_effort": {}
+    "reasoning_effort": {},
+    "sandbox": ""
   },
   "opencode": {
     "model": {},
@@ -22,11 +23,11 @@
     "name": "",
     "path": "."
   },
-  "milestone": "http-error-body",
+  "milestone": "ui-bridge-requests-2",
   "phase": "done",
   "next_command": "DONE",
   "branch": {
-    "name": "gsd-lite/http-error-body",
+    "name": "gsd-lite/ui-bridge-requests-2",
     "base": "main"
   },
   "research": {
@@ -40,17 +41,17 @@
       "../ui-bridge-component"
     ]
   },
-  "turn": 18,
+  "turn": 13,
   "max_turns": 60,
   "retry_max": 2,
   "verify_round": 1,
   "verify_round_max": 3,
   "model": {
-    "research": "claude-fable-5-1",
-    "plan": "claude-fable-5-1",
-    "impl": "claude-opus-5",
-    "verify": "claude-fable-5-1",
-    "reflect": "claude-fable-5-1"
+    "research": "claude-opus-5-5",
+    "plan": "claude-opus-5-5",
+    "impl": "claude-opus-5-5",
+    "verify": "claude-opus-5-5",
+    "reflect": "claude-opus-5-5"
   },
-  "updated_at": "2026-10-19T12:24:36+09:00"
+  "updated_at": "2026-10-24T21:16:55+09:00"
 }

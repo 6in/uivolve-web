@@ -1,6 +1,6 @@
 # 作業依頼: ui-bridge からの要望 その 2（安全でないコンテキスト・JWT の送信先）
 
-起票: 2026-10-24（ohya と ui-bridge-component のセッションで作成）/ 状態: 未着手
+起票: 2026-10-24（ohya と ui-bridge-component のセッションで作成）/ 状態: 実装済み（Release 待ち）
 依頼元: `~/workspaces/dev/fre-components/ui-bridge-component/`（M3 の UAT。`.gsd-lite/VERIFICATION.md` の「UAT」節、発見 3・5）
 対象の版: runtime `runtime-v0.1.1`（commit `ad660ac`）で発生。main（`2dd305f`）の `src/` でも同じ実装であることを確かめた
 
@@ -92,3 +92,17 @@ ui-bridge の希望は前者（HTTP の検証サーバで Worker モックの画
 - R6: 採る場合は宣言の形・テスト・文書。採らない場合は理由を本書に書く。
 - runtime の新しい版を Release する。ui-bridge はその版を `vendor/uivolve-web-runtime/` に取り込み、
   `ui/config.js` の許可リストの扱いを見直す。完了したら本書の「状態」を更新し、版を書く。
+
+## 対応（uivolve-web 側）
+
+- R4（採用: 前者）: HTTP（安全でないコンテキスト）で開いても画面を読み込める。`screenToken` は `crypto.getRandomValues` から作る UUID v4。
+  部品を含む画面で使う子のハッシュ（SHA-256）は、`crypto.subtle` が無ければ純 JS の SHA-256 で計算する。
+  WebMCP・配信キャッシュ（network-first）・OPFS は安全なコンテキストが必要なまま。実ブラウザでの確認は `bun run test:insecure:browser`
+  （マシンの IP の HTTP で Worker モックの画面と部品を含む画面を開く）。
+- R5（採用）: 拒否の文言に拒否した origin と許可リストを出す。パス・query・トークンは出さない。
+  例: `このURLはJWTの送信先として許可されていません: https://x.example.com（許可: https://api.example.com、JWTなし: https://ui.example.com）`。
+  `docs/authentication.md` の「ホストAPI」節に、API を別 origin に置く例と、ページの origin を許可リストに入れることを書いた。
+- R6（採用: `setAuthentication` の宣言）: `publicOrigins` に JWT を付けずに取得する origin を書ける。
+  `allowedOrigins` と両方にある origin は `allowedOrigins` が優先（JWT を付ける）。HTTP の origin も書ける。
+  `mode: "none"` との組合せは設定エラー。既定は fail-closed のまま（どちらにも無い origin は送信前に拒否）。
+- Release・版の追記は MR マージ後に人が行う。
