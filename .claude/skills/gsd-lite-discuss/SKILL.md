@@ -26,7 +26,7 @@ disable-model-invocation: true
   OpenCode のモデルは `opencode.model.<phase>`（`provider/model` 形式）、
   推論強度は `opencode.variant.<phase>`、エージェントは `opencode.agent.<phase>`。
   空ならその CLI の設定を使用する。
-- 次のマイルストーンに移るときも `engine` / `phase_engines` / `model` / `codex` / `opencode` /
+- 次のマイルストーンに移るときも `engine` / `phase_engines` / `model` / `codex`（`codex.sandbox` を含む）/ `opencode` /
   `subagents` / `reflect` / `limits` は保持する（gsd-control 形では `.gsd-lite/config.json` の `defaults` が
   次のマイルストーンの初期値。選んだパターンを次回以降の既定にしたいときは `defaults` も更新してコミットする）。
 - 監視用サブエージェントが利用できない場合は `gsd-lite-loop.sh --status` で
@@ -52,8 +52,8 @@ in-repo 形では以下の「gsd-control 形」の注記を無視し、従来ど
 - **対象の準備**: `[ -d $TARGET/.git ] || git clone <targets.<name>.url> $TARGET`。
   `git -C $TARGET checkout <base>`、リモートがあれば `git -C $TARGET pull --ff-only origin <base>`。
   対象の作業ツリーが dirty なら扱いを相談する
-- **対象の規約を読む**: `$TARGET/CLAUDE.md` / `AGENTS.md` / README は自動では読み込まれないので、
-  要望を聞く前に読み、既存コードとの整合の質問に活かす（plan / impl も同じファイルを読む）
+- **対象の規約を読む**: `$TARGET/AGENTS.md`（全エンジン共通の本体。無ければ `CLAUDE.md`）と README は
+  自動では読み込まれないので、要望を聞く前に読み、既存コードとの整合の質問に活かす（plan / impl も同じファイルを読む）
 - **slug を早く決める**: 要望を聞いたら最初の AUQ で kebab-case の slug を確認し、
   `git checkout -b gsd-lite/<slug>`（制御側。いまいたブランチが制御側の base）と `mkdir -p $MS` を
   作ってから議論を始める（4 のインライン文書化の書き先が必要なため）。
@@ -103,6 +103,21 @@ PROGRESS / VERIFICATION 等）を `.gsd-lite/archive/<前回のmilestone>/` へ�
 新しいマイルストーンの要望を聞く前に直近 2 件の「次回への提案」を読み、discuss で
 確認すべき項目があれば初期フロンティアに加える）。`phase` が `discuss` 以外で done でもない
 場合は進行中のマイルストーンがあるので、ユーザーに状況を確認する（勝手に上書きしない）。
+
+**0-c. AGENTS.md 候補の採否**（修正ラウンドでも行う。gsd-control 形でも同じ）: 直近 2 件の振り返りの
+「次回への提案」のうち `（AGENTS.md 候補）` の付いたもので、まだ `$TARGET/AGENTS.md` に無く、過去の
+DECISIONS.md でも不採用になっていないものを、最初の AUQ のラウンドに 1 問ずつ（多ければ multiSelect で
+まとめて）入れて「AGENTS.md に足す / 足さない」を聞く。AGENTS.md は全エンジン共通の指示の本体で、
+どのエンジンのターンも自動で（gsd-control 形ではスキルが明示的に）読む。
+- 足すものは `$TARGET/AGENTS.md` の該当節に 1 項目 1 行で書く（「何をする / しない」と「しないとどうなるか」）。
+  AGENTS.md が無ければ作り、`$TARGET/CLAUDE.md` が無ければ 1 行目に `@AGENTS.md` だけの CLAUDE.md も作る
+  （CLAUDE.md があって `@AGENTS.md` を取り込んでいなければ、1 行目に足すかを同じ AUQ で聞く）。
+  CLAUDE.md には同じ内容を写さない
+- 採否は DECISIONS.md に「AGENTS.md: <決まり> — 採用 / 不採用（理由）」として残す
+- コミットは手順 5 のマイルストーンのコミットに含める。gsd-control 形では AGENTS.md は対象側のファイルなので、
+  手順 5 で対象側のブランチ `gsd-lite/<slug>` を切った直後に、対象側にだけ
+  `git -C $TARGET add AGENTS.md CLAUDE.md` → `git -C $TARGET commit -m "gsd-lite(discuss): <slug> AGENTS.md に作業上の決まりを追加"`
+  でコミットする（対象の base には直接コミットしない。MR / マージで base に入る）
 
 ## 1. プロトコル: デザインツリーとフロンティア
 
@@ -200,6 +215,27 @@ PROGRESS / VERIFICATION 等）を `.gsd-lite/archive/<前回のmilestone>/` へ�
      そのまま伝える（systemd が無い環境では上限なしで動く。CPU は管理者が delegate.conf を入れて OS を
      再起動するまで効かず、メモリだけ効く）。環境変数 `GSD_LITE_MEMORY_MAX` / `GSD_LITE_CPU_QUOTA` が
      設定されていれば state より優先されるので、選択と違うなら外した起動コマンドを使う（`off` は「付けない」）
+   - **Codex の sandbox**（Codex を使うフェーズがあるときだけ）: state の `codex.sandbox` を AUQ で選ぶ
+     （既存値があればそれを既定に。空なら `workspace-write`）。verify や impl が Docker・外部ネットワーク・
+     ワークスペース外への書き込みを使うなら `workspace-write` では失敗し、そのターンが BLOCKED になる:
+     - **workspace-write**（既定。テスト・ビルドがワークスペース内で完結するとき）
+     - **danger-full-access**（Docker / docker compose・外部 API・ワークスペース外のキャッシュ等を使うとき。
+       sandbox なしで無人ターンが FS 全体に書けるので、隔離された開発環境に限る）
+     - **現在の設定を使う**（既存値があるとき）
+     state に保存すれば次のマイルストーンにも引き継がれる（起動コマンドに `GSD_LITE_CODEX_SANDBOX` を付ける
+     必要はない。付いていれば state より優先される）。保存後の `--check` の `sandbox` 行で実効値を見せる
+   - **起動時の環境変数の引き継ぎ**: 前回のマイルストーン（`.gsd-lite/archive/<前回>/DECISIONS.md`、gsd-control 形は
+     制御側の前回分）に、環境変数付きの起動コマンド（`GSD_LITE_...=... gsd-lite-loop.sh`）が書かれていれば
+     一覧にして見せる。state に持てるもの（`GSD_LITE_CODEX_SANDBOX` → `codex.sandbox`、`GSD_LITE_MEMORY_MAX` /
+     `GSD_LITE_CPU_QUOTA` → `limits`）は state に移し、残り（`GSD_LITE_CLAUDE_TOKEN_VARS` 等）は今回も付けるかを
+     AUQ で確認する。付けるなら今回の DECISIONS.md に**起動コマンドを環境変数込みで**書き、手順 6 の起動にも付ける
+   - **BLOCKED の通知**: ループが BLOCKED で止まっても、通知の仕組みが無ければ誰にも知らされない（人が気づくまで
+     止まったまま）。`gsd-lite-loop.sh --check` の `notify` 行が `none` なら、AUQ で選ぶ:
+     - **フックを置く**: サンプル（インストール済みテンプレートの `hooks/on-blocked.sh`）を
+       `.gsd-lite/hooks/on-blocked.sh` にコピーして `chmod +x` し、ユーザーが選んだ送信手段（ntfy / Slack / メール /
+       デスクトップ通知）の行を有効にする。Webhook URL などの宛先はリポジトリに書かず環境変数で渡す
+       （スクリプトごとリポジトリの外に置くなら `GSD_LITE_ON_BLOCKED=<パス>` で起動する）
+     - **通知なし**（短時間で見守る、またはこまめに `--status` を見る。確認する頻度を DECISIONS.md に書く）
    - **選択したエンジンの準備**: 現在のホストのインストール済みテンプレートを使い、
      Claude が含まれれば `.claude/skills/`、Codex が含まれれば `.agents/skills/`、
      OpenCode が含まれれば `.opencode/skills/` に
@@ -223,9 +259,9 @@ PROGRESS / VERIFICATION 等）を `.gsd-lite/archive/<前回のmilestone>/` へ�
      `vite.config.js` の `fmt.ignorePatterns`）を確かめる（ループが毎ターン書き直すので整形対象だと check が赤のまま続く）。
      このチェックは CLI / スキル配置 / git 識別 / Codex sandbox の実効性 / **Claude Code の trust** の検証で、
      認証や外部サービス疎通の保証ではない。Codex sandbox の検証で止まった場合は
-     表示された対処（`GSD_LITE_CODEX_SANDBOX=danger-full-access` で起動、カーネル設定、
-     impl / verify を Claude に切り替え）のどれにするかを AUQ で選んでもらい、
-     環境変数で起動する場合は DECISIONS.md に記録して起動コマンドにも付ける。
+     表示された対処（state の `codex.sandbox` を `danger-full-access` に、カーネル設定、
+     impl / verify を Claude に切り替え）のどれにするかを AUQ で選んでもらい、DECISIONS.md に記録する
+     （`danger-full-access` は環境変数ではなく state に保存する。次のマイルストーンにも引き継がれる）。
      **trust の検証で止まった場合**（「this workspace is not trusted by Claude Code」）: このディレクトリが
      Claude Code で trust 済みでないと、無人ターンの `claude -p` は `.claude/settings.json` の allowlist を
      すべて無視し、WebSearch / WebFetch / テスト実行などが権限拒否になる（対話の起動を bypass モードで
@@ -238,7 +274,8 @@ PROGRESS / VERIFICATION 等）を `.gsd-lite/archive/<前回のmilestone>/` へ�
      **対象側**に `git -C $TARGET checkout -b gsd-lite/<slug>`（対象の base から。base にコミットが
      あることを `git -C $TARGET rev-parse --verify HEAD` で確認）を作る。state の `branch` は
      対象側のブランチ名と base。state・REQUIREMENTS / DECISIONS は制御側にコミットし、対象側には
-     何もコミットしない（以下の in-repo 向け手順のうちブランチ作成は対象側、コミットは制御側と読み替える）
+     0-c で採った AGENTS.md / CLAUDE.md の変更だけをコミットする（以下の in-repo 向け手順のうちブランチ作成は
+     対象側、コミットは制御側と読み替える）
    - discuss で作成した要件・設定・スキル以外の未コミット変更を確認し、
      関係ない変更があれば扱いを相談する。今回生成したファイルは次のコミットに含める
    - 現在のブランチ（= base）名を控え、**base にコミットが存在することを確認する**
@@ -249,16 +286,18 @@ PROGRESS / VERIFICATION 等）を `.gsd-lite/archive/<前回のmilestone>/` へ�
    - state.json を**すべて更新してから**コミットする: `milestone`（kebab-case の
      スラッグ）/ `target`（`name` と `path`。in-repo 形は `{"name": "", "path": "."}` のままでよい）/
      `branch`（name と base）/ `research.targets` / `phase: "research"` /
-     `next_command: "/gsd-lite-research"` / `engine` / `phase_engines` / `subagents` / `reflect` / `limits` /
+     `next_command: "/gsd-lite-research"` / `engine` / `phase_engines` / `codex` / `subagents` / `reflect` / `limits` /
      `fix_round: 0` / `updated_at`（修正ラウンドは 0-a の記載どおり、ブランチを作らず
      `fix_round` / `phase` / `next_command` / `verify_round` / `updated_at` を更新）。
-     そのうえで REQUIREMENTS.md / DECISIONS.md / state.json と追加・更新したスキル・設定を一括コミット
+     そのうえで REQUIREMENTS.md / DECISIONS.md / state.json と追加・更新したスキル・設定
+     （in-repo 形では 0-c で更新した AGENTS.md / CLAUDE.md も）を一括コミット
      （`gsd-lite(discuss): <slug> 要件確定`）。
      **遷移（next_command）までコミットに含めるのが重要** — コミット後に state を
      いじると、git 復元時に要件確定済みなのに DISCUSS へ戻ってしまう
 6. 最後の AUQ で「今すぐループを起動するか」「起動する場合、このセッションで
    進捗を見守るか」を確認する:
-   - **起動する**: `setsid gsd-lite-loop.sh >> .gsd-lite/logs/loop.log 2>&1 &` で（`>>` で追記。`>` だと
+   - **起動する**: `setsid gsd-lite-loop.sh >> .gsd-lite/logs/loop.log 2>&1 &` で（手順 4 で付けると決めた
+     環境変数があれば先頭に付ける。`>>` で追記。`>` だと
      再起動のたびに前回のループログが消える）
      デタッチ起動し、`gsd-lite-loop.sh --status` などの監視コマンドを提示して
      **即座に手を離す**。以後このセッションでログをポーリングしない。

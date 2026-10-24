@@ -32,8 +32,8 @@ slug=<slug>
 - `$TARGET` = コードを書く対象リポジトリ。`.` なら今いるリポジトリ（従来どおり）。`work/<name>` なら
   gsd-control 形で、**コードの読み書き・テスト・コミット・ブランチ・マージ・push は `git -C <target>` /
   `cd <target>` で対象側に**、**`$MS/` の成果物と state.json はこのリポジトリ（制御側）に**コミットする。
-  対象側の `CLAUDE.md` / `AGENTS.md` / README は自動では読み込まれないので、`<target>/CLAUDE.md` 等が
-  あれば最初に読んで規約に従う。`<target>` の中身を制御側に `git add` しない（gitignore 済み）
+  対象側の指示ファイルと README は自動では読み込まれないので、最初に `<target>/AGENTS.md`（全エンジン共通の本体。
+  無ければ `<target>/CLAUDE.md`）を読んで規約に従う。CLAUDE.md の `@AGENTS.md` より下は Claude 固有の指示。`<target>` の中身を制御側に `git add` しない（gitignore 済み）
 - `.gsd-lite/logs/` と `.gsd-lite/reflect/` はどちらの形でも共通の場所（マイルストーンをまたいで蓄積）。
   一時ファイル（プローブ用スクリプト等）が必要なら `/tmp` ではなく `.gsd-lite/logs/<slug>/scratch/` に置く
   （`/tmp` への書き込みは allowlist 外で権限拒否になる。logs/ は gitignore 済み）
@@ -43,10 +43,12 @@ slug=<slug>
 ## 手順
 
 1. `$MS/REQUIREMENTS.md` / `DECISIONS.md` / `RESEARCH.md` と `$TARGET` のコードベースを読む
-   （`$TARGET/CLAUDE.md` / `AGENTS.md` があれば先に読み、規約をタスク設計に反映する）。
+   （`$TARGET/AGENTS.md`、無ければ `CLAUDE.md` を先に読み、規約をタスク設計に反映する）。
    `state.json` の `subagents`（`auto` / `off`、未指定は `auto`）と `fix_round` も確認する。
    **`.gsd-lite/reflect/` に振り返りがあれば直近 2 件の「次回への提案」を読み**、
-   計画に反映する（反映した / しない提案と理由を PLAN.md の「メモ」に書く）
+   計画に反映する（反映した / しない提案と理由を PLAN.md の「メモ」に書く）。
+   `（AGENTS.md 候補）` の付いた提案は discuss が採否を決めて AGENTS.md に足すので、plan は
+   AGENTS.md を書き換えない（採られた決まりは AGENTS.md から読む）
 2. `$MS/PLAN.template.md` の形式で `$MS/PLAN.md` を作成する
    （**修正ラウンド**（`fix_round` ≥ 1）では作り直さず、REQUIREMENTS.md の
    「修正ラウンド N」の指摘に対応するタスクを `F<round>-1`, `F<round>-2` ... として
@@ -55,7 +57,7 @@ slug=<slug>
      PLAN に書くときは、`$TARGET` の宣言や grep の結果を見て書き、引いた元（`path:line` やコマンド）を
      併記する。記憶や要約から書かない（PLAN の誤記は impl の手戻りになる）
    - **追従先チェックリスト**: 「X を足したら直す場所」（登録・権限・一覧・件数を書いた文書など）を
-     `$TARGET` の CLAUDE.md・規約・既存コードから洗い出して PLAN の該当節に書く。
+     `$TARGET` の AGENTS.md（無ければ CLAUDE.md）・規約・既存コードから洗い出して PLAN の該当節に書く。
      件数や本数を書いている文書は全部挙げ、古い値が残っていないことを `rg` で確かめる形を完了基準にする。
      `rg -l '<変更するシンボル名>' tests/ scripts/` も流し、ソースをテキストとして読むテスト・スクリプト
      （正規表現で宣言を抜くもの等）も追従先に入れる。
