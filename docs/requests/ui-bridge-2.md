@@ -1,6 +1,6 @@
 # 作業依頼: ui-bridge からの要望 その 2（安全でないコンテキスト・JWT の送信先）
 
-起票: 2026-10-24（ohya と ui-bridge-component のセッションで作成）/ 状態: 実装済み（Release 待ち）
+起票: 2026-10-24（ohya と ui-bridge-component のセッションで作成）/ 状態: Release 済み（runtime `runtime-v0.1.3`、commit `0003aef`）。ui-bridge 側の取り込み待ち
 依頼元: `~/workspaces/dev/fre-components/ui-bridge-component/`（M3 の UAT。`.gsd-lite/VERIFICATION.md` の「UAT」節、発見 3・5）
 対象の版: runtime `runtime-v0.1.1`（commit `ad660ac`）で発生。main（`2dd305f`）の `src/` でも同じ実装であることを確かめた
 
@@ -105,4 +105,4 @@ ui-bridge の希望は前者（HTTP の検証サーバで Worker モックの画
 - R6（採用: `setAuthentication` の宣言）: `publicOrigins` に JWT を付けずに取得する origin を書ける。
   `allowedOrigins` と両方にある origin は `allowedOrigins` が優先（JWT を付ける）。HTTP の origin も書ける。
   `mode: "none"` との組合せは設定エラー。既定は fail-closed のまま（どちらにも無い origin は送信前に拒否）。
-- Release・版の追記は MR マージ後に人が行う。
+- Release: runtime `runtime-v0.1.3`（commit `0003aef`、2026-10-24 公開）に R4〜R6 が入っている。
