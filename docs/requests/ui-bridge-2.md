@@ -1,6 +1,6 @@
 # 作業依頼: ui-bridge からの要望 その 2（安全でないコンテキスト・JWT の送信先）
 
-起票: 2026-10-24（ohya と ui-bridge-component のセッションで作成）/ 状態: Release 済み（runtime `runtime-v0.1.3`、commit `0003aef`）。ui-bridge 側の取り込み待ち
+起票: 2026-10-24（ohya と ui-bridge-component のセッションで作成）/ 状態: 完了（runtime `runtime-v0.1.3`、commit `0003aef`。ui-bridge は main の `2e1413d` で取り込み済み）
 依頼元: `~/workspaces/dev/fre-components/ui-bridge-component/`（M3 の UAT。`.gsd-lite/VERIFICATION.md` の「UAT」節、発見 3・5）
 対象の版: runtime `runtime-v0.1.1`（commit `ad660ac`）で発生。main（`2dd305f`）の `src/` でも同じ実装であることを確かめた
 
