@@ -190,7 +190,7 @@
 - 次への注意: 次は **F5**（台帳と文書の事実誤り・古い記述・言い過ぎを直し、最終 gate を
   通す）。F5 は文書だけなので `src/` と検査は変えない。**F4 で動いた数値**: `roles` の
   log に `6 host-rule readings over 90 controls`、`editing` に `12 host-rule readings over
-654 controls`、台帳に新節「ホストのタグ規則からフォーム部品を守る（F4）」。
+  654 controls`、台帳に新節「ホストのタグ規則からフォーム部品を守る（F4）」。
   **F5 が直す行番号は F4 の後でずれている**: `src/runtime.css` の reset は 26-38 行
   （コメント込み）、以降の行番号は +8。台帳 L160-165 の「修正前 … 詳細度 0,1,1」の
   `src/runtime.css:11-12` 等も F5 の対象（F4 では reset の節だけ現状へ直した）。
