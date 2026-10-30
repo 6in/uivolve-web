@@ -104,7 +104,7 @@ slug=<slug>
        **`glab` が不在なら push オプションでフォールバック**（GitLab サーバー側機能。
        追加ツール・API トークン不要）:
        `git push -u origin gsd-lite/<slug> -o merge_request.create
- -o merge_request.target=<branch.base> -o merge_request.title="<要約>"`
+        -o merge_request.target=<branch.base> -o merge_request.title="<要約>"`
        — push 出力に MR の URL が表示されるのでそれを記録する
    - MR/PR の本文には受け入れ基準の達成状況と VERIFICATION.md の要約を書き、
      末尾に実際の実行エンジン名（Claude Code / Codex / OpenCode）を記載する。
