@@ -24,12 +24,24 @@ Pagesは静的配信。HTTP JSON例は同梱データへアクセスし、Indexe
 `.claude-plugin/plugin.json`を共通メタデータとし、`scripts/release-skills.mjs`が移植可能な2スキルをまとめたClaudeプラグインを作る。ZIPにはSKILL.md、機能別資料、必要な契約・サンプル・文書から参照する登録例、第三者通知を入れる。エンジンのビルド成果物、開発依存関係、デモの実行用ホスト一式は含まない。
 
 ```sh
-bun run skills:release -- 0.1.0
+bun run skills:release -- 0.2.0
 ```
 
-`.skill-release/`へプラグインフォルダー、`uivolve-web-plugin-0.1.0.zip`、`marketplace.json`、`SHA256SUMS`、リリース情報を生成する。カタログは`skills-v0.1.0`の固定したRelease URLと、そのZIPのSHA-256を使う。ローカルの生成コマンドは外部へ公開しない。
+`.skill-release/`へプラグインフォルダー、`uivolve-web-plugin-0.2.0.zip`、`marketplace.json`、`SHA256SUMS`、リリース情報を生成する。カタログは`skills-v0.2.0`の固定したRelease URLと、そのZIPのSHA-256を使う。ローカルの生成コマンドは外部へ公開しない。
 
-`.github/workflows/release-skills.yml`をActionsから手動実行し、versionへ未公開の版番号を指定する。あるいは`skills-v0.1.0`形式のタグをpushする。テスト後にGitHub ReleaseへZIP・カタログ・ハッシュを公開し、Pagesの再生成を要求する。既存リリースを上書きせず、変更には新しい版番号を使う。`-beta.1`等はprereleaseとして公開し、通常のPagesカタログには採用しない。
+### 版番号の決まり
+
+プラグインの中身（`skills/`と、そこからリンクして同梱される文書・サンプル・`THIRD_PARTY_NOTICES.md`）を変えたら、`.claude-plugin/plugin.json`の`version`を公開済みの最新より新しい版に上げる。同じ版のまま中身が変わると、入れている側が更新に気づけないため。
+
+```sh
+bun run skills:check-version
+```
+
+`plugin.json`の版と同じ`skills-v*`タグがあり、そのタグから同梱物が変わっていれば失敗する。版がタグより古い場合も失敗する。`.github/workflows/skills-version.yml`がmainへのpushとPull Requestで同じ検査を流す。
+
+### 公開
+
+`plugin.json`の版を上げたコミットをmainへ入れてから、`.github/workflows/release-skills.yml`をActionsから手動実行してversionへその版番号を指定する。あるいは`skills-v0.2.0`形式のタグをpushする。タグやversionが`plugin.json`の版と違う場合は失敗する。テスト後にGitHub ReleaseへZIP・カタログ・ハッシュを公開し、Pagesの再生成を要求する。既存リリースを上書きせず、変更には新しい版番号を使う。`-beta.1`等はprereleaseとして公開し、通常のPagesカタログには採用しない。
 
 Pagesは公開済みの最新の安定版skills Releaseからカタログを取り込み、デモと独立した版のZIPを参照する。最初のReleaseがない場合は空のカタログを置き、デモだけ先に公開できる。
 

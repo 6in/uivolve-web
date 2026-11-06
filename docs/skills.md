@@ -30,7 +30,7 @@ bun run skills:bundle
 
 出力は`.skill-bundles/uivolve-web-app-dev/`と`.skill-bundles/uivolve-web-engine-dev/`。各フォルダーに必要なリンク先の文書・例を同梱し、リンクを内部参照へ書き換える。外部ネットワークへの取得は行わない。生成物はGit対象外で、このコマンドは同名の生成フォルダーを置き換える。
 
-Claude Code向けには`bun run skills:release -- 0.1.0`で2スキルをまとめたプラグインZIPとarchive形式のカタログを生成する。ActionsによるRelease、Pages上のカタログ、インストール方法は[GitHub配布手順](github-publishing.md)を参照。
+Claude Code向けには`bun run skills:release -- 0.2.0`で2スキルをまとめたプラグインZIPとarchive形式のカタログを生成する。ActionsによるRelease、Pages上のカタログ、インストール方法、スキルを変えたときの版の上げ方は[GitHub配布手順](github-publishing.md)を参照。
 
 必要なフォルダーを、利用するAI環境のスキルディレクトリへコピーする。Codexでは通常`~/.codex/skills/`、CODEX_HOMEを設定している場合はその配下のskills。グローバル環境へのコピーや既存スキルの削除は、この配布コマンドでは行わない。
 

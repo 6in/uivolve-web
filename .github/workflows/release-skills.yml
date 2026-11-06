@@ -6,9 +6,8 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Plugin version (for example 0.1.0)
+        description: Plugin version; must equal .claude-plugin/plugin.json (for example 0.2.0)
         required: true
-        default: "0.1.0"
         type: string
 
 permissions:
@@ -47,6 +46,11 @@ jobs:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
           VERSION="${INPUT_VERSION:-${GITHUB_REF_NAME#skills-v}}"
+          MANIFEST_VERSION=$(jq -r .version .claude-plugin/plugin.json)
+          if [[ "$VERSION" != "$MANIFEST_VERSION" ]]; then
+            echo "::error::Release version $VERSION does not match .claude-plugin/plugin.json ($MANIFEST_VERSION). Bump plugin.json first."
+            exit 1
+          fi
           bun run skills:release -- "$VERSION"
       - name: Publish immutable release assets
         env:
